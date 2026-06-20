@@ -86,6 +86,8 @@
 
         .current-card .sparkline {
             margin-top: 6px;
+            width: 100%;
+            max-width: 200px;
             height: 40px;
         }
 
@@ -404,8 +406,7 @@ function renderSparklines(readings) {
                 }]
             },
             options: {
-                responsive: true,
-                maintainAspectRatio: false,
+                responsive: false,
                 animation: false,
                 plugins: { legend: { display: false }, tooltip: { enabled: false } },
                 scales: { x: { display: false }, y: { display: false, min: Math.min(...ds.values) - 1, max: Math.max(...ds.values) + 1 } },
