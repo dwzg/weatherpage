@@ -181,17 +181,19 @@
         }
         .stat-row {
             display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 5px 0;
+            align-items: baseline;
+            gap: 8px;
+            padding: 6px 0;
             border-bottom: 1px solid var(--border);
             font-size: 0.88rem;
         }
         .stat-row:last-child { border-bottom: none; }
-        .stat-row .stat-time { font-size: 0.78rem; color: var(--text-secondary); }
-        .stat-row .stat-val { font-weight: 600; }
+        .stat-row .stat-label { color: var(--text); min-width: 0; }
+        .stat-row .stat-val { font-weight: 600; white-space: nowrap; }
         .stat-row .stat-val.hi { color: var(--accent-temp); }
         .stat-row .stat-val.lo { color: var(--accent-hum); }
+        .stat-row .stat-time { font-size: 0.78rem; color: var(--text-secondary); margin-left: auto; white-space: nowrap; }
+        .stat-row .stat-spacer { flex: 1; border-bottom: 1px dotted var(--border); min-width: 8px; align-self: center; }
 
         /* Calendar heatmap */
         .heatmap-card {
@@ -348,40 +350,81 @@
         <h3>📅 Today's Records</h3>
         {% if extremes_today.temperature.max %}
         <div class="stat-row">
-            <span>Hottest <span class="stat-time">{{ extremes_today.temperature.max.timestamp[-8:-3] }}</span></span>
+            <span class="stat-label">Hottest</span>
+            <span class="stat-spacer"></span>
             <span class="stat-val hi">{{ "%.1f"|format(extremes_today.temperature.max.value) }}°C</span>
+            <span class="stat-time">at {{ extremes_today.temperature.max.timestamp[-8:-3] }}</span>
         </div>
         <div class="stat-row">
-            <span>Coldest <span class="stat-time">{{ extremes_today.temperature.min.timestamp[-8:-3] }}</span></span>
+            <span class="stat-label">Coldest</span>
+            <span class="stat-spacer"></span>
             <span class="stat-val lo">{{ "%.1f"|format(extremes_today.temperature.min.value) }}°C</span>
+            <span class="stat-time">at {{ extremes_today.temperature.min.timestamp[-8:-3] }}</span>
         </div>
         {% endif %}
         {% if extremes_today.humidity.max %}
         <div class="stat-row">
-            <span>Most humid <span class="stat-time">{{ extremes_today.humidity.max.timestamp[-8:-3] }}</span></span>
+            <span class="stat-label">Most humid</span>
+            <span class="stat-spacer"></span>
             <span class="stat-val">{{ "%.0f"|format(extremes_today.humidity.max.value) }}%</span>
+            <span class="stat-time">at {{ extremes_today.humidity.max.timestamp[-8:-3] }}</span>
         </div>
         <div class="stat-row">
-            <span>Least humid <span class="stat-time">{{ extremes_today.humidity.min.timestamp[-8:-3] }}</span></span>
+            <span class="stat-label">Least humid</span>
+            <span class="stat-spacer"></span>
             <span class="stat-val">{{ "%.0f"|format(extremes_today.humidity.min.value) }}%</span>
+            <span class="stat-time">at {{ extremes_today.humidity.min.timestamp[-8:-3] }}</span>
         </div>
         {% endif %}
     </div>
     {% elif stats_today and stats_today.count > 0 %}
     <div class="stats-card">
         <h3>📅 Today</h3>
-        <div class="stat-row"><span>Temp range</span><span class="stat-val">{{ "%.1f"|format(stats_today.temperature.max) }} / {{ "%.1f"|format(stats_today.temperature.min) }}°C</span></div>
-        <div class="stat-row"><span>Humidity range</span><span class="stat-val">{{ "%.0f"|format(stats_today.humidity.max) }} / {{ "%.0f"|format(stats_today.humidity.min) }}%</span></div>
+        <div class="stat-row"><span class="stat-label">Temp range</span><span class="stat-spacer"></span><span class="stat-val">{{ "%.1f"|format(stats_today.temperature.max) }} / {{ "%.1f"|format(stats_today.temperature.min) }}°C</span></div>
+        <div class="stat-row"><span class="stat-label">Humidity range</span><span class="stat-spacer"></span><span class="stat-val">{{ "%.0f"|format(stats_today.humidity.max) }} / {{ "%.0f"|format(stats_today.humidity.min) }}%</span></div>
     </div>
     {% endif %}
-    {% if stats_all and stats_all.count > 0 %}
+    {% if extremes_all and extremes_all.count > 0 %}
     <div class="stats-card">
         <h3>🏆 All-Time Records</h3>
-        <div class="stat-row"><span>Hottest</span><span class="stat-val hi">{{ "%.1f"|format(stats_all.temperature.max) }}°C</span></div>
-        <div class="stat-row"><span>Coldest</span><span class="stat-val lo">{{ "%.1f"|format(stats_all.temperature.min) }}°C</span></div>
-        <div class="stat-row"><span>Most Humid</span><span class="stat-val">{{ "%.0f"|format(stats_all.humidity.max) }}%</span></div>
-        <div class="stat-row"><span>Least Humid</span><span class="stat-val">{{ "%.0f"|format(stats_all.humidity.min) }}%</span></div>
-        <div class="stat-row"><span>Readings</span><span class="stat-val">{{ stats_all.count }}</span></div>
+        {% if extremes_all.temperature.max %}
+        <div class="stat-row">
+            <span class="stat-label">Hottest</span>
+            <span class="stat-spacer"></span>
+            <span class="stat-val hi">{{ "%.1f"|format(extremes_all.temperature.max.value) }}°C</span>
+            <span class="stat-time">{{ extremes_all.temperature.max.timestamp[:10] }}</span>
+        </div>
+        <div class="stat-row">
+            <span class="stat-label">Coldest</span>
+            <span class="stat-spacer"></span>
+            <span class="stat-val lo">{{ "%.1f"|format(extremes_all.temperature.min.value) }}°C</span>
+            <span class="stat-time">{{ extremes_all.temperature.min.timestamp[:10] }}</span>
+        </div>
+        {% endif %}
+        {% if extremes_all.humidity.max %}
+        <div class="stat-row">
+            <span class="stat-label">Most Humid</span>
+            <span class="stat-spacer"></span>
+            <span class="stat-val">{{ "%.0f"|format(extremes_all.humidity.max.value) }}%</span>
+            <span class="stat-time">{{ extremes_all.humidity.max.timestamp[:10] }}</span>
+        </div>
+        <div class="stat-row">
+            <span class="stat-label">Least Humid</span>
+            <span class="stat-spacer"></span>
+            <span class="stat-val">{{ "%.0f"|format(extremes_all.humidity.min.value) }}%</span>
+            <span class="stat-time">{{ extremes_all.humidity.min.timestamp[:10] }}</span>
+        </div>
+        {% endif %}
+        <div class="stat-row"><span class="stat-label">Readings</span><span class="stat-spacer"></span><span class="stat-val">{{ stats_all.count }}</span></div>
+    </div>
+    {% elif stats_all and stats_all.count > 0 %}
+    <div class="stats-card">
+        <h3>🏆 All-Time Records</h3>
+        <div class="stat-row"><span class="stat-label">Hottest</span><span class="stat-spacer"></span><span class="stat-val hi">{{ "%.1f"|format(stats_all.temperature.max) }}°C</span></div>
+        <div class="stat-row"><span class="stat-label">Coldest</span><span class="stat-spacer"></span><span class="stat-val lo">{{ "%.1f"|format(stats_all.temperature.min) }}°C</span></div>
+        <div class="stat-row"><span class="stat-label">Most Humid</span><span class="stat-spacer"></span><span class="stat-val">{{ "%.0f"|format(stats_all.humidity.max) }}%</span></div>
+        <div class="stat-row"><span class="stat-label">Least Humid</span><span class="stat-spacer"></span><span class="stat-val">{{ "%.0f"|format(stats_all.humidity.min) }}%</span></div>
+        <div class="stat-row"><span class="stat-label">Readings</span><span class="stat-spacer"></span><span class="stat-val">{{ stats_all.count }}</span></div>
     </div>
     {% endif %}
 </div>
@@ -575,10 +618,11 @@ async function buildHeatmap() {
             grid.appendChild(h);
         });
 
-        const todayStr = new Date().toISOString().slice(0, 10);
+        const fmtLocal = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        const todayStr = fmtLocal(new Date());
         const d = new Date(start);
         while (d <= end) {
-            const key = d.toISOString().slice(0, 10);
+            const key = fmtLocal(d);
             const cell = document.createElement('div');
             cell.className = 'heatmap-cell';
 
