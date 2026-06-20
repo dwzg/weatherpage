@@ -14,9 +14,23 @@
             --accent-temp: #e53e3e;
             --accent-hum: #3182ce;
             --accent-pres: #38a169;
+            --accent-warn: #dd6b20;
             --border: #e2e8f0;
             --shadow: 0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.06);
             --radius: 12px;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --bg: #1a202c;
+                --card-bg: #2d3748;
+                --text: #e2e8f0;
+                --text-secondary: #a0aec0;
+                --border: #4a5568;
+                --shadow: 0 1px 3px rgba(0,0,0,0.3);
+            }
+            .heatmap-cell { color: rgba(255,255,255,0.7) !important; }
+            .heatmap-cell.heatmap-empty { background: transparent !important; }
         }
 
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -259,20 +273,48 @@
     <p class="subtitle">Live from the balcony</p>
 </header>
 
+{% if forecast %}
+<div style="text-align:center;margin-bottom:20px;">
+    <span style="background:var(--card-bg);color:var(--text);padding:8px 18px;border-radius:20px;font-size:0.9rem;box-shadow:var(--shadow);border:1px solid var(--border);">
+    {% if forecast == 'Rain likely' %}🌧️{% elif forecast == 'Rain possible' %}🌥️{% elif 'Clearing' in forecast %}🌤️{% elif 'worsening' in forecast %}☁️{% else %}🌤️{% endif %}
+    {{ forecast }}
+    </span>
+</div>
+{% endif %}
+
+{% if frost_warning %}
+<div style="text-align:center;margin-bottom:16px;">
+    <span style="background:#e53e3e;color:#fff;padding:8px 18px;border-radius:20px;font-size:0.9rem;font-weight:600;">❄️ Frost warning — protect your plants!</span>
+</div>
+{% endif %}
+
 {% if current %}
 <!-- Current conditions -->
 <div class="current-grid">
     <div class="current-card temp">
         <div class="label">Temperature</div>
         <div class="value">{{ "%.1f"|format(current.temperature) }}<span class="unit">°C</span></div>
+        {% if heat_index is not none %}
+        <div class="detail">Feels like {{ "%.1f"|format(heat_index) }}°C</div>
+        {% endif %}
         {% if dew_point is not none %}
         <div class="detail">Dew point {{ "%.1f"|format(dew_point) }}°C</div>
+        {% endif %}
+        {% if yesterday %}
+        <div class="detail" style="margin-top:2px;font-size:0.75rem;color:{% if current.temperature > yesterday.temperature %}#e53e3e{% elif current.temperature < yesterday.temperature %}#3182ce{% else %}inherit{% endif %}">
+            vs 24h ago: {{ "%+.1f"|format(current.temperature - yesterday.temperature) }}°C
+        </div>
         {% endif %}
         <canvas class="sparkline" id="spark-temp"></canvas>
     </div>
     <div class="current-card hum">
         <div class="label">Humidity</div>
         <div class="value">{{ "%.0f"|format(current.humidity) }}<span class="unit">%</span></div>
+        {% if yesterday %}
+        <div class="detail" style="margin-top:2px;font-size:0.75rem;color:{% if current.humidity > yesterday.humidity %}#3182ce{% elif current.humidity < yesterday.humidity %}#e53e3e{% else %}inherit{% endif %}">
+            vs 24h ago: {{ "%+.0f"|format(current.humidity - yesterday.humidity) }}%
+        </div>
+        {% endif %}
         <canvas class="sparkline" id="spark-hum"></canvas>
     </div>
     <div class="current-card pres">

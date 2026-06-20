@@ -319,3 +319,18 @@ async def get_daily_summaries(months: int = 3) -> list[dict]:
         return [dict(r) for r in rows]
     finally:
         await db.close()
+
+
+async def get_reading_ago(hours: int = 24) -> dict | None:
+    """Get the reading closest to N hours ago."""
+    db = await get_db()
+    try:
+        cutoff = _iso_cutoff(_now() - timedelta(hours=hours))
+        cursor = await db.execute(
+            "SELECT * FROM weather_readings WHERE timestamp <= ? ORDER BY timestamp DESC LIMIT 1",
+            (cutoff,),
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+    finally:
+        await db.close()

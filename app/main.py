@@ -21,6 +21,41 @@ def compute_dew_point(temp_c: float, humidity: float) -> float:
     return round((b * gamma) / (a - gamma), 1)
 
 
+def compute_heat_index(temp_c: float, humidity: float) -> float | None:
+    """Heat index (feels-like) using the NOAA formula. Returns None below 27°C."""
+    if temp_c < 27:
+        return None  # heat index only meaningful at warm temps
+    t = temp_c * 9 / 5 + 32  # to Fahrenheit
+    rh = humidity
+    hi = (0.5 * (t + 61.0 + (t - 68.0) * 1.2 + rh * 0.094))
+    # Full Rothfusz regression
+    hi = -42.379 + 2.04901523 * t + 10.14333127 * rh \
+         - 0.22475541 * t * rh - 6.83783e-3 * t * t \
+         - 5.481717e-2 * rh * rh + 1.22874e-3 * t * t * rh \
+         + 8.5282e-4 * t * rh * rh - 1.99e-6 * t * t * rh * rh
+    return round((hi - 32) * 5 / 9, 1)
+
+
+def compute_forecast(pressure_trend: dict | None, humidity: float) -> str:
+    """Simple forecast based on pressure trend and humidity."""
+    if not pressure_trend:
+        return "Not enough data"
+    d = pressure_trend["direction"]
+    rh = humidity
+    if d == "falling" and rh > 60:
+        return "Rain likely"
+    elif d == "falling" and rh > 40:
+        return "Rain possible"
+    elif d == "falling":
+        return "Weather worsening"
+    elif d == "rising" and rh > 70:
+        return "Humid but clearing"
+    elif d == "rising":
+        return "Clearing up"
+    else:
+        return "Stable conditions"
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await database.init_db()
@@ -81,12 +116,23 @@ async def serve_ui(request: Request):
     stats_today = await database.get_stats("today")
 
     dew_point = None
+    heat_index = None
     pressure_trend = None
     extremes_today = None
+    forecast = None
+    frost_warning = False
+    yesterday = None
 
     if current:
-        dew_point = compute_dew_point(current["temperature"], current["humidity"])
+        t = current["temperature"]
+        h = current["humidity"]
+        dew_point = compute_dew_point(t, h)
+        heat_index = compute_heat_index(t, h)
         pressure_trend = await database.get_pressure_trend()
+        forecast = compute_forecast(pressure_trend, h)
+        if t < 2.0:
+            frost_warning = True
+        yesterday = await database.get_reading_ago(24)
 
     if stats_today and stats_today.get("count", 0) > 0:
         extremes_today = await database.get_extremes_with_times("today")
@@ -98,8 +144,12 @@ async def serve_ui(request: Request):
         stats_all=stats_all,
         stats_today=stats_today,
         dew_point=dew_point,
+        heat_index=heat_index,
         pressure_trend=pressure_trend,
         extremes_today=extremes_today,
+        forecast=forecast,
+        frost_warning=frost_warning,
+        yesterday=yesterday,
         now=datetime.now(tz=TIMEZONE).isoformat(),
     )
     return HTMLResponse(html)
