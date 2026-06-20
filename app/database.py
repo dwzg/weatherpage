@@ -14,9 +14,9 @@ def _now() -> datetime:
     return datetime.now(tz=TIMEZONE)
 
 
-def _iso_cutoff(dt: datetime) -> str:
-    """Format a datetime as a naive ISO string matching DB timestamp format."""
-    return dt.replace(tzinfo=None).isoformat()
+def _fmt_cutoff(dt: datetime) -> str:
+    """Format a datetime to match the DB timestamp format (space-separated, from HA)."""
+    return dt.replace(tzinfo=None).strftime("%Y-%m-%d %H:%M:%S")
 
 
 async def get_db() -> aiosqlite.Connection:
@@ -53,11 +53,13 @@ async def init_db() -> None:
 
 async def insert_reading(temperature: float, humidity: float, pressure: float, timestamp: str) -> int:
     """Insert a weather reading. Returns the new row id."""
+    # Normalize to space-separated format matching HA's output
+    ts = timestamp.replace("T", " ")
     db = await get_db()
     try:
         cursor = await db.execute(
             "INSERT INTO weather_readings (temperature, humidity, pressure, timestamp) VALUES (?, ?, ?, ?)",
-            (temperature, humidity, pressure, timestamp),
+            (temperature, humidity, pressure, ts),
         )
         await db.commit()
         return cursor.lastrowid
@@ -101,7 +103,7 @@ async def get_history(period: str = "24h") -> list[dict]:
         if cutoff:
             cursor = await db.execute(
                 "SELECT * FROM weather_readings WHERE timestamp >= ? ORDER BY timestamp ASC",
-                (_iso_cutoff(cutoff),),
+                (_fmt_cutoff(cutoff),),
             )
         else:
             cursor = await db.execute(
@@ -132,7 +134,7 @@ async def get_stats(period: str = "24h") -> dict:
                 FROM weather_readings
                 WHERE timestamp >= ?
                 """,
-                (_iso_cutoff(cutoff),),
+                (_fmt_cutoff(cutoff),),
             )
         else:
             cursor = await db.execute(
@@ -186,7 +188,7 @@ async def get_extremes_with_times(period: str = "today") -> dict:
         if cutoff is None:
             cutoff_str = "2000-01-01T00:00:00"  # far past for 'all'
         else:
-            cutoff_str = _iso_cutoff(cutoff)
+            cutoff_str = _fmt_cutoff(cutoff)
 
         result = {"count": 0, "temperature": {}, "humidity": {}, "pressure": {}}
 
@@ -262,7 +264,7 @@ async def get_pressure_trend(hours: int = 3) -> dict | None:
         if not latest:
             return None
 
-        cutoff = _iso_cutoff(_now() - timedelta(hours=hours))
+        cutoff = _fmt_cutoff(_now() - timedelta(hours=hours))
         cursor = await db.execute(
             "SELECT pressure FROM weather_readings WHERE timestamp >= ? ORDER BY id ASC LIMIT 1",
             (cutoff,),
@@ -297,7 +299,7 @@ async def get_daily_summaries(months: int = 3) -> list[dict]:
     """Return daily min/max/avg for each day in the last N months."""
     db = await get_db()
     try:
-        cutoff = _iso_cutoff(_now() - timedelta(days=months * 30))
+        cutoff = _fmt_cutoff(_now() - timedelta(days=months * 30))
         cursor = await db.execute(
             """
             SELECT
@@ -325,7 +327,7 @@ async def get_reading_ago(hours: int = 24) -> dict | None:
     """Get the reading closest to N hours ago."""
     db = await get_db()
     try:
-        cutoff = _iso_cutoff(_now() - timedelta(hours=hours))
+        cutoff = _fmt_cutoff(_now() - timedelta(hours=hours))
         cursor = await db.execute(
             "SELECT * FROM weather_readings WHERE timestamp <= ? ORDER BY timestamp DESC LIMIT 1",
             (cutoff,),
