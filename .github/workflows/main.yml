@@ -1,4 +1,4 @@
-name: Build and Deploy Weather Website to GHCR
+name: Relay Weather Data to App
 
 on:
   workflow_dispatch:
@@ -6,65 +6,30 @@ on:
       temperature:
         required: true
         type: string
-
       humidity:
         required: true
         type: string
-
       pressure:
         required: true
         type: string
-
       timestamp:
         required: true
         type: string
 
 jobs:
-  build-and-deploy:
+  relay:
     runs-on: ubuntu-latest
 
-    permissions:
-      contents: read
-      packages: write
-      
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Update HTML with weather data
-        uses: qetza/replacetokens-action@v1
-        with:
-          sources: 'index.html'
-          variables: |
-            {
+      - name: Forward weather data to app
+        run: |
+          curl -s -X POST "${{ secrets.APP_URL }}/api/weather" \
+            -H "Content-Type: application/json" \
+            -d '{
               "temperature": "${{ inputs.temperature }}",
               "humidity": "${{ inputs.humidity }}",
               "pressure": "${{ inputs.pressure }}",
               "timestamp": "${{ inputs.timestamp }}"
-            }
-
-      - name: Login to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.repository_owner }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and push Docker image to GHCR
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: ./Dockerfile
-          push: true
-          tags: ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}:latest
-
-      - name: Trigger Portainer webhook
-        uses: distributhor/workflow-webhook@v3
-        with:
-          webhook_url: ${{ secrets.PORTAINER_WEBHOOK_URL }}
-
-      - name: Delete old package version
-        uses: minish144/delete-untagged-action@v2
-        with:
-          github-token: ${{ secrets.DELETE_PACKAGES_TOKEN }}
-          personal-account: true
+            }' \
+            -w "\nHTTP %{http_code}" \
+            --fail-with-body

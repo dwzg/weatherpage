@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Balcony Weather Station</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <style>
+        :root {
+            --bg: #f0f4f8;
+            --card-bg: #ffffff;
+            --text: #1a202c;
+            --text-secondary: #64748b;
+            --accent-temp: #e53e3e;
+            --accent-hum: #3182ce;
+            --accent-pres: #38a169;
+            --border: #e2e8f0;
+            --shadow: 0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.06);
+            --radius: 12px;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container { max-width: 900px; margin: 0 auto; }
+
+        header {
+            text-align: center;
+            padding: 24px 0 16px;
+        }
+        header h1 { font-size: 1.8rem; font-weight: 700; }
+        header .subtitle { color: var(--text-secondary); font-size: 0.9rem; margin-top: 4px; }
+
+        /* Current weather cards */
+        .current-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+        @media (max-width: 600px) {
+            .current-grid { grid-template-columns: 1fr; }
+        }
+
+        .current-card {
+            background: var(--card-bg);
+            border-radius: var(--radius);
+            padding: 20px;
+            text-align: center;
+            box-shadow: var(--shadow);
+            border: 1px solid var(--border);
+        }
+        .current-card .label {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 8px;
+        }
+        .current-card .value {
+            font-size: 2.4rem;
+            font-weight: 700;
+        }
+        .current-card .unit { font-size: 1rem; font-weight: 400; color: var(--text-secondary); }
+        .current-card.temp .value { color: var(--accent-temp); }
+        .current-card.hum .value { color: var(--accent-hum); }
+        .current-card.pres .value { color: var(--accent-pres); }
+
+        .updated {
+            text-align: center;
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            margin-bottom: 24px;
+        }
+
+        /* Period selector */
+        .period-selector {
+            display: flex;
+            justify-content: center;
+            gap: 4px;
+            margin-bottom: 20px;
+            background: var(--card-bg);
+            border-radius: var(--radius);
+            padding: 4px;
+            box-shadow: var(--shadow);
+            border: 1px solid var(--border);
+        }
+        .period-btn {
+            padding: 8px 20px;
+            border: none;
+            background: transparent;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+            transition: all 0.15s;
+        }
+        .period-btn:hover { color: var(--text); background: #f1f5f9; }
+        .period-btn.active {
+            background: var(--text);
+            color: #fff;
+        }
+
+        /* Charts */
+        .chart-grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+        .chart-card {
+            background: var(--card-bg);
+            border-radius: var(--radius);
+            padding: 20px;
+            box-shadow: var(--shadow);
+            border: 1px solid var(--border);
+        }
+        .chart-card h3 {
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--text-secondary);
+            margin-bottom: 12px;
+        }
+        .chart-card canvas { max-height: 250px; }
+
+        /* Stats */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+        @media (max-width: 600px) {
+            .stats-grid { grid-template-columns: 1fr; }
+        }
+        .stats-card {
+            background: var(--card-bg);
+            border-radius: var(--radius);
+            padding: 20px;
+            box-shadow: var(--shadow);
+            border: 1px solid var(--border);
+        }
+        .stats-card h3 {
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--text-secondary);
+            margin-bottom: 14px;
+        }
+        .stat-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 6px 0;
+            border-bottom: 1px solid var(--border);
+            font-size: 0.9rem;
+        }
+        .stat-row:last-child { border-bottom: none; }
+        .stat-row .stat-label { color: var(--text-secondary); }
+        .stat-row .stat-val { font-weight: 600; }
+        .stat-row .stat-val.hi { color: var(--accent-temp); }
+        .stat-row .stat-val.lo { color: var(--accent-hum); }
+
+        /* No data state */
+        .no-data {
+            text-align: center;
+            padding: 60px 20px;
+            color: var(--text-secondary);
+        }
+        .no-data p { font-size: 1.1rem; }
+
+        footer {
+            text-align: center;
+            padding: 16px;
+            color: var(--text-secondary);
+            font-size: 0.75rem;
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+
+<header>
+    <h1>🌤️ Balcony Weather</h1>
+    <p class="subtitle">Live from the balcony</p>
+</header>
+
+{% if current %}
+<!-- Current conditions -->
+<div class="current-grid">
+    <div class="current-card temp">
+        <div class="label">Temperature</div>
+        <div class="value">{{ "%.1f"|format(current.temperature) }}<span class="unit">°C</span></div>
+    </div>
+    <div class="current-card hum">
+        <div class="label">Humidity</div>
+        <div class="value">{{ "%.0f"|format(current.humidity) }}<span class="unit">%</span></div>
+    </div>
+    <div class="current-card pres">
+        <div class="label">Pressure</div>
+        <div class="value">{{ "%.0f"|format(current.pressure) }}<span class="unit">hPa</span></div>
+    </div>
+</div>
+<p class="updated">Last updated: {{ current.timestamp }}</p>
+
+<div class="period-selector">
+    <button class="period-btn active" data-period="24h">24 Hours</button>
+    <button class="period-btn" data-period="7d">7 Days</button>
+    <button class="period-btn" data-period="30d">30 Days</button>
+    <button class="period-btn" data-period="all">All Time</button>
+</div>
+
+<div class="chart-grid">
+    <div class="chart-card">
+        <h3>🌡️ Temperature</h3>
+        <canvas id="chart-temp"></canvas>
+    </div>
+    <div class="chart-card">
+        <h3>💧 Humidity</h3>
+        <canvas id="chart-hum"></canvas>
+    </div>
+    <div class="chart-card">
+        <h3>📊 Pressure</h3>
+        <canvas id="chart-pres"></canvas>
+    </div>
+</div>
+
+<div class="stats-grid">
+    {% if stats_today and stats_today.count > 0 %}
+    <div class="stats-card">
+        <h3>📅 Today</h3>
+        <div class="stat-row">
+            <span class="stat-label">Temp High</span>
+            <span class="stat-val hi">{{ "%.1f"|format(stats_today.temperature.max) }}°C</span>
+        </div>
+        <div class="stat-row">
+            <span class="stat-label">Temp Low</span>
+            <span class="stat-val lo">{{ "%.1f"|format(stats_today.temperature.min) }}°C</span>
+        </div>
+        <div class="stat-row">
+            <span class="stat-label">Temp Avg</span>
+            <span class="stat-val">{{ "%.1f"|format(stats_today.temperature.avg) }}°C</span>
+        </div>
+        <div class="stat-row">
+            <span class="stat-label">Humidity High</span>
+            <span class="stat-val">{{ "%.0f"|format(stats_today.humidity.max) }}%</span>
+        </div>
+        <div class="stat-row">
+            <span class="stat-label">Humidity Low</span>
+            <span class="stat-val">{{ "%.0f"|format(stats_today.humidity.min) }}%</span>
+        </div>
+    </div>
+    {% endif %}
+    {% if stats_all and stats_all.count > 0 %}
+    <div class="stats-card">
+        <h3>🏆 All-Time Records</h3>
+        <div class="stat-row">
+            <span class="stat-label">Hottest</span>
+            <span class="stat-val hi">{{ "%.1f"|format(stats_all.temperature.max) }}°C</span>
+        </div>
+        <div class="stat-row">
+            <span class="stat-label">Coldest</span>
+            <span class="stat-val lo">{{ "%.1f"|format(stats_all.temperature.min) }}°C</span>
+        </div>
+        <div class="stat-row">
+            <span class="stat-label">Most Humid</span>
+            <span class="stat-val">{{ "%.0f"|format(stats_all.humidity.max) }}%</span>
+        </div>
+        <div class="stat-row">
+            <span class="stat-label">Least Humid</span>
+            <span class="stat-val">{{ "%.0f"|format(stats_all.humidity.min) }}%</span>
+        </div>
+        <div class="stat-row">
+            <span class="stat-label">Readings</span>
+            <span class="stat-val">{{ stats_all.count }}</span>
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+{% else %}
+<div class="no-data">
+    <p>📡 Waiting for first weather reading…</p>
+    <p style="margin-top:8px;font-size:0.85rem;">Data arrives every 5 minutes from the balcony sensor.</p>
+</div>
+{% endif %}
+
+<footer>Balcony Weather Station · {{ now[:10] }}</footer>
+
+</div><!-- .container -->
+
+{% if current %}
+<script>
+// ── Chart setup ─────────────────────────────────────────
+const COLORS = {
+    temp: { line: '#e53e3e', bg: 'rgba(229,62,62,0.08)' },
+    hum:  { line: '#3182ce', bg: 'rgba(49,130,206,0.08)' },
+    pres: { line: '#38a169', bg: 'rgba(56,161,105,0.08)' },
+};
+
+function makeChartConfig(label, color, data) {
+    return {
+        type: 'line',
+        data: {
+            labels: data.map(d => d.timestamp),
+            datasets: [{
+                label: label,
+                data: data.map(d => d.value),
+                borderColor: color.line,
+                backgroundColor: color.bg,
+                borderWidth: 2,
+                fill: true,
+                pointRadius: 0,
+                pointHoverRadius: 4,
+                tension: 0.3,
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            animation: false,
+            plugins: { legend: { display: false } },
+            scales: {
+                x: {
+                    display: true,
+                    ticks: {
+                        maxTicksLimit: 8,
+                        maxRotation: 0,
+                        color: '#94a3b8',
+                        font: { size: 10 },
+                    },
+                    grid: { display: false },
+                },
+                y: {
+                    display: true,
+                    ticks: {
+                        color: '#94a3b8',
+                        font: { size: 10 },
+                        callback: v => v.toFixed(1),
+                    },
+                    grid: { color: '#f1f5f9' },
+                }
+            },
+            interaction: {
+                intersect: false,
+                mode: 'index',
+            },
+        }
+    };
+}
+
+const charts = {};
+const allData = {}; // cache per period
+
+function destroyCharts() {
+    Object.values(charts).forEach(c => c.destroy());
+    for (const k in charts) delete charts[k];
+}
+
+async function loadPeriod(period) {
+    // Update button styles
+    document.querySelectorAll('.period-btn').forEach(b => {
+        b.classList.toggle('active', b.dataset.period === period);
+    });
+
+    // Fetch if not cached
+    if (!allData[period]) {
+        const resp = await fetch(`/api/weather/history?period=${period}`);
+        allData[period] = await resp.json();
+    }
+    renderCharts(allData[period]);
+}
+
+function renderCharts(readings) {
+    destroyCharts();
+
+    if (!readings.length) return;
+
+    const datasets = {
+        'chart-temp': { label: 'Temperature', color: COLORS.temp, values: readings.map(r => ({ timestamp: r.timestamp, value: r.temperature })) },
+        'chart-hum':  { label: 'Humidity', color: COLORS.hum, values: readings.map(r => ({ timestamp: r.timestamp, value: r.humidity })) },
+        'chart-pres': { label: 'Pressure', color: COLORS.pres, values: readings.map(r => ({ timestamp: r.timestamp, value: r.pressure })) },
+    };
+
+    for (const [canvasId, ds] of Object.entries(datasets)) {
+        const canvas = document.getElementById(canvasId);
+        if (!canvas) continue;
+        const ctx = canvas.getContext('2d');
+        charts[canvasId] = new Chart(ctx, makeChartConfig(ds.label, ds.color, ds.values));
+    }
+}
+
+// ── Init ─────────────────────────────────────────────────
+document.querySelectorAll('.period-btn').forEach(btn => {
+    btn.addEventListener('click', () => loadPeriod(btn.dataset.period));
+});
+
+// Load default period on page load
+loadPeriod('24h');
+</script>
+{% endif %}
+
+</body>
+</html>
