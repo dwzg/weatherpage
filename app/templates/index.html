@@ -38,7 +38,7 @@
         header h1 { font-size: 1.8rem; font-weight: 700; }
         header .subtitle { color: var(--text-secondary); font-size: 0.9rem; margin-top: 4px; }
 
-        /* Current weather cards */
+        /* Current cards */
         .current-grid {
             display: grid;
             grid-template-columns: repeat(3, 1fr);
@@ -52,26 +52,42 @@
         .current-card {
             background: var(--card-bg);
             border-radius: var(--radius);
-            padding: 20px;
+            padding: 16px 20px 12px;
             text-align: center;
             box-shadow: var(--shadow);
             border: 1px solid var(--border);
+            position: relative;
         }
         .current-card .label {
-            font-size: 0.85rem;
+            font-size: 0.8rem;
             color: var(--text-secondary);
             text-transform: uppercase;
             letter-spacing: 0.05em;
-            margin-bottom: 8px;
+            margin-bottom: 4px;
         }
         .current-card .value {
-            font-size: 2.4rem;
+            font-size: 2.2rem;
             font-weight: 700;
+            line-height: 1.2;
         }
-        .current-card .unit { font-size: 1rem; font-weight: 400; color: var(--text-secondary); }
+        .current-card .unit { font-size: 0.9rem; font-weight: 400; color: var(--text-secondary); }
+        .current-card .detail {
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            margin-top: 2px;
+        }
         .current-card.temp .value { color: var(--accent-temp); }
         .current-card.hum .value { color: var(--accent-hum); }
         .current-card.pres .value { color: var(--accent-pres); }
+
+        .current-card .trend-rising  { color: #e53e3e; }
+        .current-card .trend-falling { color: #3182ce; }
+        .current-card .trend-steady  { color: #718096; }
+
+        .current-card .sparkline {
+            margin-top: 6px;
+            height: 40px;
+        }
 
         .updated {
             text-align: center;
@@ -103,35 +119,27 @@
             transition: all 0.15s;
         }
         .period-btn:hover { color: var(--text); background: #f1f5f9; }
-        .period-btn.active {
-            background: var(--text);
-            color: #fff;
-        }
+        .period-btn.active { background: var(--text); color: #fff; }
 
         /* Charts */
-        .chart-grid {
-            display: grid;
-            grid-template-columns: 1fr;
-            gap: 16px;
-            margin-bottom: 24px;
-        }
         .chart-card {
             background: var(--card-bg);
             border-radius: var(--radius);
             padding: 20px;
+            margin-bottom: 16px;
             box-shadow: var(--shadow);
             border: 1px solid var(--border);
         }
         .chart-card h3 {
-            font-size: 0.9rem;
+            font-size: 0.85rem;
             text-transform: uppercase;
             letter-spacing: 0.05em;
             color: var(--text-secondary);
             margin-bottom: 12px;
         }
-        .chart-card canvas { max-height: 250px; }
+        .chart-card canvas { max-height: 220px; }
 
-        /* Stats */
+        /* Stats and extremes */
         .stats-grid {
             display: grid;
             grid-template-columns: 1fr 1fr;
@@ -153,23 +161,79 @@
             text-transform: uppercase;
             letter-spacing: 0.05em;
             color: var(--text-secondary);
-            margin-bottom: 14px;
+            margin-bottom: 12px;
         }
         .stat-row {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 6px 0;
+            padding: 5px 0;
             border-bottom: 1px solid var(--border);
-            font-size: 0.9rem;
+            font-size: 0.88rem;
         }
         .stat-row:last-child { border-bottom: none; }
-        .stat-row .stat-label { color: var(--text-secondary); }
+        .stat-row .stat-time { font-size: 0.78rem; color: var(--text-secondary); }
         .stat-row .stat-val { font-weight: 600; }
         .stat-row .stat-val.hi { color: var(--accent-temp); }
         .stat-row .stat-val.lo { color: var(--accent-hum); }
 
-        /* No data state */
+        /* Calendar heatmap */
+        .heatmap-card {
+            background: var(--card-bg);
+            border-radius: var(--radius);
+            padding: 20px;
+            margin-bottom: 24px;
+            box-shadow: var(--shadow);
+            border: 1px solid var(--border);
+        }
+        .heatmap-card h3 {
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--text-secondary);
+            margin-bottom: 16px;
+        }
+        .heatmap-grid {
+            display: grid;
+            grid-template-columns: repeat(7, 1fr);
+            gap: 3px;
+        }
+        .heatmap-header {
+            font-size: 0.7rem;
+            color: var(--text-secondary);
+            text-align: center;
+            padding: 2px 0;
+        }
+        .heatmap-cell {
+            aspect-ratio: 1;
+            border-radius: 3px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.7rem;
+            color: rgba(0,0,0,0.6);
+            cursor: default;
+            transition: transform 0.1s;
+        }
+        .heatmap-cell:hover { transform: scale(1.15); z-index: 1; }
+        .heatmap-cell.heatmap-empty { background: transparent !important; }
+        .heatmap-legend {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            margin-top: 12px;
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+        }
+        .heatmap-legend-bar {
+            width: 120px;
+            height: 8px;
+            border-radius: 4px;
+            background: linear-gradient(to right, hsl(220,60%,55%), hsl(180,50%,50%), hsl(60,50%,50%), hsl(0,60%,50%));
+        }
+
+        /* No data */
         .no-data {
             text-align: center;
             padding: 60px 20px;
@@ -199,14 +263,26 @@
     <div class="current-card temp">
         <div class="label">Temperature</div>
         <div class="value">{{ "%.1f"|format(current.temperature) }}<span class="unit">°C</span></div>
+        {% if dew_point is not none %}
+        <div class="detail">Dew point {{ "%.1f"|format(dew_point) }}°C</div>
+        {% endif %}
+        <canvas class="sparkline" id="spark-temp"></canvas>
     </div>
     <div class="current-card hum">
         <div class="label">Humidity</div>
         <div class="value">{{ "%.0f"|format(current.humidity) }}<span class="unit">%</span></div>
+        <canvas class="sparkline" id="spark-hum"></canvas>
     </div>
     <div class="current-card pres">
         <div class="label">Pressure</div>
         <div class="value">{{ "%.0f"|format(current.pressure) }}<span class="unit">hPa</span></div>
+        {% if pressure_trend %}
+        <div class="detail trend-{{ pressure_trend.direction }}">
+            {% if pressure_trend.direction == 'rising' %}↑{% elif pressure_trend.direction == 'falling' %}↓{% else %}→{% endif %}
+            {{ "%+.1f"|format(pressure_trend.delta) }} hPa
+        </div>
+        {% endif %}
+        <canvas class="sparkline" id="spark-pres"></canvas>
     </div>
 </div>
 <p class="updated">Last updated: {{ current.timestamp }}</p>
@@ -218,77 +294,68 @@
     <button class="period-btn" data-period="all">All Time</button>
 </div>
 
-<div class="chart-grid">
-    <div class="chart-card">
-        <h3>🌡️ Temperature</h3>
-        <canvas id="chart-temp"></canvas>
-    </div>
-    <div class="chart-card">
-        <h3>💧 Humidity</h3>
-        <canvas id="chart-hum"></canvas>
-    </div>
-    <div class="chart-card">
-        <h3>📊 Pressure</h3>
-        <canvas id="chart-pres"></canvas>
-    </div>
-</div>
+<div class="chart-card"><h3>🌡️ Temperature</h3><canvas id="chart-temp"></canvas></div>
+<div class="chart-card"><h3>💧 Humidity</h3><canvas id="chart-hum"></canvas></div>
+<div class="chart-card"><h3>📊 Pressure</h3><canvas id="chart-pres"></canvas></div>
 
 <div class="stats-grid">
-    {% if stats_today and stats_today.count > 0 %}
+    {% if extremes_today and extremes_today.count > 0 %}
+    <div class="stats-card">
+        <h3>📅 Today's Records</h3>
+        {% if extremes_today.temperature.max %}
+        <div class="stat-row">
+            <span>Hottest <span class="stat-time">{{ extremes_today.temperature.max.timestamp[-8:-3] }}</span></span>
+            <span class="stat-val hi">{{ "%.1f"|format(extremes_today.temperature.max.value) }}°C</span>
+        </div>
+        <div class="stat-row">
+            <span>Coldest <span class="stat-time">{{ extremes_today.temperature.min.timestamp[-8:-3] }}</span></span>
+            <span class="stat-val lo">{{ "%.1f"|format(extremes_today.temperature.min.value) }}°C</span>
+        </div>
+        {% endif %}
+        {% if extremes_today.humidity.max %}
+        <div class="stat-row">
+            <span>Most humid <span class="stat-time">{{ extremes_today.humidity.max.timestamp[-8:-3] }}</span></span>
+            <span class="stat-val">{{ "%.0f"|format(extremes_today.humidity.max.value) }}%</span>
+        </div>
+        <div class="stat-row">
+            <span>Least humid <span class="stat-time">{{ extremes_today.humidity.min.timestamp[-8:-3] }}</span></span>
+            <span class="stat-val">{{ "%.0f"|format(extremes_today.humidity.min.value) }}%</span>
+        </div>
+        {% endif %}
+    </div>
+    {% elif stats_today and stats_today.count > 0 %}
     <div class="stats-card">
         <h3>📅 Today</h3>
-        <div class="stat-row">
-            <span class="stat-label">Temp High</span>
-            <span class="stat-val hi">{{ "%.1f"|format(stats_today.temperature.max) }}°C</span>
-        </div>
-        <div class="stat-row">
-            <span class="stat-label">Temp Low</span>
-            <span class="stat-val lo">{{ "%.1f"|format(stats_today.temperature.min) }}°C</span>
-        </div>
-        <div class="stat-row">
-            <span class="stat-label">Temp Avg</span>
-            <span class="stat-val">{{ "%.1f"|format(stats_today.temperature.avg) }}°C</span>
-        </div>
-        <div class="stat-row">
-            <span class="stat-label">Humidity High</span>
-            <span class="stat-val">{{ "%.0f"|format(stats_today.humidity.max) }}%</span>
-        </div>
-        <div class="stat-row">
-            <span class="stat-label">Humidity Low</span>
-            <span class="stat-val">{{ "%.0f"|format(stats_today.humidity.min) }}%</span>
-        </div>
+        <div class="stat-row"><span>Temp range</span><span class="stat-val">{{ "%.1f"|format(stats_today.temperature.max) }} / {{ "%.1f"|format(stats_today.temperature.min) }}°C</span></div>
+        <div class="stat-row"><span>Humidity range</span><span class="stat-val">{{ "%.0f"|format(stats_today.humidity.max) }} / {{ "%.0f"|format(stats_today.humidity.min) }}%</span></div>
     </div>
     {% endif %}
     {% if stats_all and stats_all.count > 0 %}
     <div class="stats-card">
         <h3>🏆 All-Time Records</h3>
-        <div class="stat-row">
-            <span class="stat-label">Hottest</span>
-            <span class="stat-val hi">{{ "%.1f"|format(stats_all.temperature.max) }}°C</span>
-        </div>
-        <div class="stat-row">
-            <span class="stat-label">Coldest</span>
-            <span class="stat-val lo">{{ "%.1f"|format(stats_all.temperature.min) }}°C</span>
-        </div>
-        <div class="stat-row">
-            <span class="stat-label">Most Humid</span>
-            <span class="stat-val">{{ "%.0f"|format(stats_all.humidity.max) }}%</span>
-        </div>
-        <div class="stat-row">
-            <span class="stat-label">Least Humid</span>
-            <span class="stat-val">{{ "%.0f"|format(stats_all.humidity.min) }}%</span>
-        </div>
-        <div class="stat-row">
-            <span class="stat-label">Readings</span>
-            <span class="stat-val">{{ stats_all.count }}</span>
-        </div>
+        <div class="stat-row"><span>Hottest</span><span class="stat-val hi">{{ "%.1f"|format(stats_all.temperature.max) }}°C</span></div>
+        <div class="stat-row"><span>Coldest</span><span class="stat-val lo">{{ "%.1f"|format(stats_all.temperature.min) }}°C</span></div>
+        <div class="stat-row"><span>Most Humid</span><span class="stat-val">{{ "%.0f"|format(stats_all.humidity.max) }}%</span></div>
+        <div class="stat-row"><span>Least Humid</span><span class="stat-val">{{ "%.0f"|format(stats_all.humidity.min) }}%</span></div>
+        <div class="stat-row"><span>Readings</span><span class="stat-val">{{ stats_all.count }}</span></div>
     </div>
     {% endif %}
 </div>
 
+<!-- Calendar Heatmap -->
+<div class="heatmap-card">
+    <h3>📆 Temperature Calendar</h3>
+    <div class="heatmap-grid" id="heatmap-grid"></div>
+    <div class="heatmap-legend">
+        <span>Cold</span>
+        <div class="heatmap-legend-bar"></div>
+        <span>Hot</span>
+    </div>
+</div>
+
 {% else %}
 <div class="no-data">
-    <p>📡 Waiting for first weather reading…</p>
+    <p>📡 Waiting for first weather reading...</p>
     <p style="margin-top:8px;font-size:0.85rem;">Data arrives every 5 minutes from the balcony sensor.</p>
 </div>
 {% endif %}
@@ -299,12 +366,57 @@
 
 {% if current %}
 <script>
-// ── Chart setup ─────────────────────────────────────────
+// ── Helpers ──────────────────────────────────────────────
 const COLORS = {
     temp: { line: '#e53e3e', bg: 'rgba(229,62,62,0.08)' },
     hum:  { line: '#3182ce', bg: 'rgba(49,130,206,0.08)' },
     pres: { line: '#38a169', bg: 'rgba(56,161,105,0.08)' },
 };
+
+// ── Sparklines ───────────────────────────────────────────
+const sparkCharts = {};
+
+function renderSparklines(readings) {
+    Object.values(sparkCharts).forEach(c => c.destroy());
+    for (const k in sparkCharts) delete sparkCharts[k];
+    if (!readings.length) return;
+
+    const datasets = {
+        'spark-temp': { color: COLORS.temp.line, values: readings.map(r => r.temperature) },
+        'spark-hum':  { color: COLORS.hum.line,  values: readings.map(r => r.humidity) },
+        'spark-pres': { color: COLORS.pres.line, values: readings.map(r => r.pressure) },
+    };
+
+    for (const [canvasId, ds] of Object.entries(datasets)) {
+        const canvas = document.getElementById(canvasId);
+        if (!canvas) continue;
+        sparkCharts[canvasId] = new Chart(canvas, {
+            type: 'line',
+            data: {
+                labels: readings.map((_, i) => i),
+                datasets: [{
+                    data: ds.values,
+                    borderColor: ds.color,
+                    borderWidth: 1.5,
+                    fill: false,
+                    pointRadius: 0,
+                    tension: 0.3,
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: false,
+                plugins: { legend: { display: false }, tooltip: { enabled: false } },
+                scales: { x: { display: false }, y: { display: false, min: Math.min(...ds.values) - 1, max: Math.max(...ds.values) + 1 } },
+                layout: { padding: 0 },
+            }
+        });
+    }
+}
+
+// ── Main charts ──────────────────────────────────────────
+const charts = {};
 
 function makeChartConfig(label, color, data) {
     return {
@@ -330,58 +442,45 @@ function makeChartConfig(label, color, data) {
             plugins: { legend: { display: false } },
             scales: {
                 x: {
-                    display: true,
-                    ticks: {
-                        maxTicksLimit: 8,
-                        maxRotation: 0,
-                        color: '#94a3b8',
-                        font: { size: 10 },
-                    },
+                    ticks: { maxTicksLimit: 8, maxRotation: 0, color: '#94a3b8', font: { size: 10 } },
                     grid: { display: false },
                 },
                 y: {
-                    display: true,
-                    ticks: {
-                        color: '#94a3b8',
-                        font: { size: 10 },
-                        callback: v => v.toFixed(1),
-                    },
+                    ticks: { color: '#94a3b8', font: { size: 10 }, callback: v => v.toFixed(1) },
                     grid: { color: '#f1f5f9' },
                 }
             },
-            interaction: {
-                intersect: false,
-                mode: 'index',
-            },
+            interaction: { intersect: false, mode: 'index' },
         }
     };
 }
-
-const charts = {};
-const allData = {}; // cache per period
 
 function destroyCharts() {
     Object.values(charts).forEach(c => c.destroy());
     for (const k in charts) delete charts[k];
 }
 
+const historyCache = {};
+let sparkData = [];
+
 async function loadPeriod(period) {
-    // Update button styles
     document.querySelectorAll('.period-btn').forEach(b => {
         b.classList.toggle('active', b.dataset.period === period);
     });
 
-    // Fetch if not cached
-    if (!allData[period]) {
+    if (!historyCache[period]) {
         const resp = await fetch(`/api/weather/history?period=${period}`);
-        allData[period] = await resp.json();
+        historyCache[period] = await resp.json();
     }
-    renderCharts(allData[period]);
-}
+    const readings = historyCache[period];
 
-function renderCharts(readings) {
+    // If this is the 24h fetch, also seed sparklines
+    if (period === '24h' && readings.length) {
+        sparkData = readings;
+        renderSparklines(readings);
+    }
+
     destroyCharts();
-
     if (!readings.length) return;
 
     const datasets = {
@@ -393,8 +492,68 @@ function renderCharts(readings) {
     for (const [canvasId, ds] of Object.entries(datasets)) {
         const canvas = document.getElementById(canvasId);
         if (!canvas) continue;
-        const ctx = canvas.getContext('2d');
-        charts[canvasId] = new Chart(ctx, makeChartConfig(ds.label, ds.color, ds.values));
+        charts[canvasId] = new Chart(canvas, makeChartConfig(ds.label, ds.color, ds.values));
+    }
+}
+
+// ── Calendar heatmap ─────────────────────────────────────
+function tempToColor(temp) {
+    // Map -5..35°C to blue→green→yellow→red hue (240→0)
+    const clamped = Math.max(-5, Math.min(35, temp));
+    const hue = 240 - (clamped + 5) * (240 / 40);
+    const sat = 55;
+    const light = 58 - Math.abs(clamped - 15) * 0.4; // slightly darker at extremes
+    return `hsl(${Math.round(hue)},${sat}%,${Math.round(light)}%)`;
+}
+
+async function buildHeatmap() {
+    const grid = document.getElementById('heatmap-grid');
+    if (!grid) return;
+
+    try {
+        const resp = await fetch('/api/weather/daily?months=4');
+        const daily = await resp.json();
+        if (!daily.length) { grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:var(--text-secondary);padding:20px;">Not enough data yet</div>'; return; }
+
+        const dayMap = new Map(daily.map(d => [d.day, d]));
+        const firstDate = new Date(daily[0].day + 'T00:00:00');
+        const lastDate = new Date(daily[daily.length - 1].day + 'T00:00:00');
+        const start = new Date(firstDate);
+        start.setDate(start.getDate() - ((start.getDay() + 6) % 7)); // back to Monday
+        const end = new Date(lastDate);
+        end.setDate(end.getDate() + (7 - ((end.getDay() + 6) % 7) - 1)); // forward to Sunday
+
+        grid.innerHTML = '';
+        const labels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+        labels.forEach(l => {
+            const h = document.createElement('div');
+            h.className = 'heatmap-header';
+            h.textContent = l;
+            grid.appendChild(h);
+        });
+
+        const todayStr = new Date().toISOString().slice(0, 10);
+        const d = new Date(start);
+        while (d <= end) {
+            const key = d.toISOString().slice(0, 10);
+            const cell = document.createElement('div');
+            cell.className = 'heatmap-cell';
+
+            const info = dayMap.get(key);
+            if (info) {
+                cell.style.backgroundColor = tempToColor(info.temp_avg);
+                cell.title = `${key}\nMin: ${info.temp_min}°C  Max: ${info.temp_max}°C  Avg: ${info.temp_avg}°C`;
+                cell.innerHTML = `<span>${d.getDate()}</span>`;
+                if (key === todayStr) cell.style.boxShadow = 'inset 0 0 0 2px rgba(0,0,0,0.3)';
+            } else {
+                cell.classList.add('heatmap-empty');
+            }
+
+            grid.appendChild(cell);
+            d.setDate(d.getDate() + 1);
+        }
+    } catch (e) {
+        console.error('Heatmap error:', e);
     }
 }
 
@@ -403,8 +562,8 @@ document.querySelectorAll('.period-btn').forEach(btn => {
     btn.addEventListener('click', () => loadPeriod(btn.dataset.period));
 });
 
-// Load default period on page load
 loadPeriod('24h');
+buildHeatmap();
 </script>
 {% endif %}
 
