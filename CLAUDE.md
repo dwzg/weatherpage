@@ -63,6 +63,7 @@ curl -X POST http://localhost:8080/api/weather \
 ## GitHub Secrets
 
 - `APP_URL` — base URL of the running app. Used by the relay workflow (`main.yml`) to forward HA webhook data.
+- `API_KEY` — shared secret protecting the `POST /api/weather` endpoint. Must match between the app (env var), the relay workflow, and (eventually) Home Assistant.
 - `PORTAINER_WEBHOOK_URL` — Portainer webhook URL triggered by `deploy.yml` after a successful image push.
 - `GITHUB_TOKEN` — auto-provided, used for GHCR login and push.
 - `DELETE_PACKAGES_TOKEN` — personal access token with `delete:packages` scope for cleaning old untagged images.

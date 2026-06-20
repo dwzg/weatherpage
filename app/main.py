@@ -1,11 +1,14 @@
+import os
 from contextlib import asynccontextmanager
 from datetime import datetime
 
-from fastapi import FastAPI, Query, Request
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from . import database
+
+API_KEY = os.environ.get("API_KEY")
 
 
 @asynccontextmanager
@@ -25,8 +28,10 @@ _jinja_env = Environment(
 
 
 @app.post("/api/weather")
-async def post_weather(data: dict):
-    """Receive weather data. Accepts: {temperature, humidity, pressure, timestamp}."""
+async def post_weather(data: dict, request: Request):
+    """Receive weather data. Requires X-API-Key header if API_KEY is configured."""
+    if API_KEY and request.headers.get("X-API-Key") != API_KEY:
+        raise HTTPException(status_code=401, detail="invalid API key")
     await database.insert_reading(
         temperature=float(data["temperature"]),
         humidity=float(data["humidity"]),

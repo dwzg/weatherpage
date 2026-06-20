@@ -25,6 +25,7 @@ jobs:
         run: |
           curl -s -X POST "${{ secrets.APP_URL }}/api/weather" \
             -H "Content-Type: application/json" \
+            -H "X-API-Key: ${{ secrets.API_KEY }}" \
             -d '{
               "temperature": "${{ inputs.temperature }}",
               "humidity": "${{ inputs.humidity }}",
