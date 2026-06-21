@@ -519,9 +519,7 @@ function renderSparklines(readings) {
 // ── Main charts ──────────────────────────────────────────
 const charts = {};
 
-function formatTick(ts, period) {
-    if (ts == null) return '';
-    if (typeof ts !== 'string') return String(ts);
+function fmtTs(ts, period) {
     const d = new Date(ts.replace(' ', 'T'));
     if (isNaN(d.getTime())) return ts;
     const h = String(d.getHours()).padStart(2, '0');
@@ -542,7 +540,7 @@ function makeChartConfig(label, color, data, period) {
     return {
         type: 'line',
         data: {
-            labels: data.map(d => d.timestamp),
+            labels: data.map(d => fmtTs(d.timestamp, period)),
             datasets: [{
                 label: label,
                 data: data.map(d => d.value),
@@ -562,7 +560,7 @@ function makeChartConfig(label, color, data, period) {
             plugins: { legend: { display: false } },
             scales: {
                 x: {
-                    ticks: { maxTicksLimit: 8, maxRotation: 0, color: cs.tickColor, font: { size: 10 }, callback: v => formatTick(v, period) },
+                    ticks: { maxTicksLimit: 8, maxRotation: 0, color: cs.tickColor, font: { size: 10 } },
                     grid: { display: false },
                 },
                 y: {
