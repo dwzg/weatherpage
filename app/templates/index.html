@@ -466,6 +466,15 @@ const COLORS = {
     pres: { line: '#38a169', bg: 'rgba(56,161,105,0.08)' },
 };
 
+const isDark = () => window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+
+function chartStyle() {
+    return {
+        tickColor: isDark() ? '#a0aec0' : '#94a3b8',
+        gridColor: isDark() ? '#4a5568' : '#e2e8f0',
+    };
+}
+
 // ── Sparklines ───────────────────────────────────────────
 const sparkCharts = {};
 
@@ -511,6 +520,7 @@ function renderSparklines(readings) {
 const charts = {};
 
 function formatTick(ts, period) {
+    if (!ts) return '';
     const d = new Date(ts.replace(' ', 'T'));
     if (isNaN(d.getTime())) return ts;
     const h = String(d.getHours()).padStart(2, '0');
@@ -527,6 +537,7 @@ function formatTick(ts, period) {
 }
 
 function makeChartConfig(label, color, data, period) {
+    const cs = chartStyle();
     return {
         type: 'line',
         data: {
@@ -550,12 +561,12 @@ function makeChartConfig(label, color, data, period) {
             plugins: { legend: { display: false } },
             scales: {
                 x: {
-                    ticks: { maxTicksLimit: 8, maxRotation: 0, color: '#94a3b8', font: { size: 10 }, callback: v => formatTick(v, period) },
+                    ticks: { maxTicksLimit: 8, maxRotation: 0, color: cs.tickColor, font: { size: 10 }, callback: v => formatTick(v, period) },
                     grid: { display: false },
                 },
                 y: {
-                    ticks: { color: '#94a3b8', font: { size: 10 }, callback: v => v.toFixed(1) },
-                    grid: { color: '#f1f5f9' },
+                    ticks: { color: cs.tickColor, font: { size: 10 }, callback: v => v.toFixed(1) },
+                    grid: { color: cs.gridColor },
                 }
             },
             interaction: { intersect: false, mode: 'index' },
