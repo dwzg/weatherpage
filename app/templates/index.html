@@ -99,10 +99,16 @@
         .current-card .trend-steady  { color: #718096; }
 
         .current-card .sparkline {
-            margin-top: 6px;
+            display: block;
+            margin: 6px auto 0;
             width: 100%;
             max-width: 200px;
             height: 40px;
+        }
+        @media (max-width: 600px) {
+            .current-card .sparkline {
+                max-width: 100%;
+            }
         }
 
         .updated {
