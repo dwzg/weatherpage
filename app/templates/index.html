@@ -510,7 +510,23 @@ function renderSparklines(readings) {
 // ── Main charts ──────────────────────────────────────────
 const charts = {};
 
-function makeChartConfig(label, color, data) {
+function formatTick(ts, period) {
+    const d = new Date(ts.replace(' ', 'T'));
+    if (isNaN(d.getTime())) return ts;
+    const h = String(d.getHours()).padStart(2, '0');
+    const m = String(d.getMinutes()).padStart(2, '0');
+    const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+    switch (period) {
+        case '24h': return `${h}:${m}`;
+        case '7d':  return `${days[d.getDay()]} ${h}:${m}`;
+        case '30d': return `${months[d.getMonth()]} ${d.getDate()}`;
+        case 'all': return `${months[d.getMonth()]} '${String(d.getFullYear()).slice(2)}`;
+        default:    return `${h}:${m}`;
+    }
+}
+
+function makeChartConfig(label, color, data, period) {
     return {
         type: 'line',
         data: {
@@ -534,7 +550,7 @@ function makeChartConfig(label, color, data) {
             plugins: { legend: { display: false } },
             scales: {
                 x: {
-                    ticks: { maxTicksLimit: 8, maxRotation: 0, color: '#94a3b8', font: { size: 10 } },
+                    ticks: { maxTicksLimit: 8, maxRotation: 0, color: '#94a3b8', font: { size: 10 }, callback: v => formatTick(v, period) },
                     grid: { display: false },
                 },
                 y: {
@@ -584,7 +600,7 @@ async function loadPeriod(period) {
     for (const [canvasId, ds] of Object.entries(datasets)) {
         const canvas = document.getElementById(canvasId);
         if (!canvas) continue;
-        charts[canvasId] = new Chart(canvas, makeChartConfig(ds.label, ds.color, ds.values));
+        charts[canvasId] = new Chart(canvas, makeChartConfig(ds.label, ds.color, ds.values, period));
     }
 }
 
