@@ -520,7 +520,8 @@ function renderSparklines(readings) {
 const charts = {};
 
 function formatTick(ts, period) {
-    if (!ts) return '';
+    if (ts == null) return '';
+    if (typeof ts !== 'string') return String(ts);
     const d = new Date(ts.replace(' ', 'T'));
     if (isNaN(d.getTime())) return ts;
     const h = String(d.getHours()).padStart(2, '0');
