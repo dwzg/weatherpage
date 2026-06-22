@@ -812,11 +812,34 @@ async function pollStatus() {
             sparkData = s.spark_data;
             renderSparklines(s.spark_data);
         }
+
+        // Main charts — update if on 24h view
+        const activeBtn = document.querySelector('.period-btn.active');
+        if (activeBtn && activeBtn.dataset.period === '24h') {
+            const histResp = await fetch('/api/weather/history?period=24h');
+            const readings = await histResp.json();
+            if (readings.length) {
+                const dsDefs = {
+                    'chart-temp': { label: 'Temperature', color: COLORS.temp, values: readings.map(r => ({ timestamp: r.timestamp, value: r.temperature })) },
+                    'chart-hum':  { label: 'Humidity', color: COLORS.hum, values: readings.map(r => ({ timestamp: r.timestamp, value: r.humidity })) },
+                    'chart-pres': { label: 'Pressure', color: COLORS.pres, values: readings.map(r => ({ timestamp: r.timestamp, value: r.pressure })) },
+                };
+                for (const [canvasId, ds] of Object.entries(dsDefs)) {
+                    const existing = charts[canvasId];
+                    if (existing) {
+                        existing.data.labels = ds.values.map(d => fmtTs(d.timestamp, '24h'));
+                        existing.data.datasets[0].data = ds.values.map(d => d.value);
+                        existing.update();
+                    }
+                }
+            }
+        }
     } catch (e) {
         // Silently ignore fetch errors
     }
 }
 
+pollStatus();
 setInterval(pollStatus, 60_000);
 </script>
 {% endif %}
