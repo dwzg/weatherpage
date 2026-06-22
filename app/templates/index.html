@@ -282,57 +282,63 @@
     <p class="subtitle">Live from the balcony</p>
 </header>
 
-<div id="label-forecast" style="text-align:center;margin-bottom:20px;">
 {% if forecast %}
+<div style="text-align:center;margin-bottom:20px;">
     <span style="background:var(--card-bg);color:var(--text);padding:8px 18px;border-radius:20px;font-size:0.9rem;box-shadow:var(--shadow);border:1px solid var(--border);">
     {% if forecast == 'Rain likely' %}🌧️{% elif forecast == 'Rain possible' %}🌥️{% elif 'Clearing' in forecast %}🌤️{% elif 'worsening' in forecast %}☁️{% else %}🌤️{% endif %}
     {{ forecast }}
     </span>
-{% endif %}
 </div>
+{% endif %}
 
-<div id="label-frost" style="text-align:center;margin-bottom:16px;">
 {% if frost_warning %}
+<div style="text-align:center;margin-bottom:16px;">
     <span style="background:#e53e3e;color:#fff;padding:8px 18px;border-radius:20px;font-size:0.9rem;font-weight:600;">❄️ Frost warning — protect your plants!</span>
-{% endif %}
 </div>
+{% endif %}
 
 {% if current %}
 <!-- Current conditions -->
 <div class="current-grid">
     <div class="current-card temp">
         <div class="label">Temperature</div>
-        <div class="value" id="val-temp">{{ "%.1f"|format(current.temperature) }}<span class="unit">°C</span></div>
-        <div class="detail" id="detail-heat">{% if heat_index is not none %}Feels like {{ "%.1f"|format(heat_index) }}°C{% endif %}</div>
-        <div class="detail" id="detail-dew">{% if dew_point is not none %}Dew point {{ "%.1f"|format(dew_point) }}°C{% endif %}</div>
-        <div class="detail" id="detail-temp-24h" style="margin-top:2px;font-size:0.75rem;{% if yesterday %}color:{% if current.temperature > yesterday.temperature %}#e53e3e{% elif current.temperature < yesterday.temperature %}#3182ce{% else %}inherit{% endif %}{% endif %}">
-            {% if yesterday %}vs 24h ago: {{ "%+.1f"|format(current.temperature - yesterday.temperature) }}°C{% endif %}
+        <div class="value">{{ "%.1f"|format(current.temperature) }}<span class="unit">°C</span></div>
+        {% if heat_index is not none %}
+        <div class="detail">Feels like {{ "%.1f"|format(heat_index) }}°C</div>
+        {% endif %}
+        {% if dew_point is not none %}
+        <div class="detail">Dew point {{ "%.1f"|format(dew_point) }}°C</div>
+        {% endif %}
+        {% if yesterday %}
+        <div class="detail" style="margin-top:2px;font-size:0.75rem;color:{% if current.temperature > yesterday.temperature %}#e53e3e{% elif current.temperature < yesterday.temperature %}#3182ce{% else %}inherit{% endif %}">
+            vs 24h ago: {{ "%+.1f"|format(current.temperature - yesterday.temperature) }}°C
         </div>
+        {% endif %}
         <canvas class="sparkline" id="spark-temp"></canvas>
     </div>
     <div class="current-card hum">
         <div class="label">Humidity</div>
-        <div class="value" id="val-hum">{{ "%.0f"|format(current.humidity) }}<span class="unit">%</span></div>
-        <div class="detail" id="detail-hum-24h" style="margin-top:2px;font-size:0.75rem;{% if yesterday %}color:{% if current.humidity > yesterday.humidity %}#3182ce{% elif current.humidity < yesterday.humidity %}#e53e3e{% else %}inherit{% endif %}{% endif %}">
-            {% if yesterday %}vs 24h ago: {{ "%+.0f"|format(current.humidity - yesterday.humidity) }}%{% endif %}
+        <div class="value">{{ "%.0f"|format(current.humidity) }}<span class="unit">%</span></div>
+        {% if yesterday %}
+        <div class="detail" style="margin-top:2px;font-size:0.75rem;color:{% if current.humidity > yesterday.humidity %}#3182ce{% elif current.humidity < yesterday.humidity %}#e53e3e{% else %}inherit{% endif %}">
+            vs 24h ago: {{ "%+.0f"|format(current.humidity - yesterday.humidity) }}%
         </div>
+        {% endif %}
         <canvas class="sparkline" id="spark-hum"></canvas>
     </div>
     <div class="current-card pres">
         <div class="label">Pressure</div>
-        <div class="value" id="val-pres">{{ "%.0f"|format(current.pressure) }}<span class="unit">hPa</span></div>
-        <div class="detail" id="detail-pres-trend">
-            {% if pressure_trend %}
-            <span class="trend-{{ pressure_trend.direction }}">
+        <div class="value">{{ "%.0f"|format(current.pressure) }}<span class="unit">hPa</span></div>
+        {% if pressure_trend %}
+        <div class="detail trend-{{ pressure_trend.direction }}">
             {% if pressure_trend.direction == 'rising' %}↑{% elif pressure_trend.direction == 'falling' %}↓{% else %}→{% endif %}
             {{ "%+.1f"|format(pressure_trend.delta) }} hPa
-            </span>
-            {% endif %}
         </div>
+        {% endif %}
         <canvas class="sparkline" id="spark-pres"></canvas>
     </div>
 </div>
-<p class="updated" id="label-updated">Last updated: {{ current.timestamp }}</p>
+<p class="updated">Last updated: {{ current.timestamp }}</p>
 
 <div class="period-selector">
     <button class="period-btn active" data-period="24h">24 Hours</button>
@@ -732,84 +738,6 @@ document.querySelectorAll('.period-btn').forEach(btn => {
 
 loadPeriod('24h');
 buildHeatmap();
-
-// ── Live polling ──────────────────────────────────────────
-async function pollStatus() {
-    try {
-        const resp = await fetch('/api/weather/status');
-        const s = await resp.json();
-        if (s.error) return;
-
-        // Current values
-        document.getElementById('val-temp').innerHTML = `${s.current.temperature.toFixed(1)}<span class="unit">°C</span>`;
-        document.getElementById('val-hum').innerHTML = `${s.current.humidity.toFixed(0)}<span class="unit">%</span>`;
-        document.getElementById('val-pres').innerHTML = `${s.current.pressure.toFixed(0)}<span class="unit">hPa</span>`;
-
-        // Detail rows
-        const dHeat = document.getElementById('detail-heat');
-        dHeat.textContent = s.heat_index != null ? `Feels like ${s.heat_index.toFixed(1)}°C` : '';
-
-        const dDew = document.getElementById('detail-dew');
-        dDew.textContent = s.dew_point != null ? `Dew point ${s.dew_point.toFixed(1)}°C` : '';
-
-        if (s.yesterday) {
-            const tDiff = s.current.temperature - s.yesterday.temperature;
-            const hDiff = s.current.humidity - s.yesterday.humidity;
-            const dTemp24 = document.getElementById('detail-temp-24h');
-            dTemp24.textContent = `vs 24h ago: ${tDiff >= 0 ? '+' : ''}${tDiff.toFixed(1)}°C`;
-            dTemp24.style.color = tDiff > 0 ? '#e53e3e' : tDiff < 0 ? '#3182ce' : 'inherit';
-
-            const dHum24 = document.getElementById('detail-hum-24h');
-            dHum24.textContent = `vs 24h ago: ${hDiff >= 0 ? '+' : ''}${hDiff.toFixed(0)}%`;
-            dHum24.style.color = hDiff > 0 ? '#3182ce' : hDiff < 0 ? '#e53e3e' : 'inherit';
-        }
-
-        // Pressure trend
-        const dPres = document.getElementById('detail-pres-trend');
-        if (s.pressure_trend) {
-            const pt = s.pressure_trend;
-            const arrow = pt.direction === 'rising' ? '↑' : pt.direction === 'falling' ? '↓' : '→';
-            dPres.innerHTML = `<span class="trend-${pt.direction}">${arrow} ${pt.delta >= 0 ? '+' : ''}${pt.delta.toFixed(1)} hPa</span>`;
-        } else {
-            dPres.innerHTML = '';
-        }
-
-        // Forecast
-        const fDiv = document.getElementById('label-forecast');
-        if (s.forecast && s.forecast !== 'Not enough data') {
-            let emoji = '🌤️';
-            if (s.forecast === 'Rain likely') emoji = '🌧️';
-            else if (s.forecast === 'Rain possible') emoji = '🌥️';
-            else if (s.forecast.includes('Clearing')) emoji = '🌤️';
-            else if (s.forecast.includes('worsening')) emoji = '☁️';
-            fDiv.innerHTML = `<span style="background:var(--card-bg);color:var(--text);padding:8px 18px;border-radius:20px;font-size:0.9rem;box-shadow:var(--shadow);border:1px solid var(--border);">${emoji} ${s.forecast}</span>`;
-        } else {
-            fDiv.innerHTML = '';
-        }
-
-        // Frost warning
-        const frostDiv = document.getElementById('label-frost');
-        if (s.frost_warning) {
-            frostDiv.innerHTML = '<span style="background:#e53e3e;color:#fff;padding:8px 18px;border-radius:20px;font-size:0.9rem;font-weight:600;">❄️ Frost warning — protect your plants!</span>';
-        } else {
-            frostDiv.innerHTML = '';
-        }
-
-        // Timestamp
-        document.getElementById('label-updated').textContent = `Last updated: ${s.current.timestamp}`;
-
-        // Sparklines
-        if (s.spark_data && s.spark_data.length) {
-            sparkData = s.spark_data;
-            renderSparklines(s.spark_data);
-        }
-
-    } catch (e) {
-        // Silently ignore fetch errors (e.g. during navigation)
-    }
-}
-
-setInterval(pollStatus, 60_000);
 </script>
 {% endif %}
 

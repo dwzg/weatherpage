@@ -83,9 +83,7 @@ async def get_current() -> dict | None:
 def _period_to_cutoff(period: str) -> datetime | None:
     """Convert a period string to a cutoff datetime in local time. Returns None for 'all'."""
     now = _now()
-    if period == "3h":
-        return now - timedelta(hours=3)
-    elif period == "24h":
+    if period == "24h":
         return now - timedelta(hours=24)
     elif period == "7d":
         return now - timedelta(days=7)
