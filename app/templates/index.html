@@ -528,7 +528,7 @@ function fmtTs(ts, period) {
     const days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
     switch (period) {
         case '24h': return `${h}:${m}`;
-        case '7d':  return `${days[d.getDay()]} ${h}:${m}`;
+        case '7d':  return `${days[d.getDay()]}`;
         case '30d': return `${months[d.getMonth()]} ${d.getDate()}`;
         case 'all': return `${months[d.getMonth()]} '${String(d.getFullYear()).slice(2)}`;
         default:    return `${h}:${m}`;
