@@ -93,6 +93,35 @@ async def get_current():
     return reading or {"error": "no data"}
 
 
+@app.get("/api/weather/status")
+async def get_status():
+    """Return all dashboard data for live polling: current, computed values, sparkline data."""
+    current = await database.get_current()
+    if not current:
+        return {"error": "no data"}
+
+    t = current["temperature"]
+    h = current["humidity"]
+    dew_point = compute_dew_point(t, h)
+    heat_index = compute_heat_index(t, h)
+    pressure_trend = await database.get_pressure_trend()
+    forecast = compute_forecast(pressure_trend, h)
+    frost_warning = t < 2.0
+    yesterday = await database.get_reading_ago(24)
+    spark_data = await database.get_history("3h")
+
+    return {
+        "current": current,
+        "dew_point": dew_point,
+        "heat_index": heat_index,
+        "pressure_trend": pressure_trend,
+        "forecast": forecast,
+        "frost_warning": frost_warning,
+        "yesterday": yesterday,
+        "spark_data": spark_data,
+    }
+
+
 @app.get("/api/weather/history")
 async def get_history(period: str = Query("24h", pattern="^(24h|7d|30d|all|today)$")):
     """Return all readings for the given period."""
