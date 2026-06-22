@@ -583,7 +583,6 @@ function destroyCharts() {
 }
 
 const historyCache = {};
-let sparkData = [];
 
 async function loadPeriod(period) {
     document.querySelectorAll('.period-btn').forEach(b => {
@@ -595,12 +594,6 @@ async function loadPeriod(period) {
         historyCache[period] = await resp.json();
     }
     const readings = historyCache[period];
-
-    // If this is the 24h fetch, also seed sparklines
-    if (period === '24h' && readings.length) {
-        sparkData = readings;
-        renderSparklines(readings);
-    }
 
     destroyCharts();
     if (!readings.length) return;
@@ -809,7 +802,6 @@ async function pollStatus() {
 
         // Sparklines (updates in-place, no destroy/recreate)
         if (s.spark_data && s.spark_data.length) {
-            sparkData = s.spark_data;
             renderSparklines(s.spark_data);
         }
 
