@@ -354,9 +354,10 @@ async def get_daily_extremes() -> dict | None:
 
 
 async def get_climate_stats() -> dict:
-    """Return monthly and yearly temperature averages."""
+    """Return monthly (all-time + per-year) and yearly temperature averages."""
     db = await get_db()
     try:
+        # All-time monthly aggregates (for the climate chart)
         cursor = await db.execute("""
             SELECT
                 CAST(strftime('%m', timestamp) AS INTEGER) as month,
@@ -372,14 +373,49 @@ async def get_climate_stats() -> dict:
         rows = await cursor.fetchall()
         db_monthly = {r["month"]: dict(r) for r in rows}
 
-        # Pad to all 12 months (Jan–Dec) so the chart always shows the full year
-        monthly = []
+        monthly_all = []
         for m in range(1, 13):
             if m in db_monthly:
-                monthly.append(db_monthly[m])
+                monthly_all.append(db_monthly[m])
             else:
-                monthly.append({"month": m, "temp_avg": None, "temp_min": None, "temp_max": None, "hum_avg": None, "readings": 0})
+                monthly_all.append({"month": m, "temp_avg": None, "temp_min": None, "temp_max": None, "hum_avg": None, "readings": 0})
 
+        # Per-year monthly data
+        cursor = await db.execute("""
+            SELECT
+                CAST(strftime('%Y', timestamp) AS INTEGER) as year,
+                CAST(strftime('%m', timestamp) AS INTEGER) as month,
+                ROUND(AVG(temperature), 1) as temp_avg,
+                ROUND(MIN(temperature), 1) as temp_min,
+                ROUND(MAX(temperature), 1) as temp_max,
+                ROUND(AVG(humidity), 1) as hum_avg,
+                COUNT(*) as readings
+            FROM weather_readings
+            GROUP BY year, month
+            ORDER BY year, month
+        """)
+        per_year = await cursor.fetchall()
+
+        years_set = set()
+        by_year_month = {}  # (year, month) -> row
+        for r in per_year:
+            y, m = r["year"], r["month"]
+            years_set.add(y)
+            by_year_month[(y, m)] = dict(r)
+
+        years = sorted(years_set)
+        monthly_by_year = {}
+        for y in years:
+            months = []
+            for m in range(1, 13):
+                key = (y, m)
+                if key in by_year_month:
+                    months.append(by_year_month[key])
+                else:
+                    months.append({"month": m, "temp_avg": None, "temp_min": None, "temp_max": None, "hum_avg": None, "readings": 0})
+            monthly_by_year[str(y)] = months
+
+        # Yearly aggregates
         cursor = await db.execute("""
             SELECT
                 CAST(strftime('%Y', timestamp) AS INTEGER) as year,
@@ -394,7 +430,12 @@ async def get_climate_stats() -> dict:
         """)
         yearly = [dict(r) for r in await cursor.fetchall()]
 
-        return {"monthly": monthly, "yearly": yearly}
+        return {
+            "monthly_all": monthly_all,
+            "years": years,
+            "monthly_by_year": monthly_by_year,
+            "yearly": yearly,
+        }
     finally:
         await db.close()
 

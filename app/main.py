@@ -186,6 +186,7 @@ async def serve_ui(request: Request):
         extremes_all=extremes_all,
         daily_extremes=daily_extremes,
         climate=climate,
+        current_year=datetime.now(tz=TIMEZONE).year,
         forecast=forecast,
         frost_warning=frost_warning,
         yesterday=yesterday,
