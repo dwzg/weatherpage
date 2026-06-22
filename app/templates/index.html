@@ -480,8 +480,6 @@ function chartStyle() {
 const sparkCharts = {};
 
 function renderSparklines(readings) {
-    Object.values(sparkCharts).forEach(c => c.destroy());
-    for (const k in sparkCharts) delete sparkCharts[k];
     if (!readings.length) return;
 
     const datasets = {
@@ -493,27 +491,38 @@ function renderSparklines(readings) {
     for (const [canvasId, ds] of Object.entries(datasets)) {
         const canvas = document.getElementById(canvasId);
         if (!canvas) continue;
-        sparkCharts[canvasId] = new Chart(canvas, {
-            type: 'line',
-            data: {
-                labels: readings.map((_, i) => i),
-                datasets: [{
-                    data: ds.values,
-                    borderColor: ds.color,
-                    borderWidth: 1.5,
-                    fill: false,
-                    pointRadius: 0,
-                    tension: 0.3,
-                }]
-            },
-            options: {
-                responsive: false,
-                animation: false,
-                plugins: { legend: { display: false }, tooltip: { enabled: false } },
-                scales: { x: { display: false }, y: { display: false, min: Math.min(...ds.values) - 1, max: Math.max(...ds.values) + 1 } },
-                layout: { padding: 0 },
-            }
-        });
+
+        const existing = sparkCharts[canvasId];
+        if (existing) {
+            // Update data in-place — avoids canvas resize from destroy/recreate
+            existing.data.labels = readings.map((_, i) => i);
+            existing.data.datasets[0].data = ds.values;
+            existing.options.scales.y.min = Math.min(...ds.values) - 1;
+            existing.options.scales.y.max = Math.max(...ds.values) + 1;
+            existing.update();
+        } else {
+            sparkCharts[canvasId] = new Chart(canvas, {
+                type: 'line',
+                data: {
+                    labels: readings.map((_, i) => i),
+                    datasets: [{
+                        data: ds.values,
+                        borderColor: ds.color,
+                        borderWidth: 1.5,
+                        fill: false,
+                        pointRadius: 0,
+                        tension: 0.3,
+                    }]
+                },
+                options: {
+                    responsive: false,
+                    animation: false,
+                    plugins: { legend: { display: false }, tooltip: { enabled: false } },
+                    scales: { x: { display: false }, y: { display: false, min: Math.min(...ds.values) - 1, max: Math.max(...ds.values) + 1 } },
+                    layout: { padding: 0 },
+                }
+            });
+        }
     }
 }
 
