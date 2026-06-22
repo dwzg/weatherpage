@@ -458,11 +458,14 @@
 
 {% if climate and climate.monthly %}
 {% set months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'] %}
-<div class="stats-card" style="grid-column: 1 / -1;">
+<div class="chart-card" style="grid-column: 1 / -1;">
     <h3>📊 Climate</h3>
+    <canvas id="chart-climate" style="max-height:240px;"></canvas>
+</div>
+<div class="stats-card" style="grid-column: 1 / -1;">
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;">
         <div>
-            <h4 style="font-size:0.8rem;color:var(--text-secondary);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.05em;">Monthly Averages</h4>
+            <h4 style="font-size:0.8rem;color:var(--text-secondary);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.05em;">Monthly Details</h4>
             {% for m in climate.monthly %}
             <div class="stat-row">
                 <span class="stat-label">{{ months[m.month - 1] }}</span>
@@ -487,6 +490,10 @@
         {% endif %}
     </div>
 </div>
+{% endif %}
+
+{% if climate and climate.monthly %}
+<script id="climate-data" type="application/json">{"monthly": [{% for m in climate.monthly %}{"month": {{ m.month }}, "avg": {{ m.temp_avg }}, "min": {{ m.temp_min }}, "max": {{ m.temp_max }}}{% if not loop.last %},{% endif %}{% endfor %}]}</script>
 {% endif %}
 
 <!-- Calendar Heatmap -->
@@ -786,6 +793,77 @@ async function buildHeatmap() {
     }
 }
 
+// ── Climate chart ────────────────────────────────────────
+function buildClimateChart() {
+    const el = document.getElementById('climate-data');
+    if (!el) return;
+    const data = JSON.parse(el.textContent);
+    const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const cs = chartStyle();
+
+    const canvas = document.getElementById('chart-climate');
+    if (!canvas) return;
+    new Chart(canvas, {
+        type: 'line',
+        data: {
+            labels: data.monthly.map(m => months[m.month - 1]),
+            datasets: [{
+                label: 'Max',
+                data: data.monthly.map(m => m.max),
+                borderColor: '#e53e3e',
+                backgroundColor: 'transparent',
+                borderWidth: 1.5,
+                borderDash: [4, 3],
+                pointRadius: 3,
+                pointHoverRadius: 5,
+                tension: 0.3,
+            }, {
+                label: 'Average',
+                data: data.monthly.map(m => m.avg),
+                borderColor: '#38a169',
+                backgroundColor: 'transparent',
+                borderWidth: 2.5,
+                pointRadius: 4,
+                pointHoverRadius: 6,
+                tension: 0.3,
+            }, {
+                label: 'Min',
+                data: data.monthly.map(m => m.min),
+                borderColor: '#3182ce',
+                backgroundColor: 'transparent',
+                borderWidth: 1.5,
+                borderDash: [4, 3],
+                pointRadius: 3,
+                pointHoverRadius: 5,
+                tension: 0.3,
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            animation: false,
+            plugins: {
+                legend: {
+                    display: true,
+                    position: 'bottom',
+                    labels: { color: cs.tickColor, font: { size: 10 }, boxWidth: 20, padding: 16 }
+                }
+            },
+            scales: {
+                x: {
+                    ticks: { color: cs.tickColor, font: { size: 10 } },
+                    grid: { display: false },
+                },
+                y: {
+                    ticks: { color: cs.tickColor, font: { size: 10 }, callback: v => v.toFixed(0) + '°' },
+                    grid: { color: cs.gridColor },
+                }
+            },
+            interaction: { intersect: false, mode: 'index' },
+        }
+    });
+}
+
 // ── Init ─────────────────────────────────────────────────
 document.querySelectorAll('.period-btn').forEach(btn => {
     btn.addEventListener('click', () => loadPeriod(btn.dataset.period));
@@ -793,6 +871,7 @@ document.querySelectorAll('.period-btn').forEach(btn => {
 
 loadPeriod('24h');
 buildHeatmap();
+buildClimateChart();
 
 // ── Live polling ──────────────────────────────────────────
 async function pollStatus() {
