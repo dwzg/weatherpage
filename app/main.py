@@ -165,11 +165,13 @@ async def serve_ui(request: Request):
 
     extremes_all = None
     daily_extremes = None
+    climate = None
     if stats_today and stats_today.get("count", 0) > 0:
         extremes_today = await database.get_extremes_with_times("today")
     if stats_all and stats_all.get("count", 0) > 0:
         extremes_all = await database.get_extremes_with_times("all")
         daily_extremes = await database.get_daily_extremes()
+        climate = await database.get_climate_stats()
 
     template = _jinja_env.get_template("index.html")
     html = template.render(
@@ -183,6 +185,7 @@ async def serve_ui(request: Request):
         extremes_today=extremes_today,
         extremes_all=extremes_all,
         daily_extremes=daily_extremes,
+        climate=climate,
         forecast=forecast,
         frost_warning=frost_warning,
         yesterday=yesterday,

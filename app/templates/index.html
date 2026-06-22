@@ -456,6 +456,39 @@
     {% endif %}
 </div>
 
+{% if climate and climate.monthly %}
+{% set months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'] %}
+<div class="stats-card" style="grid-column: 1 / -1;">
+    <h3>📊 Climate</h3>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;">
+        <div>
+            <h4 style="font-size:0.8rem;color:var(--text-secondary);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.05em;">Monthly Averages</h4>
+            {% for m in climate.monthly %}
+            <div class="stat-row">
+                <span class="stat-label">{{ months[m.month - 1] }}</span>
+                <span class="stat-spacer"></span>
+                <span class="stat-val">{{ "%.1f"|format(m.temp_avg) }}°C</span>
+                <span style="font-size:0.7rem;color:var(--text-secondary);">min {{ "%.1f"|format(m.temp_min) }} max {{ "%.1f"|format(m.temp_max) }}</span>
+            </div>
+            {% endfor %}
+        </div>
+        {% if climate.yearly and climate.yearly|length > 0 %}
+        <div>
+            <h4 style="font-size:0.8rem;color:var(--text-secondary);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.05em;">Yearly Averages</h4>
+            {% for y in climate.yearly %}
+            <div class="stat-row">
+                <span class="stat-label">{{ y.year }}</span>
+                <span class="stat-spacer"></span>
+                <span class="stat-val">{{ "%.1f"|format(y.temp_avg) }}°C</span>
+                <span style="font-size:0.7rem;color:var(--text-secondary);">min {{ "%.1f"|format(y.temp_min) }} max {{ "%.1f"|format(y.temp_max) }}</span>
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endif %}
+
 <!-- Calendar Heatmap -->
 <div class="heatmap-card">
     <h3>📆 Temperature Calendar</h3>

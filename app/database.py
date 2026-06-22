@@ -353,6 +353,43 @@ async def get_daily_extremes() -> dict | None:
         await db.close()
 
 
+async def get_climate_stats() -> dict:
+    """Return monthly and yearly temperature averages."""
+    db = await get_db()
+    try:
+        cursor = await db.execute("""
+            SELECT
+                CAST(strftime('%m', timestamp) AS INTEGER) as month,
+                ROUND(AVG(temperature), 1) as temp_avg,
+                ROUND(MIN(temperature), 1) as temp_min,
+                ROUND(MAX(temperature), 1) as temp_max,
+                ROUND(AVG(humidity), 1) as hum_avg,
+                COUNT(*) as readings
+            FROM weather_readings
+            GROUP BY month
+            ORDER BY month
+        """)
+        monthly = [dict(r) for r in await cursor.fetchall()]
+
+        cursor = await db.execute("""
+            SELECT
+                CAST(strftime('%Y', timestamp) AS INTEGER) as year,
+                ROUND(AVG(temperature), 1) as temp_avg,
+                ROUND(MIN(temperature), 1) as temp_min,
+                ROUND(MAX(temperature), 1) as temp_max,
+                ROUND(AVG(humidity), 1) as hum_avg,
+                COUNT(*) as readings
+            FROM weather_readings
+            GROUP BY year
+            ORDER BY year
+        """)
+        yearly = [dict(r) for r in await cursor.fetchall()]
+
+        return {"monthly": monthly, "yearly": yearly}
+    finally:
+        await db.close()
+
+
 async def get_reading_ago(hours: int = 24) -> dict | None:
     """Get the reading closest to N hours ago."""
     db = await get_db()
