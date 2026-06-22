@@ -407,18 +407,18 @@
             <span class="stat-time">{{ extremes_all.temperature.min.timestamp[:10] }}</span>
         </div>
         {% endif %}
-        {% if extremes_all.humidity.max %}
+        {% if extremes_all.pressure.max %}
         <div class="stat-row">
-            <span class="stat-label">Most Humid</span>
+            <span class="stat-label">Highest pressure</span>
             <span class="stat-spacer"></span>
-            <span class="stat-val">{{ "%.0f"|format(extremes_all.humidity.max.value) }}%</span>
-            <span class="stat-time">{{ extremes_all.humidity.max.timestamp[:10] }}</span>
+            <span class="stat-val">{{ "%.0f"|format(extremes_all.pressure.max.value) }} hPa</span>
+            <span class="stat-time">{{ extremes_all.pressure.max.timestamp[:10] }}</span>
         </div>
         <div class="stat-row">
-            <span class="stat-label">Least Humid</span>
+            <span class="stat-label">Lowest pressure</span>
             <span class="stat-spacer"></span>
-            <span class="stat-val">{{ "%.0f"|format(extremes_all.humidity.min.value) }}%</span>
-            <span class="stat-time">{{ extremes_all.humidity.min.timestamp[:10] }}</span>
+            <span class="stat-val">{{ "%.0f"|format(extremes_all.pressure.min.value) }} hPa</span>
+            <span class="stat-time">{{ extremes_all.pressure.min.timestamp[:10] }}</span>
         </div>
         {% endif %}
         <div class="stat-row"><span class="stat-label">Readings</span><span class="stat-spacer"></span><span class="stat-val">{{ stats_all.count }}</span></div>
@@ -428,8 +428,8 @@
         <h3>🏆 All-Time Records</h3>
         <div class="stat-row"><span class="stat-label">Hottest</span><span class="stat-spacer"></span><span class="stat-val hi">{{ "%.1f"|format(stats_all.temperature.max) }}°C</span></div>
         <div class="stat-row"><span class="stat-label">Coldest</span><span class="stat-spacer"></span><span class="stat-val lo">{{ "%.1f"|format(stats_all.temperature.min) }}°C</span></div>
-        <div class="stat-row"><span class="stat-label">Most Humid</span><span class="stat-spacer"></span><span class="stat-val">{{ "%.0f"|format(stats_all.humidity.max) }}%</span></div>
-        <div class="stat-row"><span class="stat-label">Least Humid</span><span class="stat-spacer"></span><span class="stat-val">{{ "%.0f"|format(stats_all.humidity.min) }}%</span></div>
+        <div class="stat-row"><span class="stat-label">Highest pressure</span><span class="stat-spacer"></span><span class="stat-val">{{ "%.0f"|format(stats_all.pressure.max) }} hPa</span></div>
+        <div class="stat-row"><span class="stat-label">Lowest pressure</span><span class="stat-spacer"></span><span class="stat-val">{{ "%.0f"|format(stats_all.pressure.min) }} hPa</span></div>
         <div class="stat-row"><span class="stat-label">Readings</span><span class="stat-spacer"></span><span class="stat-val">{{ stats_all.count }}</span></div>
     </div>
     {% endif %}
