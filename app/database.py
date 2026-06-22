@@ -325,6 +325,34 @@ async def get_daily_summaries(months: int = 3) -> list[dict]:
         await db.close()
 
 
+async def get_daily_extremes() -> dict | None:
+    """Return the days with highest/lowest average temperature and humidity."""
+    db = await get_db()
+    try:
+        cursor = await db.execute("""
+            WITH daily AS (
+                SELECT date(timestamp) as day,
+                       AVG(temperature) as temp_avg,
+                       AVG(humidity) as hum_avg
+                FROM weather_readings
+                GROUP BY date(timestamp)
+            )
+            SELECT
+                (SELECT day FROM daily ORDER BY temp_avg DESC LIMIT 1) as hottest_avg_day,
+                (SELECT temp_avg FROM daily ORDER BY temp_avg DESC LIMIT 1) as hottest_avg,
+                (SELECT day FROM daily ORDER BY temp_avg ASC LIMIT 1) as coldest_avg_day,
+                (SELECT temp_avg FROM daily ORDER BY temp_avg ASC LIMIT 1) as coldest_avg,
+                (SELECT day FROM daily ORDER BY hum_avg DESC LIMIT 1) as most_humid_avg_day,
+                (SELECT hum_avg FROM daily ORDER BY hum_avg DESC LIMIT 1) as most_humid_avg,
+                (SELECT day FROM daily ORDER BY hum_avg ASC LIMIT 1) as least_humid_avg_day,
+                (SELECT hum_avg FROM daily ORDER BY hum_avg ASC LIMIT 1) as least_humid_avg
+        """)
+        row = await cursor.fetchone()
+        return dict(row) if row and row["hottest_avg_day"] else None
+    finally:
+        await db.close()
+
+
 async def get_reading_ago(hours: int = 24) -> dict | None:
     """Get the reading closest to N hours ago."""
     db = await get_db()

@@ -416,6 +416,32 @@
             <span class="stat-time">{{ extremes_all.pressure.min.timestamp[:10] }}</span>
         </div>
         {% endif %}
+        {% if daily_extremes %}
+        <div class="stat-row">
+            <span class="stat-label">Warmest day (avg)</span>
+            <span class="stat-spacer"></span>
+            <span class="stat-val hi">{{ "%.1f"|format(daily_extremes.hottest_avg) }}°C</span>
+            <span class="stat-time">{{ daily_extremes.hottest_avg_day }}</span>
+        </div>
+        <div class="stat-row">
+            <span class="stat-label">Coldest day (avg)</span>
+            <span class="stat-spacer"></span>
+            <span class="stat-val lo">{{ "%.1f"|format(daily_extremes.coldest_avg) }}°C</span>
+            <span class="stat-time">{{ daily_extremes.coldest_avg_day }}</span>
+        </div>
+        <div class="stat-row">
+            <span class="stat-label">Most humid day (avg)</span>
+            <span class="stat-spacer"></span>
+            <span class="stat-val">{{ "%.0f"|format(daily_extremes.most_humid_avg) }}%</span>
+            <span class="stat-time">{{ daily_extremes.most_humid_avg_day }}</span>
+        </div>
+        <div class="stat-row">
+            <span class="stat-label">Least humid day (avg)</span>
+            <span class="stat-spacer"></span>
+            <span class="stat-val">{{ "%.0f"|format(daily_extremes.least_humid_avg) }}%</span>
+            <span class="stat-time">{{ daily_extremes.least_humid_avg_day }}</span>
+        </div>
+        {% endif %}
         <div class="stat-row"><span class="stat-label">Readings</span><span class="stat-spacer"></span><span class="stat-val">{{ stats_all.count }}</span></div>
     </div>
     {% elif stats_all and stats_all.count > 0 %}
