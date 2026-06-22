@@ -813,7 +813,7 @@ function buildClimateChart() {
             labels: data.monthly.map(m => months[m.month - 1]),
             datasets: [{
                 label: 'Max',
-                data: data.monthly.map(m => m.max),
+                data: data.monthly.map(m => m.temp_max),
                 borderColor: '#e53e3e',
                 backgroundColor: 'transparent',
                 borderWidth: 1.5,
@@ -823,7 +823,7 @@ function buildClimateChart() {
                 tension: 0.3,
             }, {
                 label: 'Average',
-                data: data.monthly.map(m => m.avg),
+                data: data.monthly.map(m => m.temp_avg),
                 borderColor: '#38a169',
                 backgroundColor: 'transparent',
                 borderWidth: 2.5,
@@ -832,7 +832,7 @@ function buildClimateChart() {
                 tension: 0.3,
             }, {
                 label: 'Min',
-                data: data.monthly.map(m => m.min),
+                data: data.monthly.map(m => m.temp_min),
                 borderColor: '#3182ce',
                 backgroundColor: 'transparent',
                 borderWidth: 1.5,
