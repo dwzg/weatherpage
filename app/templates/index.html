@@ -615,21 +615,59 @@ async function loadPeriod(period) {
 }
 
 // ── Calendar heatmap ─────────────────────────────────────
-function tempToColor(temp, rangeMin, rangeMax) {
-    const clamped = Math.max(rangeMin, Math.min(rangeMax, temp));
-    const range = rangeMax - rangeMin;
-    const t = range > 1e-6 ? (clamped - rangeMin) / range : 0.5;
-    const hue = Math.round(240 * (1 - t));
-    const light = Math.round(58 - Math.abs(t - 0.5) * 16);
-    return `hsl(${hue},55%,${light}%)`;
+function tempToColor(temp) {
+    // Fixed perceptually-meaningful thresholds:
+    //   <0°C  = blue (freezing)
+    //   0-10  = light blue (cold)
+    //   10-18 = green (cool)
+    //   18-25 = yellow (warm)
+    //   25-30 = orange (hot)
+    //   30-35 = red-orange (very hot)
+    //   >35°C = red (extreme)
+    const t = Math.max(-10, Math.min(45, temp));
+    let hue, sat = 60, light = 55;
+    if (t < 0) {
+        // -10..0°C: blue (240→220)
+        hue = 240 - (t + 10) * (20 / 10);
+        sat = 65;
+    } else if (t < 10) {
+        // 0..10°C: light blue→blue-green (220→170)
+        hue = 220 - t * (50 / 10);
+        sat = 60;
+    } else if (t < 18) {
+        // 10..18°C: green (170→100)
+        hue = 170 - (t - 10) * (70 / 8);
+        sat = 55;
+    } else if (t < 25) {
+        // 18..25°C: yellow-green→yellow (100→45)
+        hue = 100 - (t - 18) * (55 / 7);
+        sat = 60;
+        light = 53;
+    } else if (t < 30) {
+        // 25..30°C: orange (45→20)
+        hue = 45 - (t - 25) * (25 / 5);
+        sat = 70;
+        light = 50;
+    } else if (t < 35) {
+        // 30..35°C: red-orange (20→5)
+        hue = 20 - (t - 30) * (15 / 5);
+        sat = 75;
+        light = 48;
+    } else {
+        // >35°C: deep red (5→0)
+        hue = 5 - Math.min(t - 35, 10) * (5 / 10);
+        sat = 80;
+        light = 44;
+    }
+    return `hsl(${Math.round(hue)},${sat}%,${Math.round(light)}%)`;
 }
 
-function buildLegendGradient(rangeMin, rangeMax) {
+function buildLegendGradient() {
     const stops = [];
-    const steps = 20;
+    const steps = 40;
     for (let i = 0; i <= steps; i++) {
-        const temp = rangeMin + (i / steps) * (rangeMax - rangeMin);
-        stops.push(tempToColor(temp, rangeMin, rangeMax));
+        const temp = -10 + (i / steps) * 55; // -10..45°C
+        stops.push(tempToColor(temp));
     }
     return `linear-gradient(to right, ${stops.join(', ')})`;
 }
@@ -642,23 +680,6 @@ async function buildHeatmap() {
         const resp = await fetch('/api/weather/daily?months=4');
         const daily = await resp.json();
         if (!daily.length) { grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:var(--text-secondary);padding:20px;">Not enough data yet</div>'; return; }
-
-        // ── Compute data-driven temperature range ──────────
-        const temps = daily.map(d => d.temp_avg).filter(t => t != null);
-        let rangeMin, rangeMax;
-        if (temps.length === 0) {
-            rangeMin = 0; rangeMax = 30;
-        } else {
-            const dataMin = Math.min(...temps);
-            const dataMax = Math.max(...temps);
-            if (dataMax - dataMin < 0.1) {
-                rangeMin = dataMin - 2; rangeMax = dataMax + 2;
-            } else {
-                const pad = Math.max(2, (dataMax - dataMin) * 0.15);
-                rangeMin = dataMin - pad;
-                rangeMax = dataMax + pad;
-            }
-        }
 
         const dayMap = new Map(daily.map(d => [d.day, d]));
         const firstDate = new Date(daily[0].day + 'T00:00:00');
@@ -687,7 +708,7 @@ async function buildHeatmap() {
 
             const info = dayMap.get(key);
             if (info) {
-                cell.style.backgroundColor = tempToColor(info.temp_avg, rangeMin, rangeMax);
+                cell.style.backgroundColor = tempToColor(info.temp_avg);
                 cell.title = `${key}\nMin: ${info.temp_min}°C  Max: ${info.temp_max}°C  Avg: ${info.temp_avg}°C`;
                 cell.innerHTML = `<span>${d.getDate()}</span>`;
                 if (key === todayStr) cell.style.boxShadow = 'inset 0 0 0 2px rgba(0,0,0,0.3)';
@@ -699,15 +720,10 @@ async function buildHeatmap() {
             d.setDate(d.getDate() + 1);
         }
 
-        // ── Update legend to match data-driven scale ────────
+        // ── Update legend with fixed color scale ────────────
         const legendBar = document.querySelector('.heatmap-legend-bar');
-        const legendSpans = document.querySelectorAll('.heatmap-legend span');
         if (legendBar) {
-            legendBar.style.background = buildLegendGradient(rangeMin, rangeMax);
-        }
-        if (legendSpans.length >= 2) {
-            legendSpans[0].textContent = `${rangeMin.toFixed(1)}°C`;
-            legendSpans[1].textContent = `${rangeMax.toFixed(1)}°C`;
+            legendBar.style.background = buildLegendGradient();
         }
     } catch (e) {
         console.error('Heatmap error:', e);
