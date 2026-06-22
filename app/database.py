@@ -369,7 +369,16 @@ async def get_climate_stats() -> dict:
             GROUP BY month
             ORDER BY month
         """)
-        monthly = [dict(r) for r in await cursor.fetchall()]
+        rows = await cursor.fetchall()
+        db_monthly = {r["month"]: dict(r) for r in rows}
+
+        # Pad to all 12 months (Jan–Dec) so the chart always shows the full year
+        monthly = []
+        for m in range(1, 13):
+            if m in db_monthly:
+                monthly.append(db_monthly[m])
+            else:
+                monthly.append({"month": m, "temp_avg": None, "temp_min": None, "temp_max": None, "hum_avg": None, "readings": 0})
 
         cursor = await db.execute("""
             SELECT
