@@ -253,7 +253,7 @@ async def get_extremes_with_times(period: str = "today") -> dict:
         await db.close()
 
 
-async def get_pressure_trend(hours: int = 3) -> dict | None:
+async def get_pressure_trend(hours: int = 6) -> dict | None:
     """Return pressure trend: current, previous (N hours ago), delta, direction."""
     db = await get_db()
     try:
@@ -283,9 +283,9 @@ async def get_pressure_trend(hours: int = 3) -> dict | None:
                 prev_p = current_p
 
         delta = round(current_p - prev_p, 1)
-        if delta > 0.3:
+        if delta > 0.5:
             direction = "rising"
-        elif delta < -0.3:
+        elif delta < -0.5:
             direction = "falling"
         else:
             direction = "steady"
