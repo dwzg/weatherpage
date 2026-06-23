@@ -293,33 +293,36 @@ async def get_extremes_with_times(period: str = "today") -> dict:
 
 
 async def get_pressure_trend(hours: int = 6) -> dict | None:
-    """Return pressure trend: current, previous (N hours ago), delta, direction."""
+    """Return pressure trend with smoothed current, acceleration, and consistency.
+
+    Uses median of last 6 readings (30 min) for current pressure to filter
+    sensor jitter. Also compares 0-6h trend vs 6-12h trend for acceleration.
+    """
     db = await get_db()
     try:
+        # Smoothed current: median of last 6 readings (30 min)
         cursor = await db.execute(
-            "SELECT pressure, timestamp FROM weather_readings ORDER BY id DESC LIMIT 1"
+            "SELECT pressure FROM weather_readings ORDER BY id DESC LIMIT 6"
         )
-        latest = await cursor.fetchone()
-        if not latest:
+        recent = [r[0] for r in await cursor.fetchall()]
+        if not recent:
             return None
+        recent.sort()
+        current_p = round(recent[len(recent) // 2], 1)  # median
 
+        # Pressure N hours ago (single reading near the cutoff)
         cutoff = _fmt_cutoff(_now() - timedelta(hours=hours))
         cursor = await db.execute(
             "SELECT pressure FROM weather_readings WHERE timestamp >= ? ORDER BY id ASC LIMIT 1",
             (cutoff,),
         )
         earlier = await cursor.fetchone()
-        current_p = round(latest[0], 1)
         if earlier:
             prev_p = round(earlier[0], 1)
         else:
-            # No reading from N hours ago, use oldest available
             cursor = await db.execute("SELECT pressure FROM weather_readings ORDER BY id ASC LIMIT 1")
             first = await cursor.fetchone()
-            if first and first[0] != latest[0]:
-                prev_p = round(first[0], 1)
-            else:
-                prev_p = current_p
+            prev_p = round(first[0], 1) if first else current_p
 
         delta = round(current_p - prev_p, 1)
         if delta > 0.5:
@@ -329,7 +332,84 @@ async def get_pressure_trend(hours: int = 6) -> dict | None:
         else:
             direction = "steady"
 
-        return {"current": current_p, "previous": prev_p, "delta": delta, "direction": direction}
+        # Acceleration: compare 0-6h trend to 6-12h trend
+        accel = None
+        if hours == 6:
+            cutoff_12h = _fmt_cutoff(_now() - timedelta(hours=12))
+            cursor = await db.execute(
+                "SELECT pressure FROM weather_readings WHERE timestamp >= ? ORDER BY id ASC LIMIT 1",
+                (cutoff_12h,),
+            )
+            row_12h = await cursor.fetchone()
+            if row_12h:
+                older_p = round(row_12h[0], 1)
+                earlier_delta = round(prev_p - older_p, 1)
+                if earlier_delta > 0.5:
+                    prev_direction = "rising"
+                elif earlier_delta < -0.5:
+                    prev_direction = "falling"
+                else:
+                    prev_direction = "steady"
+
+                if direction != "steady" and prev_direction == direction:
+                    accel = "sustained"
+                elif direction != "steady" and prev_direction == "steady":
+                    accel = "starting"
+                elif direction == "steady" and prev_direction != "steady":
+                    accel = "ending"
+                elif direction != "steady" and prev_direction != "steady" and prev_direction != direction:
+                    accel = "reversing"
+
+        # Consistency: fraction of last 12 readings (1 hour) agreeing on direction
+        cursor = await db.execute(
+            "SELECT pressure FROM weather_readings ORDER BY id DESC LIMIT 12"
+        )
+        recent_12 = [r[0] for r in await cursor.fetchall()]
+        consistent = 0
+        for i in range(1, len(recent_12)):
+            diff = recent_12[i-1] - recent_12[i]
+            if (direction == "rising" and diff > -0.1) or \
+               (direction == "falling" and diff < 0.1) or \
+               (direction == "steady" and abs(diff) < 0.3):
+                consistent += 1
+        consistency = round(consistent / max(len(recent_12) - 1, 1), 2)
+
+        return {
+            "current": current_p,
+            "previous": prev_p,
+            "delta": delta,
+            "direction": direction,
+            "acceleration": accel,
+            "consistency": consistency,
+        }
+    finally:
+        await db.close()
+
+
+async def get_recent_trend(column: str, hours: int = 3) -> dict | None:
+    """Get the change in a column (temperature/humidity) over N hours."""
+    if column not in ("temperature", "humidity"):
+        return None
+    db = await get_db()
+    try:
+        cursor = await db.execute(
+            f"SELECT {column} FROM weather_readings ORDER BY id DESC LIMIT 1"
+        )
+        latest = await cursor.fetchone()
+        if not latest:
+            return None
+
+        cutoff = _fmt_cutoff(_now() - timedelta(hours=hours))
+        cursor = await db.execute(
+            f"SELECT {column} FROM weather_readings WHERE timestamp >= ? ORDER BY id ASC LIMIT 1",
+            (cutoff,),
+        )
+        earlier = await cursor.fetchone()
+        current_val = round(latest[0], 1)
+        prev_val = round(earlier[0], 1) if earlier else current_val
+        delta = round(current_val - prev_val, 1)
+
+        return {"current": current_val, "previous": prev_val, "delta": delta}
     finally:
         await db.close()
 

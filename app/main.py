@@ -36,8 +36,24 @@ def compute_heat_index(temp_c: float, humidity: float) -> float | None:
     return round((hi - 32) * 5 / 9, 1)
 
 
-def compute_forecast(pressure_trend: dict | None, humidity: float) -> str:
-    """Forecast based on pressure trend magnitude, direction, and humidity."""
+def compute_forecast(
+    pressure_trend: dict | None,
+    humidity: float,
+    temperature: float | None = None,
+    dew_point: float | None = None,
+    humidity_trend: dict | None = None,
+    temp_trend: dict | None = None,
+) -> str:
+    """Multi-factor forecast using pressure, humidity, temperature, and dew point.
+
+    Factors considered:
+      - Pressure trend (smoothed, with acceleration and consistency)
+      - Humidity level and trend
+      - Temperature trend
+      - Dew point spread (distance to saturation)
+      - Time of day / season for convective vs frontal discrimination
+      - Trend consistency (filter out sensor jitter)
+    """
     if not pressure_trend:
         return "Not enough data"
 
@@ -45,48 +61,113 @@ def compute_forecast(pressure_trend: dict | None, humidity: float) -> str:
     delta = abs(pressure_trend["delta"])
     p = pressure_trend["current"]
     rh = humidity
+    accel = pressure_trend.get("acceleration")
+    consistency = pressure_trend.get("consistency", 1.0)
+    dt = datetime.now(tz=TIMEZONE)
+    hour = dt.hour
+    month = dt.month
+
+    # Dew point spread: how close to saturation
+    dp_spread = None
+    if temperature is not None and dew_point is not None:
+        dp_spread = temperature - dew_point
+    near_saturation = dp_spread is not None and dp_spread < 3.0
+
+    # Humidity trend
+    rh_rising = humidity_trend is not None and humidity_trend["delta"] > 1.0
+    rh_falling = humidity_trend is not None and humidity_trend["delta"] < -1.0
+
+    # Temperature trend
+    temp_rising = temp_trend is not None and temp_trend["delta"] > 1.0
+    temp_falling = temp_trend is not None and temp_trend["delta"] < -1.0
+
+    # Low-confidence trend (sensor jitter or mixed signal)
+    if consistency < 0.5:
+        if d == "falling":
+            d = "steady"  # Don't trust a noisy falling signal
+        elif d == "rising":
+            d = "steady"
+
+    # Convective conditions: warm + humid + afternoon + falling pressure
+    convective = (
+        temperature is not None
+        and temperature > 25
+        and rh > 50
+        and 12 <= hour <= 18
+        and month in (4, 5, 6, 7, 8, 9)
+    )
 
     if d == "falling":
+        # Near saturation is the strongest rain predictor
+        if near_saturation and delta > 1.0:
+            return "Rain imminent"
+        elif near_saturation:
+            return "Rain likely"
+
         if delta > 2.0:
+            if consistency < 0.6:
+                return "Unsettled, possibly stormy"
             return "Storm likely" if rh > 50 else "Gale approaching"
         elif delta > 1.0:
-            if rh > 70:
+            if convective and temp_rising:
+                return "Thunderstorm possible"
+            elif rh > 70:
                 return "Rain likely"
             elif rh > 40:
                 return "Rain possible"
             else:
                 return "Wind picking up"
         else:
-            if rh > 70:
+            if accel == "starting":
+                return "Beginning to worsen"
+            elif rh > 70:
                 return "Becoming unsettled"
             elif rh > 40:
                 return "Slightly worsening"
             else:
                 return "Turning overcast"
+
     elif d == "rising":
         if delta > 2.0:
             return "High pressure, settled"
         elif delta > 1.0:
-            if rh > 70:
+            if rh > 70 or near_saturation:
                 return "Humid but clearing"
             else:
                 return "Clearing up nicely"
         else:
-            if rh > 70:
+            if accel == "starting":
+                return "Beginning to improve"
+            elif rh > 70:
                 return "Slowly improving"
             else:
                 return "Fair"
+
     else:  # steady
         if p > 1025:
-            return "High pressure, settled"
+            if rh < 50:
+                return "Fair and settled"
+            elif near_saturation:
+                return "High pressure, overcast"
+            else:
+                return "High pressure, settled"
         elif p < 1005:
-            return "Low pressure, unsettled"
+            if near_saturation:
+                return "Low pressure, rain risk"
+            else:
+                return "Low pressure, unsettled"
+        elif near_saturation and rh_rising:
+            return "Fog or drizzle possible"
         elif rh > 80:
             return "Overcast and humid"
         elif rh < 40:
             return "Fair and settled"
         else:
+            if accel == "ending":
+                return "Trend easing, little change"
             return "Little change"
+
+    return "Stable conditions"
 
 
 @asynccontextmanager
@@ -142,7 +223,9 @@ async def get_status():
     dew_point = compute_dew_point(t, h)
     heat_index = compute_heat_index(t, h)
     pressure_trend = await database.get_pressure_trend()
-    forecast = compute_forecast(pressure_trend, h)
+    humidity_trend = await database.get_recent_trend("humidity", 3)
+    temp_trend = await database.get_recent_trend("temperature", 3)
+    forecast = compute_forecast(pressure_trend, h, t, dew_point, humidity_trend, temp_trend)
     frost_warning = t < 2.0
     yesterday = await database.get_reading_ago(24)
     spark_data = await database.get_history("3h")
@@ -195,7 +278,9 @@ async def serve_ui(request: Request):
         dew_point = compute_dew_point(t, h)
         heat_index = compute_heat_index(t, h)
         pressure_trend = await database.get_pressure_trend()
-        forecast = compute_forecast(pressure_trend, h)
+        humidity_trend = await database.get_recent_trend("humidity", 3)
+        temp_trend = await database.get_recent_trend("temperature", 3)
+        forecast = compute_forecast(pressure_trend, h, t, dew_point, humidity_trend, temp_trend)
         if t < 2.0:
             frost_warning = True
         yesterday = await database.get_reading_ago(24)

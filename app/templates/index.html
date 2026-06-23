@@ -285,7 +285,7 @@
 <div id="label-forecast" style="text-align:center;margin-bottom:20px;">
 {% if forecast %}
     <span style="background:var(--card-bg);color:var(--text);padding:8px 18px;border-radius:20px;font-size:0.9rem;box-shadow:var(--shadow);border:1px solid var(--border);">
-    {% if 'Storm' in forecast or 'Gale' in forecast %}⛈️{% elif forecast == 'Rain likely' %}🌧️{% elif forecast == 'Rain possible' %}🌥️{% elif 'Wind' in forecast %}💨{% elif 'Clearing' in forecast or 'Improving' in forecast or 'Fair' in forecast or 'settled' in forecast %}☀️{% elif 'unsettled' in forecast or 'worsening' in forecast or 'Overcast' in forecast %}☁️{% else %}🌤️{% endif %}
+    {% if 'Storm' in forecast or 'Gale' in forecast or 'Thunderstorm' in forecast %}⛈️{% elif 'Rain' in forecast %}🌧️{% elif 'Wind' in forecast %}💨{% elif 'Fog' in forecast or 'drizzle' in forecast %}🌫️{% elif 'Clearing' in forecast or 'Improving' in forecast or 'Fair' in forecast or 'settled' in forecast %}☀️{% elif 'unsettled' in forecast or 'worsen' in forecast or 'Overcast' in forecast %}☁️{% else %}🌤️{% endif %}
     {{ forecast }}
     </span>
 {% endif %}
@@ -1004,12 +1004,12 @@ async function pollStatus() {
         const fDiv = document.getElementById('label-forecast');
         if (s.forecast && s.forecast !== 'Not enough data') {
             let emoji = '🌤️';
-            if (s.forecast.includes('Storm') || s.forecast.includes('Gale')) emoji = '⛈️';
-            else if (s.forecast === 'Rain likely') emoji = '🌧️';
-            else if (s.forecast === 'Rain possible') emoji = '🌥️';
+            if (s.forecast.includes('Storm') || s.forecast.includes('Gale') || s.forecast.includes('Thunderstorm')) emoji = '⛈️';
+            else if (s.forecast.includes('Rain')) emoji = '🌧️';
             else if (s.forecast.includes('Wind')) emoji = '💨';
+            else if (s.forecast.includes('Fog') || s.forecast.includes('drizzle')) emoji = '🌫️';
             else if (s.forecast.includes('Clearing') || s.forecast.includes('Improving') || s.forecast.includes('Fair') || s.forecast.includes('settled')) emoji = '☀️';
-            else if (s.forecast.includes('unsettled') || s.forecast.includes('worsening') || s.forecast.includes('Overcast')) emoji = '☁️';
+            else if (s.forecast.includes('unsettled') || s.forecast.includes('worsen') || s.forecast.includes('Overcast')) emoji = '☁️';
             fDiv.innerHTML = `<span style="background:var(--card-bg);color:var(--text);padding:8px 18px;border-radius:20px;font-size:0.9rem;box-shadow:var(--shadow);border:1px solid var(--border);">${emoji} ${s.forecast}</span>`;
         } else {
             fDiv.innerHTML = '';
