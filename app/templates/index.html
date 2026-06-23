@@ -466,9 +466,9 @@
     <h4 style="font-size:0.8rem;color:var(--text-secondary);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.05em;">Monthly Details</h4>
     {% set sel_year = (current_year|string) if (current_year|string) in climate.monthly_by_year else climate.years[0]|string %}
     {% if climate.years %}
-    <div id="climate-year-selector" style="display:flex;gap:4px;margin-bottom:10px;flex-wrap:wrap;">
+    <div id="climate-year-selector" style="display:flex;gap:4px;margin-bottom:10px;flex-wrap:wrap;" data-default="{{ sel_year }}">
         {% for y in climate.years %}
-        <button class="period-btn climate-yr-btn{% if y|string == sel_year %} active{% endif %}" data-year="{{ y }}">{{ y }}</button>
+        <button class="period-btn climate-yr-btn" data-year="{{ y }}">{{ y }}</button>
         {% endfor %}
     </div>
     {% endif %}
@@ -898,54 +898,65 @@ buildClimateChart();
     const yearlyByYear = {};
     yearlyList.forEach(y => { yearlyByYear[y.year] = y; });
     const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const rowsDiv = document.getElementById('climate-monthly-rows');
 
-    document.querySelectorAll('.climate-yr-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-            const year = btn.dataset.year;
-            document.querySelectorAll('.climate-yr-btn').forEach(b => b.classList.remove('active'));
-            btn.classList.add('active');
+    function renderYear(year) {
+        // Button active states
+        document.querySelectorAll('.climate-yr-btn').forEach(b => {
+            b.classList.toggle('active', b.dataset.year === year);
+        });
 
-            const rowsDiv = document.getElementById('climate-monthly-rows');
-            const yearData = byYear[year] || [];
-            let html = '';
+        // Build rows
+        const yearData = byYear[year] || [];
+        let html = '';
 
-            // Yearly summary row
-            const yInfo = yearlyByYear[parseInt(year)];
-            if (yInfo) {
-                html += `<div class="stat-row" style="font-weight:600;border-bottom:2px solid var(--border);padding-bottom:8px;margin-bottom:8px;">
-                    <span class="stat-label">${year} average</span>
-                    <span class="stat-spacer"></span>
-                    <span class="stat-val">${yInfo.temp_avg.toFixed(1)}°C</span>
-                    <span style="font-size:0.7rem;color:var(--text-secondary);">min ${yInfo.temp_min.toFixed(1)} max ${yInfo.temp_max.toFixed(1)}</span>
-                </div>`;
-            }
+        // Yearly summary row
+        const yInfo = yearlyByYear[parseInt(year)];
+        if (yInfo) {
+            html += `<div class="stat-row" style="font-weight:600;border-bottom:2px solid var(--border);padding-bottom:8px;margin-bottom:8px;">
+                <span class="stat-label">${year} average</span>
+                <span class="stat-spacer"></span>
+                <span class="stat-val">${yInfo.temp_avg.toFixed(1)}°C</span>
+                <span style="font-size:0.7rem;color:var(--text-secondary);">min ${yInfo.temp_min.toFixed(1)} max ${yInfo.temp_max.toFixed(1)}</span>
+            </div>`;
+        }
 
-            // Two-column monthly layout: Jan–Jun left, Jul–Dec right
-            html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:0 24px;">';
-            [yearData.slice(0, 6), yearData.slice(6, 12)].forEach(col => {
-                html += '<div>';
-                col.forEach(m => {
-                    if (m.temp_avg != null) {
-                        html += `<div class="stat-row">
-                            <span class="stat-label">${months[m.month - 1]}</span>
-                            <span class="stat-spacer"></span>
-                            <span class="stat-val">${m.temp_avg.toFixed(1)}°C</span>
-                            <span style="font-size:0.7rem;color:var(--text-secondary);">min ${m.temp_min.toFixed(1)} max ${m.temp_max.toFixed(1)}</span>
-                        </div>`;
-                    } else {
-                        html += `<div class="stat-row">
-                            <span class="stat-label">${months[m.month - 1]}</span>
-                            <span class="stat-spacer"></span>
-                            <span style="font-size:0.8rem;color:var(--text-secondary);">—</span>
-                        </div>`;
-                    }
-                });
-                html += '</div>';
+        // Two-column monthly layout: Jan–Jun left, Jul–Dec right
+        html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:0 24px;">';
+        [yearData.slice(0, 6), yearData.slice(6, 12)].forEach(col => {
+            html += '<div>';
+            col.forEach(m => {
+                if (m.temp_avg != null) {
+                    html += `<div class="stat-row">
+                        <span class="stat-label">${months[m.month - 1]}</span>
+                        <span class="stat-spacer"></span>
+                        <span class="stat-val">${m.temp_avg.toFixed(1)}°C</span>
+                        <span style="font-size:0.7rem;color:var(--text-secondary);">min ${m.temp_min.toFixed(1)} max ${m.temp_max.toFixed(1)}</span>
+                    </div>`;
+                } else {
+                    html += `<div class="stat-row">
+                        <span class="stat-label">${months[m.month - 1]}</span>
+                        <span class="stat-spacer"></span>
+                        <span style="font-size:0.8rem;color:var(--text-secondary);">—</span>
+                    </div>`;
+                }
             });
             html += '</div>';
-            rowsDiv.innerHTML = html;
         });
+        html += '</div>';
+        rowsDiv.innerHTML = html;
+    }
+
+    // Click handlers
+    document.querySelectorAll('.climate-yr-btn').forEach(btn => {
+        btn.addEventListener('click', () => renderYear(btn.dataset.year));
     });
+
+    // Activate default year on load
+    const defaultYear = document.getElementById('climate-year-selector').dataset.default;
+    if (defaultYear && byYear[defaultYear]) {
+        renderYear(defaultYear);
+    }
 })();
 
 // ── Live polling ──────────────────────────────────────────
