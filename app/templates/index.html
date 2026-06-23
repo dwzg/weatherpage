@@ -475,25 +475,32 @@
         {% set sel_year = (current_year|string) if (current_year|string) in climate.monthly_by_year else climate.years[0]|string %}
         {% set ydata = climate.yearly | selectattr('year', 'equalto', sel_year|int) | list %}
         {% if ydata %}
-        <div class="stat-row" style="font-weight:600;border-bottom:2px solid var(--border);padding-bottom:8px;margin-bottom:4px;">
+        <div class="stat-row" style="font-weight:600;border-bottom:2px solid var(--border);padding-bottom:8px;margin-bottom:8px;">
             <span class="stat-label">{{ sel_year }} average</span>
             <span class="stat-spacer"></span>
             <span class="stat-val">{{ "%.1f"|format(ydata[0].temp_avg) }}°C</span>
             <span style="font-size:0.7rem;color:var(--text-secondary);">min {{ "%.1f"|format(ydata[0].temp_min) }} max {{ "%.1f"|format(ydata[0].temp_max) }}</span>
         </div>
         {% endif %}
-        {% for m in climate.monthly_by_year[sel_year] %}
-        <div class="stat-row">
-            <span class="stat-label">{{ months[m.month - 1] }}</span>
-            <span class="stat-spacer"></span>
-            {% if m.temp_avg is not none %}
-            <span class="stat-val">{{ "%.1f"|format(m.temp_avg) }}°C</span>
-            <span style="font-size:0.7rem;color:var(--text-secondary);">min {{ "%.1f"|format(m.temp_min) }} max {{ "%.1f"|format(m.temp_max) }}</span>
-            {% else %}
-            <span style="font-size:0.8rem;color:var(--text-secondary);">—</span>
-            {% endif %}
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 24px;">
+            {% set all_months = climate.monthly_by_year[sel_year] %}
+            {% for col in [all_months[:6], all_months[6:]] %}
+            <div>
+                {% for m in col %}
+                <div class="stat-row">
+                    <span class="stat-label">{{ months[m.month - 1] }}</span>
+                    <span class="stat-spacer"></span>
+                    {% if m.temp_avg is not none %}
+                    <span class="stat-val">{{ "%.1f"|format(m.temp_avg) }}°C</span>
+                    <span style="font-size:0.7rem;color:var(--text-secondary);">min {{ "%.1f"|format(m.temp_min) }} max {{ "%.1f"|format(m.temp_max) }}</span>
+                    {% else %}
+                    <span style="font-size:0.8rem;color:var(--text-secondary);">—</span>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            </div>
+            {% endfor %}
         </div>
-        {% endfor %}
     </div>
 </div>
 {% endif %}
@@ -905,7 +912,7 @@ buildClimateChart();
             // Yearly summary row
             const yInfo = yearlyByYear[parseInt(year)];
             if (yInfo) {
-                html += `<div class="stat-row" style="font-weight:600;border-bottom:2px solid var(--border);padding-bottom:8px;margin-bottom:4px;">
+                html += `<div class="stat-row" style="font-weight:600;border-bottom:2px solid var(--border);padding-bottom:8px;margin-bottom:8px;">
                     <span class="stat-label">${year} average</span>
                     <span class="stat-spacer"></span>
                     <span class="stat-val">${yInfo.temp_avg.toFixed(1)}°C</span>
@@ -913,23 +920,29 @@ buildClimateChart();
                 </div>`;
             }
 
-            // Monthly rows
-            html += yearData.map(m => {
-                if (m.temp_avg != null) {
-                    return `<div class="stat-row">
-                        <span class="stat-label">${months[m.month - 1]}</span>
-                        <span class="stat-spacer"></span>
-                        <span class="stat-val">${m.temp_avg.toFixed(1)}°C</span>
-                        <span style="font-size:0.7rem;color:var(--text-secondary);">min ${m.temp_min.toFixed(1)} max ${m.temp_max.toFixed(1)}</span>
-                    </div>`;
-                } else {
-                    return `<div class="stat-row">
-                        <span class="stat-label">${months[m.month - 1]}</span>
-                        <span class="stat-spacer"></span>
-                        <span style="font-size:0.8rem;color:var(--text-secondary);">—</span>
-                    </div>`;
-                }
-            }).join('');
+            // Two-column monthly layout: Jan–Jun left, Jul–Dec right
+            html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:0 24px;">';
+            [yearData.slice(0, 6), yearData.slice(6, 12)].forEach(col => {
+                html += '<div>';
+                col.forEach(m => {
+                    if (m.temp_avg != null) {
+                        html += `<div class="stat-row">
+                            <span class="stat-label">${months[m.month - 1]}</span>
+                            <span class="stat-spacer"></span>
+                            <span class="stat-val">${m.temp_avg.toFixed(1)}°C</span>
+                            <span style="font-size:0.7rem;color:var(--text-secondary);">min ${m.temp_min.toFixed(1)} max ${m.temp_max.toFixed(1)}</span>
+                        </div>`;
+                    } else {
+                        html += `<div class="stat-row">
+                            <span class="stat-label">${months[m.month - 1]}</span>
+                            <span class="stat-spacer"></span>
+                            <span style="font-size:0.8rem;color:var(--text-secondary);">—</span>
+                        </div>`;
+                    }
+                });
+                html += '</div>';
+            });
+            html += '</div>';
             rowsDiv.innerHTML = html;
         });
     });
