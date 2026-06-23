@@ -67,43 +67,6 @@ async def insert_reading(temperature: float, humidity: float, pressure: float, t
         await db.close()
 
 
-async def cleanup_partial_first_day() -> int:
-    """Remove readings from the first day if it's clearly incomplete.
-
-    The first day of data collection rarely has a full 24h of readings.
-    Returns the number of deleted rows.
-    """
-    db = await get_db()
-    try:
-        cursor = await db.execute("""
-            SELECT date(timestamp) as day, COUNT(*) as cnt
-            FROM weather_readings
-            GROUP BY day
-            ORDER BY day ASC
-            LIMIT 2
-        """)
-        rows = await cursor.fetchall()
-        if len(rows) < 2:
-            return 0  # only one day of data, keep it
-
-        first_day, first_cnt = rows[0][0], rows[0][1]
-        second_cnt = rows[1][1]
-
-        # A full day at 5-min intervals has 288 readings.
-        # If the first day has fewer than half of the second day's count
-        # (or fewer than 50 readings total), it's clearly partial.
-        if first_cnt < 50 or first_cnt < second_cnt * 0.5:
-            cursor = await db.execute(
-                "DELETE FROM weather_readings WHERE date(timestamp) = ?",
-                (first_day,),
-            )
-            await db.commit()
-            return cursor.rowcount
-        return 0
-    finally:
-        await db.close()
-
-
 async def get_current() -> dict | None:
     """Get the most recent reading."""
     db = await get_db()

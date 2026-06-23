@@ -173,10 +173,6 @@ def compute_forecast(
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await database.init_db()
-    deleted = await database.cleanup_partial_first_day()
-    if deleted:
-        # Logged to container stdout — visible in docker logs
-        print(f"startup: removed {deleted} readings from incomplete first day")
     yield
 
 
