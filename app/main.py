@@ -37,23 +37,56 @@ def compute_heat_index(temp_c: float, humidity: float) -> float | None:
 
 
 def compute_forecast(pressure_trend: dict | None, humidity: float) -> str:
-    """Simple forecast based on pressure trend and humidity."""
+    """Forecast based on pressure trend magnitude, direction, and humidity."""
     if not pressure_trend:
         return "Not enough data"
+
     d = pressure_trend["direction"]
+    delta = abs(pressure_trend["delta"])
+    p = pressure_trend["current"]
     rh = humidity
-    if d == "falling" and rh > 60:
-        return "Rain likely"
-    elif d == "falling" and rh > 40:
-        return "Rain possible"
-    elif d == "falling":
-        return "Weather worsening"
-    elif d == "rising" and rh > 70:
-        return "Humid but clearing"
+
+    if d == "falling":
+        if delta > 2.0:
+            return "Storm likely" if rh > 50 else "Gale approaching"
+        elif delta > 1.0:
+            if rh > 70:
+                return "Rain likely"
+            elif rh > 40:
+                return "Rain possible"
+            else:
+                return "Wind picking up"
+        else:
+            if rh > 70:
+                return "Becoming unsettled"
+            elif rh > 40:
+                return "Slightly worsening"
+            else:
+                return "Turning overcast"
     elif d == "rising":
-        return "Clearing up"
-    else:
-        return "Stable conditions"
+        if delta > 2.0:
+            return "High pressure, settled"
+        elif delta > 1.0:
+            if rh > 70:
+                return "Humid but clearing"
+            else:
+                return "Clearing up nicely"
+        else:
+            if rh > 70:
+                return "Slowly improving"
+            else:
+                return "Fair"
+    else:  # steady
+        if p > 1025:
+            return "High pressure, settled"
+        elif p < 1005:
+            return "Low pressure, unsettled"
+        elif rh > 80:
+            return "Overcast and humid"
+        elif rh < 40:
+            return "Fair and settled"
+        else:
+            return "Little change"
 
 
 @asynccontextmanager

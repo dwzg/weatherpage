@@ -285,7 +285,7 @@
 <div id="label-forecast" style="text-align:center;margin-bottom:20px;">
 {% if forecast %}
     <span style="background:var(--card-bg);color:var(--text);padding:8px 18px;border-radius:20px;font-size:0.9rem;box-shadow:var(--shadow);border:1px solid var(--border);">
-    {% if forecast == 'Rain likely' %}🌧️{% elif forecast == 'Rain possible' %}🌥️{% elif 'Clearing' in forecast %}🌤️{% elif 'worsening' in forecast %}☁️{% else %}🌤️{% endif %}
+    {% if 'Storm' in forecast or 'Gale' in forecast %}⛈️{% elif forecast == 'Rain likely' %}🌧️{% elif forecast == 'Rain possible' %}🌥️{% elif 'Wind' in forecast %}💨{% elif 'Clearing' in forecast or 'Improving' in forecast or 'Fair' in forecast or 'settled' in forecast %}☀️{% elif 'unsettled' in forecast or 'worsening' in forecast or 'Overcast' in forecast %}☁️{% else %}🌤️{% endif %}
     {{ forecast }}
     </span>
 {% endif %}
@@ -1004,10 +1004,12 @@ async function pollStatus() {
         const fDiv = document.getElementById('label-forecast');
         if (s.forecast && s.forecast !== 'Not enough data') {
             let emoji = '🌤️';
-            if (s.forecast === 'Rain likely') emoji = '🌧️';
+            if (s.forecast.includes('Storm') || s.forecast.includes('Gale')) emoji = '⛈️';
+            else if (s.forecast === 'Rain likely') emoji = '🌧️';
             else if (s.forecast === 'Rain possible') emoji = '🌥️';
-            else if (s.forecast.includes('Clearing')) emoji = '🌤️';
-            else if (s.forecast.includes('worsening')) emoji = '☁️';
+            else if (s.forecast.includes('Wind')) emoji = '💨';
+            else if (s.forecast.includes('Clearing') || s.forecast.includes('Improving') || s.forecast.includes('Fair') || s.forecast.includes('settled')) emoji = '☀️';
+            else if (s.forecast.includes('unsettled') || s.forecast.includes('worsening') || s.forecast.includes('Overcast')) emoji = '☁️';
             fDiv.innerHTML = `<span style="background:var(--card-bg);color:var(--text);padding:8px 18px;border-radius:20px;font-size:0.9rem;box-shadow:var(--shadow);border:1px solid var(--border);">${emoji} ${s.forecast}</span>`;
         } else {
             fDiv.innerHTML = '';
