@@ -464,15 +464,15 @@
 </div>
 <div class="stats-card" style="grid-column: 1 / -1;">
     <h4 style="font-size:0.8rem;color:var(--text-secondary);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.05em;">Monthly Details</h4>
+    {% set sel_year = (current_year|string) if (current_year|string) in climate.monthly_by_year else climate.years[0]|string %}
     {% if climate.years %}
     <div id="climate-year-selector" style="display:flex;gap:4px;margin-bottom:10px;flex-wrap:wrap;">
         {% for y in climate.years %}
-        <button class="period-btn climate-yr-btn{% if y|int == current_year|int %} active{% endif %}" data-year="{{ y }}">{{ y }}</button>
+        <button class="period-btn climate-yr-btn{% if y|string == sel_year %} active{% endif %}" data-year="{{ y }}">{{ y }}</button>
         {% endfor %}
     </div>
     {% endif %}
     <div id="climate-monthly-rows">
-        {% set sel_year = (current_year|string) if (current_year|string) in climate.monthly_by_year else climate.years[0]|string %}
         {% set ydata = climate.yearly | selectattr('year', 'equalto', sel_year|int) | list %}
         {% if ydata %}
         <div class="stat-row" style="font-weight:600;border-bottom:2px solid var(--border);padding-bottom:8px;margin-bottom:8px;">
