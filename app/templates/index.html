@@ -467,7 +467,7 @@
     {% if climate.years %}
     <div id="climate-year-selector" style="display:flex;gap:4px;margin-bottom:10px;flex-wrap:wrap;">
         {% for y in climate.years %}
-        <button class="period-btn climate-yr-btn{% if y == current_year %} active{% endif %}" data-year="{{ y }}">{{ y }}</button>
+        <button class="period-btn climate-yr-btn{% if y|int == current_year|int %} active{% endif %}" data-year="{{ y }}">{{ y }}</button>
         {% endfor %}
     </div>
     {% endif %}
