@@ -326,15 +326,21 @@ async def get_daily_summaries(months: int = 3) -> list[dict]:
 
 
 async def get_daily_extremes() -> dict | None:
-    """Return the days with highest/lowest average temperature and humidity."""
+    """Return the days with highest/lowest average temperature and humidity.
+
+    Only considers complete days (excludes today) so the current partial day
+    doesn't temporarily claim records during the morning.
+    """
     db = await get_db()
     try:
+        today_str = _now().strftime("%Y-%m-%d")
         cursor = await db.execute("""
             WITH daily AS (
                 SELECT date(timestamp) as day,
                        AVG(temperature) as temp_avg,
                        AVG(humidity) as hum_avg
                 FROM weather_readings
+                WHERE date(timestamp) < ?
                 GROUP BY date(timestamp)
             )
             SELECT
@@ -346,7 +352,7 @@ async def get_daily_extremes() -> dict | None:
                 (SELECT hum_avg FROM daily ORDER BY hum_avg DESC LIMIT 1) as most_humid_avg,
                 (SELECT day FROM daily ORDER BY hum_avg ASC LIMIT 1) as least_humid_avg_day,
                 (SELECT hum_avg FROM daily ORDER BY hum_avg ASC LIMIT 1) as least_humid_avg
-        """)
+        """, (today_str,))
         row = await cursor.fetchone()
         return dict(row) if row and row["hottest_avg_day"] else None
     finally:
@@ -354,9 +360,14 @@ async def get_daily_extremes() -> dict | None:
 
 
 async def get_climate_stats() -> dict:
-    """Return monthly (all-time + per-year) and yearly temperature averages."""
+    """Return monthly (all-time + per-year) and yearly temperature averages.
+
+    Only considers complete days so the current partial day doesn't skew averages.
+    """
     db = await get_db()
     try:
+        today_str = _now().strftime("%Y-%m-%d")
+
         # All-time monthly aggregates (for the climate chart)
         cursor = await db.execute("""
             SELECT
@@ -367,9 +378,10 @@ async def get_climate_stats() -> dict:
                 ROUND(AVG(humidity), 1) as hum_avg,
                 COUNT(*) as readings
             FROM weather_readings
+            WHERE date(timestamp) < ?
             GROUP BY month
             ORDER BY month
-        """)
+        """, (today_str,))
         rows = await cursor.fetchall()
         db_monthly = {r["month"]: dict(r) for r in rows}
 
@@ -391,9 +403,10 @@ async def get_climate_stats() -> dict:
                 ROUND(AVG(humidity), 1) as hum_avg,
                 COUNT(*) as readings
             FROM weather_readings
+            WHERE date(timestamp) < ?
             GROUP BY year, month
             ORDER BY year, month
-        """)
+        """, (today_str,))
         per_year = await cursor.fetchall()
 
         years_set = set()
@@ -425,9 +438,10 @@ async def get_climate_stats() -> dict:
                 ROUND(AVG(humidity), 1) as hum_avg,
                 COUNT(*) as readings
             FROM weather_readings
+            WHERE date(timestamp) < ?
             GROUP BY year
             ORDER BY year
-        """)
+        """, (today_str,))
         yearly = [dict(r) for r in await cursor.fetchall()]
 
         return {
