@@ -17,7 +17,7 @@ START = "2026-06-30T15:20:00"
 END   = "2026-07-01T09:10:00"
 
 # ── Configuration ──────────────────────────────────────────────
-HA_URL = "http://homeassistant.local:8123"
+HA_URL = "http://192.168.178.48:8123"
 WP_URL = "https://weather.wtzg.de/api/weather"
 
 HA_TOKEN = os.environ.get("HA_TOKEN")
@@ -71,7 +71,10 @@ if not timestamps:
 # ── POST to weatherpage ────────────────────────────────────────
 print(f"\nBackfilling {len(timestamps)} readings...")
 count = 0
-for ts in timestamps:
+session = requests.Session()
+session.headers.update({"X-API-Key": WP_API_KEY, "Content-Type": "application/json"})
+
+for i, ts in enumerate(timestamps):
     payload = {
         "temperature": temps[ts],
         "humidity": hums[ts],
@@ -79,20 +82,16 @@ for ts in timestamps:
         "timestamp": ts,
     }
     try:
-        resp = requests.post(
-            WP_URL,
-            json=payload,
-            headers={"X-API-Key": WP_API_KEY, "Content-Type": "application/json"},
-            timeout=10,
-        )
+        resp = session.post(WP_URL, json=payload, timeout=10)
         if resp.status_code == 200:
             count += 1
         else:
-            print(f"  Failed at {ts}: HTTP {resp.status_code} {resp.text.strip()}")
+            print(f"  [{i+1}/{len(timestamps)}] Failed at {ts}: HTTP {resp.status_code} {resp.text.strip()}")
     except requests.RequestException as e:
-        print(f"  Error at {ts}: {e}")
+        print(f"  [{i+1}/{len(timestamps)}] Error at {ts}: {e}")
 
-    if count % 50 == 0 and count > 0:
-        print(f"  ... {count}/{len(timestamps)}")
+    # Progress every 10 readings or on the last one
+    if (i + 1) % 10 == 0 or i == len(timestamps) - 1:
+        print(f"  {i+1}/{len(timestamps)} ...")
 
 print(f"\nDone: {count}/{len(timestamps)} readings backfilled.")
