@@ -620,15 +620,39 @@ function fmtTs(ts, period) {
     }
 }
 
+const GAP_THRESHOLD_MINUTES = 15; // break the line if readings are more than 15 min apart
+
+// Insert NaN values at time gaps so Chart.js draws breaks in the line
+function insertGaps(readings, period) {
+    const labels = [];
+    const values = [];
+    for (let i = 0; i < readings.length; i++) {
+        labels.push(fmtTs(readings[i].timestamp, period));
+        values.push(readings[i].value);
+
+        if (i < readings.length - 1) {
+            const curr = new Date(readings[i].timestamp.replace(' ', 'T'));
+            const next = new Date(readings[i + 1].timestamp.replace(' ', 'T'));
+            if ((next - curr) / 60000 > GAP_THRESHOLD_MINUTES) {
+                labels.push('');
+                values.push(NaN);
+            }
+        }
+    }
+    return { labels, values };
+}
+
 function makeChartConfig(label, color, data, period) {
     const cs = chartStyle();
+    const { labels, values } = insertGaps(data, period);
+
     return {
         type: 'line',
         data: {
-            labels: data.map(d => fmtTs(d.timestamp, period)),
+            labels: labels,
             datasets: [{
                 label: label,
-                data: data.map(d => d.value),
+                data: values,
                 borderColor: color.line,
                 backgroundColor: color.bg,
                 borderWidth: 2,
@@ -1045,8 +1069,9 @@ async function pollStatus() {
                 for (const [canvasId, ds] of Object.entries(dsDefs)) {
                     const existing = charts[canvasId];
                     if (existing) {
-                        existing.data.labels = ds.values.map(d => fmtTs(d.timestamp, '24h'));
-                        existing.data.datasets[0].data = ds.values.map(d => d.value);
+                        const gl = insertGaps(ds.values, '24h');
+                        existing.data.labels = gl.labels;
+                        existing.data.datasets[0].data = gl.values;
                         existing.update();
                     }
                 }
