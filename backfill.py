@@ -9,7 +9,10 @@ Queries each 5-minute slot individually to avoid HA's per-query result limit.
 import os
 import sys
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 import requests
+
+BERLIN = ZoneInfo("Europe/Berlin")
 
 # ── Outage window (inclusive) ──────────────────────────────────
 START = "2026-06-30T15:20:00"

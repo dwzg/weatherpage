@@ -67,6 +67,30 @@ async def insert_reading(temperature: float, humidity: float, pressure: float, t
         await db.close()
 
 
+async def remove_readings_in_range(from_ts: str, to_ts: str) -> int:
+    """Delete all readings between two timestamps, then remove duplicates."""
+    db = await get_db()
+    try:
+        from_fmt = from_ts.replace("T", " ")
+        to_fmt = to_ts.replace("T", " ")
+        cursor = await db.execute(
+            "DELETE FROM weather_readings WHERE timestamp >= ? AND timestamp <= ?",
+            (from_fmt, to_fmt),
+        )
+        deleted = cursor.rowcount
+        # Also remove any duplicates this may have exposed
+        cursor = await db.execute("""
+            DELETE FROM weather_readings WHERE id NOT IN (
+                SELECT MIN(id) FROM weather_readings GROUP BY timestamp
+            )
+        """)
+        deleted += cursor.rowcount
+        await db.commit()
+        return deleted
+    finally:
+        await db.close()
+
+
 async def remove_off_grid_readings() -> int:
     """Delete readings that aren't on the 5-minute grid, plus duplicates.
     Returns the number of deleted rows."""
