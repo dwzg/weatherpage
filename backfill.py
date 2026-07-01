@@ -38,25 +38,30 @@ ENTITIES = {
 }
 
 # ── Fetch data from HA ─────────────────────────────────────────
-def fetch_ha(entity_id):
+def fetch_ha(entity_id, label):
     url = f"{HA_URL}/api/history/period/{START}"
-    params = {"end_time": END, "filter_entity_id": entity_id, "minimal_response": ""}
+    params = {"end_time": END, "filter_entity_id": entity_id}
     headers = {"Authorization": f"Bearer {HA_TOKEN}"}
     resp = requests.get(url, params=params, headers=headers, timeout=30)
     resp.raise_for_status()
     data = resp.json()
     if data and isinstance(data, list) and len(data) > 0:
-        return {
+        states = data[0]
+        times = [s["last_changed"] for s in states]
+        result = {
             s["last_changed"][:19]: float(s["state"])
-            for s in data[0]
+            for s in states
             if s["state"] not in ("unknown", "unavailable")
         }
+        print(f"  {label}: {len(result)} readings, range {min(times)[:16]} to {max(times)[:16]}")
+        return result
+    print(f"  {label}: 0 readings")
     return {}
 
 print("Fetching data from Home Assistant...")
-temps     = fetch_ha(ENTITIES["temperature"])
-hums      = fetch_ha(ENTITIES["humidity"])
-pressures = fetch_ha(ENTITIES["pressure"])
+temps     = fetch_ha(ENTITIES["temperature"], "Temp")
+hums      = fetch_ha(ENTITIES["humidity"], "Hum")
+pressures = fetch_ha(ENTITIES["pressure"], "Pres")
 
 # Pre-index each sensor's data as (datetime, value) pairs for nearest-neighbor lookup
 def to_dt_list(data):
