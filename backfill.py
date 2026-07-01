@@ -58,43 +58,51 @@ temps     = fetch_ha(ENTITIES["temperature"])
 hums      = fetch_ha(ENTITIES["humidity"])
 pressures = fetch_ha(ENTITIES["pressure"])
 
-raw_timestamps = sorted(set(temps) & set(hums) & set(pressures))
+# Pre-index each sensor's data as (datetime, value) pairs for nearest-neighbor lookup
+def to_dt_list(data):
+    return sorted((datetime.fromisoformat(ts), val) for ts, val in data.items())
+
+temp_dts = to_dt_list(temps)
+hum_dts  = to_dt_list(hums)
+pres_dts = to_dt_list(pressures)
 print(f"  Temperature readings: {len(temps)}")
 print(f"  Humidity readings:    {len(hums)}")
 print(f"  Pressure readings:    {len(pressures)}")
-print(f"  Overlapping raw:      {len(raw_timestamps)}")
 
-if not raw_timestamps:
-    print("ERROR: No overlapping readings found. Check entity IDs and time range.")
+if not temp_dts or not hum_dts or not pres_dts:
+    print("ERROR: One or more sensors have no data. Check entity IDs and time range.")
     sys.exit(1)
 
-# ── Resample to 5-minute grid ──────────────────────────────────
-start_dt = datetime.fromisoformat(raw_timestamps[0])
-end_dt   = datetime.fromisoformat(raw_timestamps[-1])
+# ── Resample each sensor independently to 5-minute grid ──────
+def nearest(dt_list, target, max_dist=timedelta(minutes=5)):
+    """Return the value from dt_list closest to target, or None if too far."""
+    best_val = None
+    best_dist = max_dist
+    for dt, val in dt_list:
+        dist = abs(dt - target)
+        if dist < best_dist:
+            best_dist = dist
+            best_val = val
+    return best_val
+
+# Determine the overlapping time range
+all_dts = [d[0] for d in temp_dts] + [d[0] for d in hum_dts] + [d[0] for d in pres_dts]
+start_dt = min(all_dts)
+end_dt   = max(all_dts)
 start_dt = start_dt.replace(second=0, microsecond=0)
 while start_dt.minute % 5 != 0:
     start_dt += timedelta(minutes=1)
-
-# Pre-index raw timestamps as datetime objects for faster lookup
-raw_dts = sorted(datetime.fromisoformat(ts) for ts in raw_timestamps)
-raw_map = {ts: ts for ts in raw_timestamps}  # Keep original ts string
 
 grid_readings = []
 skipped_ranges = []
 slot = start_dt
 gap_start = None
 while slot <= end_dt:
-    slot_str = slot.strftime("%Y-%m-%dT%H:%M:%S")
-    best_ts = None
-    best_dist = timedelta(minutes=5)  # Use closest reading within 5 min
-    for ts, orig_ts in raw_map.items():
-        dt = datetime.fromisoformat(ts)
-        dist = abs(dt - slot)
-        if dist < best_dist:
-            best_dist = dist
-            best_ts = orig_ts
-    if best_ts:
-        grid_readings.append((slot_str, best_ts))
+    t = nearest(temp_dts, slot)
+    h = nearest(hum_dts, slot)
+    p = nearest(pres_dts, slot)
+    if t is not None and h is not None and p is not None:
+        grid_readings.append((slot.strftime("%Y-%m-%dT%H:%M:%S"), t, h, p))
         if gap_start:
             skipped_ranges.append(f"{gap_start.strftime('%H:%M')}-{slot.strftime('%H:%M')}")
             gap_start = None
@@ -105,7 +113,7 @@ while slot <= end_dt:
 
 print(f"  Resampled to 5-min grid: {len(grid_readings)} slots")
 if skipped_ranges:
-    print(f"  Gaps (no HA data): {', '.join(skipped_ranges[:10])}")
+    print(f"  Gaps (no HA data within 5 min): {', '.join(skipped_ranges[:15])}")
 
 # ── POST to weatherpage ────────────────────────────────────────
 print(f"\nBackfilling {len(grid_readings)} readings...")
@@ -113,11 +121,11 @@ count = 0
 session = requests.Session()
 session.headers.update({"X-API-Key": WP_API_KEY, "Content-Type": "application/json"})
 
-for i, (slot_str, ts) in enumerate(grid_readings):
+for i, (slot_str, t, h, p) in enumerate(grid_readings):
     payload = {
-        "temperature": temps[ts],
-        "humidity": hums[ts],
-        "pressure": pressures[ts],
+        "temperature": t,
+        "humidity": h,
+        "pressure": p,
         "timestamp": slot_str,
     }
     try:
