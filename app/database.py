@@ -67,6 +67,34 @@ async def insert_reading(temperature: float, humidity: float, pressure: float, t
         await db.close()
 
 
+async def remove_off_grid_readings() -> int:
+    """Delete readings that aren't on the 5-minute grid, plus duplicates.
+    Returns the number of deleted rows."""
+    db = await get_db()
+    try:
+        total = 0
+
+        # Remove duplicates: keep lowest id for each timestamp
+        cursor = await db.execute("""
+            DELETE FROM weather_readings WHERE id NOT IN (
+                SELECT MIN(id) FROM weather_readings GROUP BY timestamp
+            )
+        """)
+        total += cursor.rowcount
+
+        # Remove off-grid: minute not divisible by 5, or seconds != 0
+        cursor = await db.execute("""
+            DELETE FROM weather_readings
+            WHERE CAST(strftime('%M', timestamp) AS INTEGER) % 5 != 0
+               OR CAST(strftime('%S', timestamp) AS INTEGER) != 0
+        """)
+        total += cursor.rowcount
+        await db.commit()
+        return total
+    finally:
+        await db.close()
+
+
 async def get_current() -> dict | None:
     """Get the most recent reading."""
     db = await get_db()

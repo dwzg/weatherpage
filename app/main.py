@@ -200,6 +200,16 @@ async def post_weather(data: dict, request: Request):
     return {"status": "ok"}
 
 
+@app.delete("/api/weather/cleanup")
+async def cleanup_off_grid(request: Request):
+    """Remove readings not aligned to the 5-minute grid and duplicates.
+    Requires X-API-Key header if API_KEY is configured."""
+    if API_KEY and request.headers.get("X-API-Key") != API_KEY:
+        raise HTTPException(status_code=401, detail="invalid API key")
+    deleted = await database.remove_off_grid_readings()
+    return {"status": "ok", "deleted": deleted}
+
+
 @app.get("/api/weather/current")
 async def get_current():
     """Return the most recent reading."""

@@ -4,12 +4,13 @@
 Usage:
     HA_TOKEN=xxx WP_API_KEY=xxx python3 backfill.py
 
-Fetches sensor data from HA's history API and POSTs it to the weatherpage.
-Edit START/END below to match the outage window.
+Fetches sensor data from HA's history API, resamples to 5-minute grid,
+and POSTs to the weatherpage.
 """
 
 import os
 import sys
+from datetime import datetime, timedelta
 import requests
 
 # ── Outage window (inclusive) ──────────────────────────────────
@@ -17,7 +18,7 @@ START = "2026-06-30T15:20:00"
 END   = "2026-07-01T09:10:00"
 
 # ── Configuration ──────────────────────────────────────────────
-HA_URL = "http://192.168.178.48:8123"
+HA_URL = os.environ.get("HA_URL", "http://homeassistant.local:8123")
 WP_URL = "https://weather.wtzg.de/api/weather"
 
 HA_TOKEN = os.environ.get("HA_TOKEN")
@@ -57,41 +58,64 @@ temps     = fetch_ha(ENTITIES["temperature"])
 hums      = fetch_ha(ENTITIES["humidity"])
 pressures = fetch_ha(ENTITIES["pressure"])
 
-# Align by timestamp (all three sensors must have a reading)
-timestamps = sorted(set(temps) & set(hums) & set(pressures))
+raw_timestamps = sorted(set(temps) & set(hums) & set(pressures))
 print(f"  Temperature readings: {len(temps)}")
 print(f"  Humidity readings:    {len(hums)}")
 print(f"  Pressure readings:    {len(pressures)}")
-print(f"  Overlapping:          {len(timestamps)}")
+print(f"  Overlapping raw:      {len(raw_timestamps)}")
 
-if not timestamps:
+if not raw_timestamps:
     print("ERROR: No overlapping readings found. Check entity IDs and time range.")
     sys.exit(1)
 
+# ── Resample to 5-minute grid ──────────────────────────────────
+start_dt = datetime.fromisoformat(raw_timestamps[0])
+end_dt   = datetime.fromisoformat(raw_timestamps[-1])
+start_dt = start_dt.replace(second=0, microsecond=0)
+while start_dt.minute % 5 != 0:
+    start_dt += timedelta(minutes=1)
+
+grid_readings = []
+slot = start_dt
+while slot <= end_dt:
+    slot_str = slot.strftime("%Y-%m-%dT%H:%M:%S")
+    best_ts = None
+    best_dist = timedelta(minutes=2.5)
+    for ts in raw_timestamps:
+        dt = datetime.fromisoformat(ts)
+        dist = abs(dt - slot)
+        if dist < best_dist:
+            best_dist = dist
+            best_ts = ts
+    if best_ts:
+        grid_readings.append((slot_str, best_ts))
+    slot += timedelta(minutes=5)
+
+print(f"  Resampled to 5-min grid: {len(grid_readings)} slots")
+
 # ── POST to weatherpage ────────────────────────────────────────
-print(f"\nBackfilling {len(timestamps)} readings...")
+print(f"\nBackfilling {len(grid_readings)} readings...")
 count = 0
 session = requests.Session()
 session.headers.update({"X-API-Key": WP_API_KEY, "Content-Type": "application/json"})
 
-for i, ts in enumerate(timestamps):
+for i, (slot_str, ts) in enumerate(grid_readings):
     payload = {
         "temperature": temps[ts],
         "humidity": hums[ts],
         "pressure": pressures[ts],
-        "timestamp": ts,
+        "timestamp": slot_str,
     }
     try:
         resp = session.post(WP_URL, json=payload, timeout=10)
         if resp.status_code == 200:
             count += 1
         else:
-            print(f"  [{i+1}/{len(timestamps)}] Failed at {ts}: HTTP {resp.status_code} {resp.text.strip()}")
+            print(f"  [{i+1}/{len(grid_readings)}] Failed at {slot_str}: HTTP {resp.status_code} {resp.text.strip()}")
     except requests.RequestException as e:
-        print(f"  [{i+1}/{len(timestamps)}] Error at {ts}: {e}")
+        print(f"  [{i+1}/{len(grid_readings)}] Error at {slot_str}: {e}")
 
-    # Progress every 10 readings or on the last one
-    if (i + 1) % 10 == 0 or i == len(timestamps) - 1:
-        print(f"  {i+1}/{len(timestamps)} ...")
+    if (i + 1) % 10 == 0 or i == len(grid_readings) - 1:
+        print(f"  {i+1}/{len(grid_readings)} ...")
 
-print(f"\nDone: {count}/{len(timestamps)} readings backfilled.")
+print(f"\nDone: {count}/{len(grid_readings)} readings backfilled.")
