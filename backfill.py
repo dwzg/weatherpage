@@ -75,23 +75,37 @@ start_dt = start_dt.replace(second=0, microsecond=0)
 while start_dt.minute % 5 != 0:
     start_dt += timedelta(minutes=1)
 
+# Pre-index raw timestamps as datetime objects for faster lookup
+raw_dts = sorted(datetime.fromisoformat(ts) for ts in raw_timestamps)
+raw_map = {ts: ts for ts in raw_timestamps}  # Keep original ts string
+
 grid_readings = []
+skipped_ranges = []
 slot = start_dt
+gap_start = None
 while slot <= end_dt:
     slot_str = slot.strftime("%Y-%m-%dT%H:%M:%S")
     best_ts = None
-    best_dist = timedelta(minutes=2.5)
-    for ts in raw_timestamps:
+    best_dist = timedelta(minutes=5)  # Use closest reading within 5 min
+    for ts, orig_ts in raw_map.items():
         dt = datetime.fromisoformat(ts)
         dist = abs(dt - slot)
         if dist < best_dist:
             best_dist = dist
-            best_ts = ts
+            best_ts = orig_ts
     if best_ts:
         grid_readings.append((slot_str, best_ts))
+        if gap_start:
+            skipped_ranges.append(f"{gap_start.strftime('%H:%M')}-{slot.strftime('%H:%M')}")
+            gap_start = None
+    else:
+        if not gap_start:
+            gap_start = slot
     slot += timedelta(minutes=5)
 
 print(f"  Resampled to 5-min grid: {len(grid_readings)} slots")
+if skipped_ranges:
+    print(f"  Gaps (no HA data): {', '.join(skipped_ranges[:10])}")
 
 # ── POST to weatherpage ────────────────────────────────────────
 print(f"\nBackfilling {len(grid_readings)} readings...")
