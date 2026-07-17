@@ -6,6 +6,7 @@
     <title>Balcony Weather Station</title>
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='17' r='9' fill='%23f59e0b'/%3E%3Cg stroke='%23f59e0b' stroke-width='2.5' stroke-linecap='round'%3E%3Cline x1='16' y1='3' x2='16' y2='6'/%3E%3Cline x1='16' y1='28' x2='16' y2='31'/%3E%3Cline x1='3' y1='17' x2='6' y2='17'/%3E%3Cline x1='26' y1='17' x2='29' y2='17'/%3E%3Cline x1='6.8' y1='8.8' x2='8.9' y2='10.9'/%3E%3Cline x1='23.1' y1='23.1' x2='25.2' y2='25.2'/%3E%3Cline x1='6.8' y1='25.2' x2='8.9' y2='23.1'/%3E%3Cline x1='23.1' y1='10.9' x2='25.2' y2='8.8'/%3E%3C/g%3E%3C/svg%3E">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
     <style>
         :root {
             --bg: #f0f4f8;
@@ -604,55 +605,32 @@ function renderSparklines(readings) {
 // ── Main charts ──────────────────────────────────────────
 const charts = {};
 
-function fmtTs(ts, period) {
-    const d = new Date(ts.replace(' ', 'T'));
-    if (isNaN(d.getTime())) return ts;
-    const h = String(d.getHours()).padStart(2, '0');
-    const m = String(d.getMinutes()).padStart(2, '0');
-    const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-    const days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
-    switch (period) {
-        case '24h': return `${h}:${m}`;
-        case '7d':  return `${days[d.getDay()]}`;
-        case '30d': return `${months[d.getMonth()]} ${d.getDate()}`;
-        case 'all': return `${months[d.getMonth()]} '${String(d.getFullYear()).slice(2)}`;
-        default:    return `${h}:${m}`;
-    }
-}
+// Time scale display formats for each period
+const TIME_FORMATS = {
+    '24h': { unit: 'hour', tooltip: 'HH:mm', display: 'HH:mm' },
+    '7d':  { unit: 'day',  tooltip: 'EEE HH:mm', display: 'EEE' },
+    '30d': { unit: 'day',  tooltip: 'MMM d', display: 'MMM d' },
+    'all': { unit: 'month', tooltip: 'MMM yyyy', display: "MMM ''yy" },
+};
 
-const GAP_THRESHOLD_MINUTES = 15; // break the line if readings are more than 15 min apart
-
-// Insert NaN values at time gaps so Chart.js draws breaks in the line
-function insertGaps(readings, period) {
-    const labels = [];
-    const values = [];
-    for (let i = 0; i < readings.length; i++) {
-        labels.push(fmtTs(readings[i].timestamp, period));
-        values.push(readings[i].value);
-
-        if (i < readings.length - 1) {
-            const curr = new Date(readings[i].timestamp.replace(' ', 'T'));
-            const next = new Date(readings[i + 1].timestamp.replace(' ', 'T'));
-            if ((next - curr) / 60000 > GAP_THRESHOLD_MINUTES) {
-                labels.push('');
-                values.push(NaN);
-            }
-        }
-    }
-    return { labels, values };
+// Convert readings to {x: timestamp_ms, y: value} for time scale
+function toTimeData(readings) {
+    return readings.map(r => ({
+        x: new Date(r.timestamp.replace(' ', 'T')).getTime(),
+        y: r.value,
+    }));
 }
 
 function makeChartConfig(label, color, data, period) {
     const cs = chartStyle();
-    const { labels, values } = insertGaps(data, period);
+    const fmt = TIME_FORMATS[period] || TIME_FORMATS['24h'];
 
     return {
         type: 'line',
         data: {
-            labels: labels,
             datasets: [{
                 label: label,
-                data: values,
+                data: toTimeData(data),
                 borderColor: color.line,
                 backgroundColor: color.bg,
                 borderWidth: 2,
@@ -660,6 +638,7 @@ function makeChartConfig(label, color, data, period) {
                 pointRadius: 0,
                 pointHoverRadius: 4,
                 tension: 0.3,
+                spanGaps: false,  // break the line at data gaps
             }]
         },
         options: {
@@ -669,6 +648,12 @@ function makeChartConfig(label, color, data, period) {
             plugins: { legend: { display: false } },
             scales: {
                 x: {
+                    type: 'time',
+                    time: {
+                        unit: fmt.unit,
+                        displayFormats: { [fmt.unit]: fmt.display },
+                        tooltipFormat: fmt.tooltip,
+                    },
                     ticks: { maxTicksLimit: 8, maxRotation: 0, color: cs.tickColor, font: { size: 10 } },
                     grid: { display: false },
                 },
@@ -1069,9 +1054,7 @@ async function pollStatus() {
                 for (const [canvasId, ds] of Object.entries(dsDefs)) {
                     const existing = charts[canvasId];
                     if (existing) {
-                        const gl = insertGaps(ds.values, '24h');
-                        existing.data.labels = gl.labels;
-                        existing.data.datasets[0].data = gl.values;
+                        existing.data.datasets[0].data = toTimeData(ds.values);
                         existing.update();
                     }
                 }

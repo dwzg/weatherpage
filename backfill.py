@@ -15,8 +15,8 @@ import requests
 BERLIN = ZoneInfo("Europe/Berlin")
 
 # ── Outage window (inclusive) ──────────────────────────────────
-START = "2026-06-30T15:20:00"
-END   = "2026-07-01T09:10:00"
+START = "2026-07-16T22:25:00"
+END   = "2026-07-17T20:10:00"
 
 # ── Configuration ──────────────────────────────────────────────
 HA_URL = os.environ.get("HA_URL", "http://homeassistant.local:8123")
