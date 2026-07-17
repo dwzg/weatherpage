@@ -613,12 +613,24 @@ const TIME_FORMATS = {
     'all': { unit: 'month', tooltip: 'MMM yyyy', display: "MMM ''yy" },
 };
 
-// Convert readings to {x: timestamp_ms, y: value} for time scale
+const GAP_THRESHOLD_MS = 15 * 60 * 1000; // break line if >15 min between readings
+
+// Convert readings to time data, inserting NaN points at gaps to break the line
 function toTimeData(readings) {
-    return readings.map(r => ({
-        x: new Date(r.timestamp.replace(' ', 'T')).getTime(),
-        y: r.value,
-    }));
+    const points = [];
+    for (let i = 0; i < readings.length; i++) {
+        const t = new Date(readings[i].timestamp.replace(' ', 'T')).getTime();
+        points.push({ x: t, y: readings[i].value });
+
+        if (i < readings.length - 1) {
+            const nextT = new Date(readings[i + 1].timestamp.replace(' ', 'T')).getTime();
+            if (nextT - t > GAP_THRESHOLD_MS) {
+                // Insert a NaN point 1ms later to break the line
+                points.push({ x: t + 1, y: NaN });
+            }
+        }
+    }
+    return points;
 }
 
 function makeChartConfig(label, color, data, period) {
