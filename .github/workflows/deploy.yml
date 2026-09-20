@@ -4,6 +4,12 @@ on:
   push:
     branches: [main]
 
+# Two deploys racing would leave whichever image finished last, which may not
+# be the newest commit.
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
@@ -24,12 +30,18 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push Docker image to GHCR
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile
           push: true
-          tags: ghcr.io/${{ github.repository_owner }}/weatherpage:latest
+          # Tag with the commit SHA as well as latest, so a bad deploy can be
+          # rolled back by pinning the previous SHA in the compose file.
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/weatherpage:latest
+            ghcr.io/${{ github.repository_owner }}/weatherpage:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Trigger Portainer webhook
         uses: distributhor/workflow-webhook@v3
