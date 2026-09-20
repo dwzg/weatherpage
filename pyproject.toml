@@ -6,6 +6,10 @@ requires-python = ">=3.11"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# `python -m pytest` puts the working directory on sys.path but the `pytest`
+# console script does not, so without this the suite imports `app` locally
+# and fails to on CI.
+pythonpath = ["."]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 filterwarnings = ["error::DeprecationWarning:app.*"]
