@@ -252,7 +252,9 @@
         }
         .heatmap-track {
             display: flex;
+            align-items: flex-start;
             overflow-x: auto;
+            overflow-y: hidden;
             scroll-snap-type: x mandatory;
             overscroll-behavior-x: contain;
             scrollbar-width: none;
@@ -913,8 +915,9 @@ function renderMonthPanel(year, month, dayMap, todayStr) {
         grid.appendChild(cell);
     }
 
-    // Pad out to a full six-week grid so every month panel is the same height
-    for (let i = lead + daysInMonth; i < 42; i++) addPad();
+    // Pad out the final week only — the panel is as tall as the month needs
+    const trail = (7 - ((lead + daysInMonth) % 7)) % 7;
+    for (let i = 0; i < trail; i++) addPad();
 
     panel.appendChild(grid);
 
@@ -944,6 +947,20 @@ function updateHeatmapNav() {
     if (next) next.disabled = heatmap.index >= heatmap.months.length - 1;
 }
 
+// The track holds every month side by side, so without this it would always be
+// as tall as the tallest one. Follow the panel in view, interpolating mid-swipe.
+function syncHeatmapHeight() {
+    const track = heatmap.track;
+    if (!track || !track.children.length || !track.clientWidth) return;
+    const pos = track.scrollLeft / track.clientWidth;
+    const last = track.children.length - 1;
+    const i = Math.max(0, Math.min(last, Math.floor(pos)));
+    const j = Math.max(0, Math.min(last, i + 1));
+    const frac = Math.max(0, Math.min(1, pos - i));
+    const height = track.children[i].offsetHeight * (1 - frac) + track.children[j].offsetHeight * frac;
+    track.style.height = `${Math.round(height)}px`;
+}
+
 function goToMonth(index, smooth = true) {
     if (!heatmap.track || !heatmap.months.length) return;
     heatmap.index = Math.max(0, Math.min(heatmap.months.length - 1, index));
@@ -952,6 +969,7 @@ function goToMonth(index, smooth = true) {
         behavior: smooth ? 'smooth' : 'auto',
     });
     updateHeatmapNav();
+    syncHeatmapHeight();
 }
 
 async function buildHeatmap() {
@@ -994,9 +1012,13 @@ async function buildHeatmap() {
         document.getElementById('heatmap-prev').onclick = () => goToMonth(heatmap.index - 1);
         document.getElementById('heatmap-next').onclick = () => goToMonth(heatmap.index + 1);
 
-        // Keep the label in sync with swipe / trackpad scrolling
+        // Keep the label and the panel height in sync with swipe / trackpad scrolling
         let scrollTimer;
+        let heightFrame = 0;
         track.addEventListener('scroll', () => {
+            if (!heightFrame) {
+                heightFrame = requestAnimationFrame(() => { heightFrame = 0; syncHeatmapHeight(); });
+            }
             clearTimeout(scrollTimer);
             scrollTimer = setTimeout(() => {
                 if (!track.clientWidth) return;
@@ -1014,6 +1036,12 @@ async function buildHeatmap() {
         });
 
         window.addEventListener('resize', () => goToMonth(heatmap.index, false));
+
+        // Cells are sized in vw, so panel heights change with the viewport
+        if (window.ResizeObserver) {
+            const ro = new ResizeObserver(() => syncHeatmapHeight());
+            for (const panel of track.children) ro.observe(panel);
+        }
 
         // ── Update legend with fixed color scale ──────────
         const legendBar = document.querySelector('.heatmap-legend-bar');
