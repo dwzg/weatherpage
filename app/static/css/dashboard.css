@@ -96,6 +96,55 @@ header .subtitle { color: var(--text-secondary); font-size: 0.9rem; margin-top: 
     border-color: transparent;
 }
 
+/* ── The two predictions ──────────────────────────────────────────────── */
+
+/* The banner row holds both, side by side, wrapping on a narrow screen. */
+.banner-row { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+
+.banner-nowcast {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 4px;
+}
+.banner-nowcast strong { font-weight: 700; }
+
+.predictions { text-align: center; margin-bottom: 16px; }
+
+.prediction-note {
+    display: inline-block;
+    max-width: 62ch;
+    text-align: left;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+}
+.prediction-note summary {
+    cursor: pointer;
+    text-align: center;
+    padding: 2px 8px;
+    border-radius: 12px;
+    list-style: none;
+}
+.prediction-note summary::-webkit-details-marker { display: none; }
+.prediction-note summary::before { content: "ⓘ "; }
+.prediction-note summary:hover { color: var(--text); }
+.prediction-note[open] summary { color: var(--text); }
+.prediction-note-body {
+    margin-top: 8px;
+    padding: 14px 18px;
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+}
+.prediction-note-body p { margin-bottom: 10px; line-height: 1.5; }
+.prediction-note-body p:last-child { margin-bottom: 0; }
+.prediction-note-body strong { color: var(--text); }
+.prediction-provenance {
+    font-size: 0.72rem;
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
+}
+
 /* ── Current conditions ───────────────────────────────────────────────── */
 
 .current-grid {

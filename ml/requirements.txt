@@ -1,0 +1,6 @@
+# Training only. These never enter the image: the app evaluates the fitted
+# model with a dot product and a sigmoid (see app/nowcast.py), so the
+# container carries no ML dependency at all.
+-r ../app/requirements.txt
+numpy>=2.0
+scikit-learn>=1.5

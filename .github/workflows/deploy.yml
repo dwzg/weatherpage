@@ -3,6 +3,10 @@ name: Build and Deploy to GHCR
 on:
   push:
     branches: [main]
+  # The weekly retraining job commits a new model with GITHUB_TOKEN, and
+  # GitHub deliberately does not let that push start another workflow.
+  # Without this, a retrained model would sit on main undeployed.
+  workflow_dispatch:
 
 # Two deploys racing would leave whichever image finished last, which may not
 # be the newest commit.

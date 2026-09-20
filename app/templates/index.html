@@ -29,6 +29,60 @@
     {%- if forecast and forecast != 'Not enough data' %}
     <span class="banner">{{ forecast_emoji }} {{ forecast }}</span>
     {%- endif %}
+    {%- if nowcast %}
+    <span class="banner banner-nowcast" id="label-nowcast"
+          title="Learned from this station's own history">
+        🤖 Rain nearby {{ nowcast.label }} ·
+        <strong>{{ "%.0f"|format(nowcast.probability * 100) }}%</strong>
+        in {{ nowcast.horizon_hours }} h
+    </span>
+    {%- endif %}
+</div>
+
+{#- The two predictions sit together: a phrase from thresholds a person can
+    read, and a probability from a model fitted to this station's history.
+    Both are server-rendered, then replaced in place by the poller. -#}
+<div class="predictions" id="predictions">
+    <details class="prediction-note">
+        <summary>How these two predictions work</summary>
+        <div class="prediction-note-body">
+            <p>
+                <strong>The outlook</strong> is a handful of thresholds. It ranks the
+                current pressure against this station's own last 30 days and reads that
+                rank together with the humidity. It says nothing about which way the
+                barometer is moving, because scored against observed rainfall here that
+                turned out to carry no useful signal.
+            </p>
+            <p>
+                <strong>The rain chance</strong> is a logistic regression fitted to this
+                station's readings against observed rainfall, and retrained every week as
+                more data arrives. It reads ten measurements — pressure ranks, humidity and
+                its recent peak and changes, dew-point spread, pressure changes, temperature
+                — and returns the probability of at least
+                {{ nowcast.rain_mm if nowcast else 0.2 }} mm of rain in the next
+                {{ nowcast.horizon_hours if nowcast else 6 }} hours
+                <em>somewhere in the surrounding area</em>. That is the question the
+                sensors can answer: trained instead on rain at this exact point, the
+                same model scores far worse, because whether a summer shower crosses
+                this balcony or the next valley is not something a barometer knows.
+            </p>
+            <p>
+                They disagree sometimes, and that is the point: the phrase is a category,
+                the percentage is a calibrated probability. Over the most recent validation
+                the model matched a persistence baseline on the yes/no call while scoring
+                far better as a probability. Neither sees wind, radar or anything upstream
+                of the balcony, so treat both as a hint rather than a forecast.
+            </p>
+            {%- if nowcast and nowcast.skill %}
+            <p class="prediction-provenance">
+                Model trained {{ nowcast.trained_at }} ·
+                Brier {{ "%.3f"|format(nowcast.skill.brier) }} ·
+                skill over climatology {{ "%+.0f"|format(nowcast.skill.bss * 100) }}% ·
+                AUC {{ nowcast.skill.auc }}
+            </p>
+            {%- endif %}
+        </div>
+    </details>
 </div>
 
 <div class="banner-row" id="label-frost">

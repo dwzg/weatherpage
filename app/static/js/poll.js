@@ -107,6 +107,7 @@ function applyStatus(status) {
     const forecast = status.forecast && status.forecast !== 'Not enough data'
         ? `${status.forecast_emoji} ${status.forecast}` : '';
     setBanner('label-forecast', forecast, 'banner');
+    updateNowcast(status.nowcast);
     setBanner('label-frost',
         status.frost_warning ? '❄️ Frost warning — protect your plants!' : '',
         'banner banner-alert');
@@ -115,6 +116,32 @@ function applyStatus(status) {
         'banner banner-warn');
 
     setText('label-updated', `Last updated: ${current.timestamp}`);
+}
+
+/* The learned rain chance, beside the rule-based phrase. The element is only
+   present when the image shipped with a model and the station has enough
+   history to feed it, so this adds and removes it rather than assuming it. */
+function updateNowcast(nowcast) {
+    const row = document.getElementById('label-forecast');
+    if (!row) return;
+    let el = document.getElementById('label-nowcast');
+
+    if (!nowcast) {
+        if (el) el.remove();
+        return;
+    }
+    if (!el) {
+        el = document.createElement('span');
+        el.id = 'label-nowcast';
+        el.className = 'banner banner-nowcast';
+        el.title = "Learned from this station's own history";
+        row.appendChild(el);
+    }
+    el.textContent = '';
+    el.append(`🤖 Rain nearby ${nowcast.label} · `);
+    const value = document.createElement('strong');
+    value.textContent = `${Math.round(nowcast.probability * 100)}%`;
+    el.append(value, ` in ${nowcast.horizon_hours} h`);
 }
 
 export function startPolling() {

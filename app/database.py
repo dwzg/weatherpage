@@ -65,6 +65,8 @@ CYCLE_MIN_DAYS = 14
 #: hourly readings needed before that ranking means anything.
 PERCENTILE_DAYS = 30
 PERCENTILE_MIN_READINGS = 7 * 24
+#: Fraction of a shorter window that must be populated for it to count.
+PERCENTILE_COVERAGE = 0.6
 
 #: Bucket widths (minutes) tried in order when downsampling.
 _BUCKET_LADDER: tuple[int, ...] = (
@@ -501,7 +503,9 @@ async def get_pressure_trend(hours: int = TREND_WINDOW_HOURS) -> dict | None:
     }
 
 
-async def get_pressure_percentile(pressure: float) -> float | None:
+async def get_pressure_percentile(
+    pressure: float, days: int = PERCENTILE_DAYS
+) -> float | None:
     """Where ``pressure`` sits within the station's own recent range, 0-1.
 
     Scored against observed rainfall, *where* the pressure sits predicts rain
@@ -515,16 +519,27 @@ async def get_pressure_percentile(pressure: float) -> float | None:
 
     Returns ``None`` until there is enough history to rank against.
     """
-    window = await _recent_pressures()
-    if len(window) < PERCENTILE_MIN_READINGS:
+    window = await _recent_pressures(days)
+    if len(window) < _percentile_minimum(days):
         return None
     return round(bisect.bisect_left(window, pressure) / len(window), 3)
 
 
+def _percentile_minimum(days: int) -> int:
+    """Hourly readings needed before a ranking window means anything.
+
+    The smaller of a week's worth and most of the window: a rank against a
+    handful of readings is meaningless, but demanding every hour would let a
+    single afternoon's outage silently switch the ranking — and the nowcast
+    that reads it — off for days.
+    """
+    return min(PERCENTILE_MIN_READINGS, int(days * 24 * PERCENTILE_COVERAGE))
+
+
 @cached
-async def _recent_pressures() -> list[float]:
+async def _recent_pressures(days: int = PERCENTILE_DAYS) -> list[float]:
     """Sorted de-tided pressures, one per hour, over the ranking window."""
-    cutoff = clock.fmt_ts(clock.now() - timedelta(days=PERCENTILE_DAYS))
+    cutoff = clock.fmt_ts(clock.now() - timedelta(days=days))
     rows = await _fetch_all(
         "SELECT timestamp, pressure FROM weather_readings "
         "WHERE timestamp >= ? AND substr(timestamp, 15, 2) = '00' "
@@ -633,6 +648,25 @@ def _consistency(pressures: Iterable[float], direction: str) -> float:
         ):
             agree += 1
     return round(agree / max(len(values) - 1, 1), 2)
+
+
+async def get_extreme(column: str, hours: float, highest: bool = True) -> float | None:
+    """The highest (or lowest) value of ``column`` over the last ``hours``.
+
+    The nowcast reads the humidity peak of the last few hours: air that has
+    been at saturation recently behaves differently from air that has just
+    arrived there, and a single current reading cannot tell them apart.
+    """
+    if column not in METRICS:
+        raise ValueError(f"unknown metric: {column!r}")
+
+    cutoff = clock.fmt_ts(clock.now() - timedelta(hours=hours))
+    row = await _fetch_one(
+        f"SELECT {'MAX' if highest else 'MIN'}({column}) AS value "
+        f"FROM weather_readings WHERE timestamp >= ?",
+        (cutoff,),
+    )
+    return row["value"] if row and row["value"] is not None else None
 
 
 async def get_recent_trend(column: str, hours: int = 3) -> dict | None:
