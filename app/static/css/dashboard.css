@@ -136,8 +136,16 @@ header .subtitle { color: var(--text-secondary); font-size: 0.9rem; margin-top: 
     border-radius: var(--radius);
     box-shadow: var(--shadow);
 }
-.prediction-note-body p { margin-bottom: 10px; line-height: 1.5; }
-.prediction-note-body p:last-child { margin-bottom: 0; }
+.prediction-note-body dt {
+    color: var(--text);
+    font-weight: 600;
+    margin-bottom: 3px;
+}
+.prediction-note-body dd {
+    margin: 0 0 12px;
+    line-height: 1.5;
+}
+.prediction-note-body dd:last-child { margin-bottom: 0; }
 .prediction-note-body strong { color: var(--text); }
 .prediction-provenance {
     font-size: 0.72rem;
