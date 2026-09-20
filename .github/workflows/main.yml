@@ -22,15 +22,31 @@ jobs:
 
     steps:
       - name: Forward weather data to app
+        env:
+          # Inputs go through the environment, never interpolated into the
+          # script body: `${{ inputs.x }}` inside a run block is substituted
+          # before the shell sees it, so a crafted value would be executed as
+          # shell. jq then builds the JSON, so quoting is handled too.
+          APP_URL: ${{ secrets.APP_URL }}
+          API_KEY: ${{ secrets.API_KEY }}
+          TEMPERATURE: ${{ inputs.temperature }}
+          HUMIDITY: ${{ inputs.humidity }}
+          PRESSURE: ${{ inputs.pressure }}
+          TIMESTAMP: ${{ inputs.timestamp }}
         run: |
-          curl -s -X POST "${{ secrets.APP_URL }}/api/weather" \
+          set -euo pipefail
+          payload=$(jq -n \
+            --arg temperature "$TEMPERATURE" \
+            --arg humidity "$HUMIDITY" \
+            --arg pressure "$PRESSURE" \
+            --arg timestamp "$TIMESTAMP" \
+            '{temperature: $temperature, humidity: $humidity,
+              pressure: $pressure, timestamp: $timestamp}')
+
+          curl -sS -X POST "$APP_URL/api/weather" \
             -H "Content-Type: application/json" \
-            -H "X-API-Key: ${{ secrets.API_KEY }}" \
-            -d '{
-              "temperature": "${{ inputs.temperature }}",
-              "humidity": "${{ inputs.humidity }}",
-              "pressure": "${{ inputs.pressure }}",
-              "timestamp": "${{ inputs.timestamp }}"
-            }' \
-            -w "\nHTTP %{http_code}" \
+            -H "X-API-Key: $API_KEY" \
+            -d "$payload" \
+            -w "\nHTTP %{http_code}\n" \
+            --retry 3 --retry-delay 5 --retry-connrefused \
             --fail-with-body

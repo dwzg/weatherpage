@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            app/requirements.txt
+            requirements-dev.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Test
+        run: pytest -q
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The default buildx driver is "docker", which cannot export a build
+      # cache; without this step the build fails before it starts on
+      # "Cache export is not supported for the docker driver".
+      - uses: docker/setup-buildx-action@v3
+
+      # Build without pushing, so a broken image fails the PR instead of main.
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: weatherpage:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke-test the image
+        run: |
+          docker run -d --name weatherpage -p 8080:8080 weatherpage:ci
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8080/healthz > /dev/null; then break; fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:8080/healthz
+          curl -fsS -o /dev/null http://127.0.0.1:8080/
+          curl -fsS -o /dev/null http://127.0.0.1:8080/static/css/dashboard.css
+          docker logs weatherpage
+          docker rm -f weatherpage

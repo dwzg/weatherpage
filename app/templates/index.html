@@ -3,361 +3,18 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="color-scheme" content="light dark">
+    <meta name="description" content="Live temperature, humidity and pressure from a balcony weather station.">
+    {#- Asset paths are root-relative on purpose. url_for() emits an absolute
+        URL built from the request, which behind the HTTPS reverse proxy comes
+        out as http:// and gets blocked as mixed content, leaving the page with
+        no stylesheet and no scripts. -#}
     <title>Balcony Weather Station</title>
-    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='17' r='9' fill='%23f59e0b'/%3E%3Cg stroke='%23f59e0b' stroke-width='2.5' stroke-linecap='round'%3E%3Cline x1='16' y1='3' x2='16' y2='6'/%3E%3Cline x1='16' y1='28' x2='16' y2='31'/%3E%3Cline x1='3' y1='17' x2='6' y2='17'/%3E%3Cline x1='26' y1='17' x2='29' y2='17'/%3E%3Cline x1='6.8' y1='8.8' x2='8.9' y2='10.9'/%3E%3Cline x1='23.1' y1='23.1' x2='25.2' y2='25.2'/%3E%3Cline x1='6.8' y1='25.2' x2='8.9' y2='23.1'/%3E%3Cline x1='23.1' y1='10.9' x2='25.2' y2='8.8'/%3E%3C/g%3E%3C/svg%3E">
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
-    <style>
-        :root {
-            --bg: #f0f4f8;
-            --card-bg: #ffffff;
-            --text: #1a202c;
-            --text-secondary: #64748b;
-            --accent-temp: #e53e3e;
-            --accent-hum: #3182ce;
-            --accent-pres: #38a169;
-            --accent-warn: #dd6b20;
-            --border: #e2e8f0;
-            --shadow: 0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.06);
-            --radius: 12px;
-        }
-
-        @media (prefers-color-scheme: dark) {
-            :root {
-                --bg: #1a202c;
-                --card-bg: #2d3748;
-                --text: #e2e8f0;
-                --text-secondary: #a0aec0;
-                --border: #4a5568;
-                --shadow: 0 1px 3px rgba(0,0,0,0.3);
-            }
-            .heatmap-cell { color: rgba(255,255,255,0.7) !important; }
-            .heatmap-cell.heatmap-empty { background: transparent !important; }
-        }
-
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: var(--bg);
-            color: var(--text);
-            min-height: 100vh;
-            padding: 20px;
-        }
-
-        .container { max-width: 900px; margin: 0 auto; }
-
-        header {
-            text-align: center;
-            padding: 24px 0 16px;
-        }
-        header h1 { font-size: 1.8rem; font-weight: 700; }
-        header .subtitle { color: var(--text-secondary); font-size: 0.9rem; margin-top: 4px; }
-
-        /* Current cards */
-        .current-grid {
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 16px;
-            margin-bottom: 24px;
-        }
-        @media (max-width: 600px) {
-            .current-grid { grid-template-columns: 1fr; }
-        }
-
-        .current-card {
-            background: var(--card-bg);
-            border-radius: var(--radius);
-            padding: 16px 20px 12px;
-            text-align: center;
-            box-shadow: var(--shadow);
-            border: 1px solid var(--border);
-            position: relative;
-        }
-        .current-card .label {
-            font-size: 0.8rem;
-            color: var(--text-secondary);
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-            margin-bottom: 4px;
-        }
-        .current-card .value {
-            font-size: 2.2rem;
-            font-weight: 700;
-            line-height: 1.2;
-        }
-        .current-card .unit { font-size: 0.9rem; font-weight: 400; color: var(--text-secondary); margin-left: 4px; }
-        .current-card .detail {
-            font-size: 0.8rem;
-            color: var(--text-secondary);
-            margin-top: 2px;
-        }
-        .current-card.temp .value { color: var(--accent-temp); }
-        .current-card.hum .value { color: var(--accent-hum); }
-        .current-card.pres .value { color: var(--accent-pres); }
-
-        .current-card .trend-rising  { color: #e53e3e; }
-        .current-card .trend-falling { color: #3182ce; }
-        .current-card .trend-steady  { color: #718096; }
-
-        .current-card .sparkline {
-            display: block;
-            margin: 6px auto 0;
-            width: 100%;
-            max-width: 200px;
-            height: 40px;
-        }
-        @media (max-width: 600px) {
-            .current-card .sparkline {
-                max-width: 100%;
-            }
-        }
-
-        .updated {
-            text-align: center;
-            font-size: 0.8rem;
-            color: var(--text-secondary);
-            margin-bottom: 24px;
-        }
-
-        /* Period selector */
-        .period-selector {
-            display: flex;
-            justify-content: center;
-            gap: 4px;
-            margin-bottom: 20px;
-            background: var(--card-bg);
-            border-radius: var(--radius);
-            padding: 4px;
-            box-shadow: var(--shadow);
-            border: 1px solid var(--border);
-        }
-        .period-btn {
-            padding: 8px 20px;
-            border: none;
-            background: transparent;
-            border-radius: 8px;
-            cursor: pointer;
-            font-size: 0.9rem;
-            color: var(--text-secondary);
-            transition: all 0.15s;
-        }
-        .period-btn:hover { color: var(--text); background: var(--border); }
-        .period-btn.active { background: var(--text); color: var(--bg); }
-
-        /* Charts */
-        .chart-card {
-            background: var(--card-bg);
-            border-radius: var(--radius);
-            padding: 20px;
-            margin-bottom: 16px;
-            box-shadow: var(--shadow);
-            border: 1px solid var(--border);
-        }
-        .chart-card h3 {
-            font-size: 0.85rem;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-            color: var(--text-secondary);
-            margin-bottom: 12px;
-        }
-        .chart-card canvas { max-height: 220px; }
-
-        /* Stats and extremes */
-        .stats-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 16px;
-            margin-bottom: 24px;
-        }
-        @media (max-width: 600px) {
-            .stats-grid { grid-template-columns: 1fr; }
-        }
-        .stats-card {
-            background: var(--card-bg);
-            border-radius: var(--radius);
-            padding: 20px;
-            box-shadow: var(--shadow);
-            border: 1px solid var(--border);
-        }
-        /* Inside .stats-grid the grid gap spaces the cards; a stats-card placed
-           directly in the container (the climate one) needs its own margin. */
-        .container > .stats-card { margin-bottom: 16px; }
-        .stats-card h3 {
-            font-size: 0.85rem;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-            color: var(--text-secondary);
-            margin-bottom: 12px;
-        }
-        .stat-row {
-            display: flex;
-            align-items: baseline;
-            gap: 8px;
-            padding: 6px 0;
-            border-bottom: 1px solid var(--border);
-            font-size: 0.88rem;
-        }
-        .stat-row:last-child { border-bottom: none; }
-        .stat-row .stat-label { color: var(--text); min-width: 0; }
-        .stat-row .stat-val { font-weight: 600; white-space: nowrap; }
-        .stat-row .stat-val.hi { color: var(--accent-temp); }
-        .stat-row .stat-val.lo { color: var(--accent-hum); }
-        .stat-row .stat-time { font-size: 0.78rem; color: var(--text-secondary); margin-left: auto; white-space: nowrap; }
-        .stat-row .stat-spacer { flex: 1; border-bottom: 1px dotted var(--border); min-width: 8px; align-self: center; }
-
-        /* Calendar heatmap */
-        .heatmap-card {
-            background: var(--card-bg);
-            border-radius: var(--radius);
-            padding: 20px;
-            margin-bottom: 24px;
-            box-shadow: var(--shadow);
-            border: 1px solid var(--border);
-        }
-        .heatmap-card h3 {
-            font-size: 0.85rem;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-            color: var(--text-secondary);
-            margin-bottom: 12px;
-        }
-        .heatmap-nav {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 12px;
-            margin-bottom: 12px;
-        }
-        .heatmap-nav button {
-            background: var(--bg);
-            border: 1px solid var(--border);
-            color: var(--text);
-            border-radius: 8px;
-            width: 32px;
-            height: 32px;
-            flex: none;
-            font-size: 1.1rem;
-            line-height: 1;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            transition: background 0.15s, opacity 0.15s;
-        }
-        .heatmap-nav button:hover:not(:disabled) { background: var(--border); }
-        .heatmap-nav button:disabled { opacity: 0.3; cursor: default; }
-        .heatmap-month-label {
-            font-size: 1rem;
-            font-weight: 600;
-            text-align: center;
-            flex: 1;
-        }
-        .heatmap-track {
-            display: flex;
-            align-items: flex-start;
-            overflow-x: auto;
-            overflow-y: hidden;
-            scroll-snap-type: x mandatory;
-            overscroll-behavior-x: contain;
-            scrollbar-width: none;
-            -ms-overflow-style: none;
-        }
-        .heatmap-track::-webkit-scrollbar { display: none; }
-        .heatmap-track:focus-visible { outline: 2px solid var(--accent-hum); outline-offset: 4px; border-radius: 6px; }
-        .heatmap-month {
-            flex: 0 0 100%;
-            min-width: 0;
-            scroll-snap-align: center;
-        }
-        .heatmap-grid {
-            display: grid;
-            grid-template-columns: repeat(7, 1fr);
-            gap: 4px;
-        }
-        .heatmap-header {
-            font-size: 0.7rem;
-            color: var(--text-secondary);
-            text-align: center;
-            padding: 2px 0;
-        }
-        .heatmap-cell {
-            height: clamp(38px, 8vw, 62px);
-            border-radius: 5px;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            gap: 1px;
-            font-size: 0.7rem;
-            color: rgba(0,0,0,0.6);
-            cursor: default;
-            transition: transform 0.1s;
-        }
-        .heatmap-cell:hover { transform: scale(1.08); z-index: 1; }
-        .heatmap-cell .cell-day { font-size: 0.68rem; opacity: 0.8; }
-        .heatmap-cell .cell-temp { font-size: 0.8rem; font-weight: 600; }
-        .heatmap-cell.heatmap-empty { background: transparent !important; }
-        .heatmap-cell.heatmap-empty:hover { transform: none; }
-        .heatmap-cell.heatmap-nodata {
-            background: transparent;
-            border: 1px dashed var(--border);
-            color: var(--text-secondary);
-        }
-        .heatmap-cell.is-today { box-shadow: inset 0 0 0 2px var(--text); }
-        .heatmap-month-summary {
-            display: flex;
-            flex-wrap: wrap;
-            justify-content: center;
-            gap: 14px;
-            margin-top: 12px;
-            font-size: 0.78rem;
-            color: var(--text-secondary);
-        }
-        .heatmap-month-summary .hi { color: var(--accent-temp); font-weight: 600; }
-        .heatmap-month-summary .lo { color: var(--accent-hum); font-weight: 600; }
-        .heatmap-month-summary .avg { color: var(--text); font-weight: 600; }
-        .heatmap-note {
-            text-align: center;
-            color: var(--text-secondary);
-            padding: 20px;
-            width: 100%;
-        }
-        @media (max-width: 480px) {
-            .heatmap-cell .cell-temp { display: none; }
-            .heatmap-cell .cell-day { font-size: 0.72rem; opacity: 1; }
-        }
-        .heatmap-legend {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 6px;
-            margin-top: 12px;
-            font-size: 0.75rem;
-            color: var(--text-secondary);
-        }
-        .heatmap-legend-bar {
-            width: 120px;
-            height: 8px;
-            border-radius: 4px;
-            background: linear-gradient(to right, hsl(220,60%,55%), hsl(180,50%,50%), hsl(60,50%,50%), hsl(0,60%,50%));
-        }
-
-        /* No data */
-        .no-data {
-            text-align: center;
-            padding: 60px 20px;
-            color: var(--text-secondary);
-        }
-        .no-data p { font-size: 1.1rem; }
-
-        footer {
-            text-align: center;
-            padding: 16px;
-            color: var(--text-secondary);
-            font-size: 0.75rem;
-        }
-    </style>
+    <link rel="icon" type="image/svg+xml" href="/static/icons/favicon.svg?v={{ asset_version }}">
+    <link rel="stylesheet" href="/static/css/dashboard.css?v={{ asset_version }}">
+    <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+    <script type="module" src="/static/js/main.js?v={{ asset_version }}"></script>
 </head>
 <body>
 <div class="container">
@@ -367,219 +24,189 @@
     <p class="subtitle">Live from the balcony</p>
 </header>
 
-<div id="label-forecast" style="text-align:center;margin-bottom:20px;">
-{% if forecast %}
-    <span style="background:var(--card-bg);color:var(--text);padding:8px 18px;border-radius:20px;font-size:0.9rem;box-shadow:var(--shadow);border:1px solid var(--border);">
-    {% if 'Storm' in forecast or 'Gale' in forecast or 'Thunderstorm' in forecast %}⛈️{% elif 'Rain' in forecast %}🌧️{% elif 'Wind' in forecast %}💨{% elif 'Fog' in forecast or 'drizzle' in forecast %}🌫️{% elif 'Clearing' in forecast or 'Improving' in forecast or 'Fair' in forecast or 'settled' in forecast %}☀️{% elif 'unsettled' in forecast or 'worsen' in forecast or 'Overcast' in forecast %}☁️{% else %}🌤️{% endif %}
-    {{ forecast }}
-    </span>
-{% endif %}
+{#- Banners are rendered server-side and replaced in place by the poller. -#}
+<div class="banner-row" id="label-forecast">
+    {%- if forecast and forecast != 'Not enough data' %}
+    <span class="banner">{{ forecast_emoji }} {{ forecast }}</span>
+    {%- endif %}
 </div>
 
-<div id="label-frost" style="text-align:center;margin-bottom:16px;">
-{% if frost_warning %}
-    <span style="background:#e53e3e;color:#fff;padding:8px 18px;border-radius:20px;font-size:0.9rem;font-weight:600;">❄️ Frost warning — protect your plants!</span>
-{% endif %}
+<div class="banner-row" id="label-frost">
+    {%- if frost_warning %}
+    <span class="banner banner-alert">❄️ Frost warning — protect your plants!</span>
+    {%- endif %}
+</div>
+
+<div class="banner-row" id="label-stale">
+    {%- if stale %}
+    <span class="banner banner-warn">⚠️ No new readings — the sensor feed may be down</span>
+    {%- endif %}
 </div>
 
 {% if current %}
-<!-- Current conditions -->
+
+<!-- ── Current conditions ─────────────────────────────────────────────── -->
 <div class="current-grid">
-    <div class="current-card temp">
+    <div class="card current-card temp">
         <div class="label">Temperature</div>
         <div class="value" id="val-temp">{{ "%.1f"|format(current.temperature) }}<span class="unit">°C</span></div>
         <div class="detail" id="detail-heat">{% if heat_index is not none %}Feels like {{ "%.1f"|format(heat_index) }}°C{% endif %}</div>
         <div class="detail" id="detail-dew">{% if dew_point is not none %}Dew point {{ "%.1f"|format(dew_point) }}°C{% endif %}</div>
-        <div class="detail" id="detail-temp-24h" style="margin-top:2px;font-size:0.75rem;{% if yesterday %}color:{% if current.temperature > yesterday.temperature %}#e53e3e{% elif current.temperature < yesterday.temperature %}#3182ce{% else %}inherit{% endif %}{% endif %}">
-            {% if yesterday %}vs 24h ago: {{ "%+.1f"|format(current.temperature - yesterday.temperature) }}°C{% endif %}
+        {% set temp_delta = (current.temperature - yesterday.temperature) if yesterday else none %}
+        <div class="detail detail-compare{% if temp_delta is not none %}{% if temp_delta > 0 %} delta-up{% elif temp_delta < 0 %} delta-down{% endif %}{% endif %}" id="detail-temp-24h">
+            {%- if temp_delta is not none %}vs {{ comparison_hours }}h ago: {{ "%+.1f"|format(temp_delta) }}°C{% endif %}
         </div>
-        <canvas class="sparkline" id="spark-temp"></canvas>
+        <div class="sparkline-wrap"><canvas class="sparkline" id="spark-temp" aria-hidden="true"></canvas></div>
     </div>
-    <div class="current-card hum">
+
+    <div class="card current-card hum">
         <div class="label">Humidity</div>
         <div class="value" id="val-hum">{{ "%.0f"|format(current.humidity) }}<span class="unit">%</span></div>
-        <div class="detail" id="detail-hum-24h" style="margin-top:2px;font-size:0.75rem;{% if yesterday %}color:{% if current.humidity > yesterday.humidity %}#3182ce{% elif current.humidity < yesterday.humidity %}#e53e3e{% else %}inherit{% endif %}{% endif %}">
-            {% if yesterday %}vs 24h ago: {{ "%+.0f"|format(current.humidity - yesterday.humidity) }}%{% endif %}
+        {% set hum_delta = (current.humidity - yesterday.humidity) if yesterday else none %}
+        <div class="detail detail-compare{% if hum_delta is not none %}{% if hum_delta > 0 %} delta-up-hum{% elif hum_delta < 0 %} delta-down-hum{% endif %}{% endif %}" id="detail-hum-24h">
+            {%- if hum_delta is not none %}vs {{ comparison_hours }}h ago: {{ "%+.0f"|format(hum_delta) }}%{% endif %}
         </div>
-        <canvas class="sparkline" id="spark-hum"></canvas>
+        <div class="sparkline-wrap"><canvas class="sparkline" id="spark-hum" aria-hidden="true"></canvas></div>
     </div>
-    <div class="current-card pres">
+
+    <div class="card current-card pres">
         <div class="label">Pressure</div>
         <div class="value" id="val-pres">{{ "%.0f"|format(current.pressure) }}<span class="unit">hPa</span></div>
         <div class="detail" id="detail-pres-trend">
-            {% if pressure_trend %}
+            {%- if pressure_trend %}
             <span class="trend-{{ pressure_trend.direction }}">
-            {% if pressure_trend.direction == 'rising' %}↑{% elif pressure_trend.direction == 'falling' %}↓{% else %}→{% endif %}
-            {{ "%+.1f"|format(pressure_trend.delta) }} hPa
+                {%- if pressure_trend.direction == 'rising' %}↑{% elif pressure_trend.direction == 'falling' %}↓{% else %}→{% endif %}
+                {{ "%+.1f"|format(pressure_trend.delta) }} hPa
             </span>
-            {% endif %}
+            {%- endif %}
         </div>
-        <canvas class="sparkline" id="spark-pres"></canvas>
+        <div class="sparkline-wrap"><canvas class="sparkline" id="spark-pres" aria-hidden="true"></canvas></div>
     </div>
 </div>
+
 <p class="updated" id="label-updated">Last updated: {{ current.timestamp }}</p>
 
-<div class="period-selector">
-    <button class="period-btn active" data-period="24h">24 Hours</button>
-    <button class="period-btn" data-period="7d">7 Days</button>
-    <button class="period-btn" data-period="30d">30 Days</button>
-    <button class="period-btn" data-period="all">All Time</button>
+<!-- ── History charts ─────────────────────────────────────────────────── -->
+<div class="card period-selector" role="group" aria-label="Chart period">
+    <button type="button" class="period-btn active" data-period="24h" aria-pressed="true">24 Hours</button>
+    <button type="button" class="period-btn" data-period="7d" aria-pressed="false">7 Days</button>
+    <button type="button" class="period-btn" data-period="30d" aria-pressed="false">30 Days</button>
+    <button type="button" class="period-btn" data-period="all" aria-pressed="false">All Time</button>
 </div>
 
-<div class="chart-card"><h3>🌡️ Temperature</h3><canvas id="chart-temp"></canvas></div>
-<div class="chart-card"><h3>💧 Humidity</h3><canvas id="chart-hum"></canvas></div>
-<div class="chart-card"><h3>📊 Pressure</h3><canvas id="chart-pres"></canvas></div>
+{% for chart in [
+    {'id': 'chart-temp', 'title': '🌡️ Temperature'},
+    {'id': 'chart-hum',  'title': '💧 Humidity'},
+    {'id': 'chart-pres', 'title': '📊 Pressure'}
+] %}
+<div class="card chart-card">
+    <h3 class="card-title">{{ chart.title }}</h3>
+    <canvas id="{{ chart.id }}"></canvas>
+    <p class="chart-fallback"></p>
+    <p class="chart-note"></p>
+</div>
+{% endfor %}
+
+<!-- ── Records ────────────────────────────────────────────────────────── -->
+{% macro extreme_row(label, extreme, fmt, unit, kind='', time_slice='time') %}
+<div class="stat-row">
+    <span class="stat-label">{{ label }}</span>
+    <span class="stat-spacer"></span>
+    <span class="stat-val {{ kind }}">{{ fmt|format(extreme.value) }}{{ unit }}</span>
+    <span class="stat-time">
+        {%- if time_slice == 'time' %}at {{ extreme.timestamp[11:16] }}{% else %}{{ extreme.timestamp[:10] }}{% endif -%}
+    </span>
+</div>
+{% endmacro %}
 
 <div class="stats-grid">
-    {% if extremes_today and extremes_today.count > 0 %}
-    <div class="stats-card">
-        <h3>📅 Today's Records</h3>
-        {% if extremes_today.temperature.max %}
-        <div class="stat-row">
-            <span class="stat-label">Hottest</span>
-            <span class="stat-spacer"></span>
-            <span class="stat-val hi">{{ "%.1f"|format(extremes_today.temperature.max.value) }}°C</span>
-            <span class="stat-time">at {{ extremes_today.temperature.max.timestamp[-8:-3] }}</span>
-        </div>
-        <div class="stat-row">
-            <span class="stat-label">Coldest</span>
-            <span class="stat-spacer"></span>
-            <span class="stat-val lo">{{ "%.1f"|format(extremes_today.temperature.min.value) }}°C</span>
-            <span class="stat-time">at {{ extremes_today.temperature.min.timestamp[-8:-3] }}</span>
-        </div>
-        {% endif %}
-        {% if extremes_today.humidity.max %}
-        <div class="stat-row">
-            <span class="stat-label">Most humid</span>
-            <span class="stat-spacer"></span>
-            <span class="stat-val">{{ "%.0f"|format(extremes_today.humidity.max.value) }}%</span>
-            <span class="stat-time">at {{ extremes_today.humidity.max.timestamp[-8:-3] }}</span>
-        </div>
-        <div class="stat-row">
-            <span class="stat-label">Least humid</span>
-            <span class="stat-spacer"></span>
-            <span class="stat-val">{{ "%.0f"|format(extremes_today.humidity.min.value) }}%</span>
-            <span class="stat-time">at {{ extremes_today.humidity.min.timestamp[-8:-3] }}</span>
-        </div>
-        {% endif %}
-    </div>
-    {% elif stats_today and stats_today.count > 0 %}
-    <div class="stats-card">
-        <h3>📅 Today</h3>
-        <div class="stat-row"><span class="stat-label">Temp range</span><span class="stat-spacer"></span><span class="stat-val">{{ "%.1f"|format(stats_today.temperature.max) }} / {{ "%.1f"|format(stats_today.temperature.min) }}°C</span></div>
-        <div class="stat-row"><span class="stat-label">Humidity range</span><span class="stat-spacer"></span><span class="stat-val">{{ "%.0f"|format(stats_today.humidity.max) }} / {{ "%.0f"|format(stats_today.humidity.min) }}%</span></div>
+    {% if extremes_today %}
+    <div class="card stats-card">
+        <h3 class="card-title">📅 Today's Records</h3>
+        {{ extreme_row("Hottest", extremes_today.temperature.max, "%.1f", "°C", "hi") }}
+        {{ extreme_row("Coldest", extremes_today.temperature.min, "%.1f", "°C", "lo") }}
+        {{ extreme_row("Most humid", extremes_today.humidity.max, "%.0f", "%") }}
+        {{ extreme_row("Least humid", extremes_today.humidity.min, "%.0f", "%") }}
     </div>
     {% endif %}
-    {% if extremes_all and extremes_all.count > 0 %}
-    <div class="stats-card">
-        <h3>🏆 All-Time Records</h3>
-        {% if extremes_all.temperature.max %}
-        <div class="stat-row">
-            <span class="stat-label">Hottest</span>
-            <span class="stat-spacer"></span>
-            <span class="stat-val hi">{{ "%.1f"|format(extremes_all.temperature.max.value) }}°C</span>
-            <span class="stat-time">{{ extremes_all.temperature.max.timestamp[:10] }}</span>
-        </div>
-        <div class="stat-row">
-            <span class="stat-label">Coldest</span>
-            <span class="stat-spacer"></span>
-            <span class="stat-val lo">{{ "%.1f"|format(extremes_all.temperature.min.value) }}°C</span>
-            <span class="stat-time">{{ extremes_all.temperature.min.timestamp[:10] }}</span>
-        </div>
-        {% endif %}
-        {% if extremes_all.pressure.max %}
-        <div class="stat-row">
-            <span class="stat-label">Highest pressure</span>
-            <span class="stat-spacer"></span>
-            <span class="stat-val">{{ "%.0f"|format(extremes_all.pressure.max.value) }} hPa</span>
-            <span class="stat-time">{{ extremes_all.pressure.max.timestamp[:10] }}</span>
-        </div>
-        <div class="stat-row">
-            <span class="stat-label">Lowest pressure</span>
-            <span class="stat-spacer"></span>
-            <span class="stat-val">{{ "%.0f"|format(extremes_all.pressure.min.value) }} hPa</span>
-            <span class="stat-time">{{ extremes_all.pressure.min.timestamp[:10] }}</span>
-        </div>
-        {% endif %}
+
+    {% if extremes_all %}
+    <div class="card stats-card">
+        <h3 class="card-title">🏆 All-Time Records</h3>
+        {{ extreme_row("Hottest", extremes_all.temperature.max, "%.1f", "°C", "hi", "date") }}
+        {{ extreme_row("Coldest", extremes_all.temperature.min, "%.1f", "°C", "lo", "date") }}
+        {{ extreme_row("Highest pressure", extremes_all.pressure.max, "%.0f", " hPa", "", "date") }}
+        {{ extreme_row("Lowest pressure", extremes_all.pressure.min, "%.0f", " hPa", "", "date") }}
         {% if daily_extremes %}
+        {% for row in [
+            ('Warmest day (avg)',     daily_extremes.hottest_avg,     daily_extremes.hottest_avg_day,     '%.1f', '°C', 'hi'),
+            ('Coldest day (avg)',     daily_extremes.coldest_avg,     daily_extremes.coldest_avg_day,     '%.1f', '°C', 'lo'),
+            ('Most humid day (avg)',  daily_extremes.most_humid_avg,  daily_extremes.most_humid_avg_day,  '%.0f', '%',  ''),
+            ('Least humid day (avg)', daily_extremes.least_humid_avg, daily_extremes.least_humid_avg_day, '%.0f', '%',  '')
+        ] %}
         <div class="stat-row">
-            <span class="stat-label">Warmest day (avg)</span>
+            <span class="stat-label">{{ row[0] }}</span>
             <span class="stat-spacer"></span>
-            <span class="stat-val hi">{{ "%.1f"|format(daily_extremes.hottest_avg) }}°C</span>
-            <span class="stat-time">{{ daily_extremes.hottest_avg_day }}</span>
+            <span class="stat-val {{ row[5] }}">{{ row[3]|format(row[1]) }}{{ row[4] }}</span>
+            <span class="stat-time">{{ row[2] }}</span>
         </div>
-        <div class="stat-row">
-            <span class="stat-label">Coldest day (avg)</span>
-            <span class="stat-spacer"></span>
-            <span class="stat-val lo">{{ "%.1f"|format(daily_extremes.coldest_avg) }}°C</span>
-            <span class="stat-time">{{ daily_extremes.coldest_avg_day }}</span>
-        </div>
-        <div class="stat-row">
-            <span class="stat-label">Most humid day (avg)</span>
-            <span class="stat-spacer"></span>
-            <span class="stat-val">{{ "%.0f"|format(daily_extremes.most_humid_avg) }}%</span>
-            <span class="stat-time">{{ daily_extremes.most_humid_avg_day }}</span>
-        </div>
-        <div class="stat-row">
-            <span class="stat-label">Least humid day (avg)</span>
-            <span class="stat-spacer"></span>
-            <span class="stat-val">{{ "%.0f"|format(daily_extremes.least_humid_avg) }}%</span>
-            <span class="stat-time">{{ daily_extremes.least_humid_avg_day }}</span>
-        </div>
+        {% endfor %}
         {% endif %}
-        <div class="stat-row"><span class="stat-label">Readings</span><span class="stat-spacer"></span><span class="stat-val">{{ stats_all.count }}</span></div>
-    </div>
-    {% elif stats_all and stats_all.count > 0 %}
-    <div class="stats-card">
-        <h3>🏆 All-Time Records</h3>
-        <div class="stat-row"><span class="stat-label">Hottest</span><span class="stat-spacer"></span><span class="stat-val hi">{{ "%.1f"|format(stats_all.temperature.max) }}°C</span></div>
-        <div class="stat-row"><span class="stat-label">Coldest</span><span class="stat-spacer"></span><span class="stat-val lo">{{ "%.1f"|format(stats_all.temperature.min) }}°C</span></div>
-        <div class="stat-row"><span class="stat-label">Highest pressure</span><span class="stat-spacer"></span><span class="stat-val">{{ "%.0f"|format(stats_all.pressure.max) }} hPa</span></div>
-        <div class="stat-row"><span class="stat-label">Lowest pressure</span><span class="stat-spacer"></span><span class="stat-val">{{ "%.0f"|format(stats_all.pressure.min) }} hPa</span></div>
-        <div class="stat-row"><span class="stat-label">Readings</span><span class="stat-spacer"></span><span class="stat-val">{{ stats_all.count }}</span></div>
+        <div class="stat-row">
+            <span class="stat-label">Readings</span>
+            <span class="stat-spacer"></span>
+            <span class="stat-val">{{ "{:,}".format(stats_all.count) }}</span>
+        </div>
     </div>
     {% endif %}
 </div>
 
-{% if climate and climate.monthly_all %}
-{% set months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'] %}
-<div class="chart-card" style="grid-column: 1 / -1;">
-    <h3>📊 Climate</h3>
-    <canvas id="chart-climate" style="max-height:240px;"></canvas>
+<!-- ── Climate ────────────────────────────────────────────────────────── -->
+{% if climate and climate.years %}
+<div class="card chart-card climate">
+    <h3 class="card-title">📊 Climate</h3>
+    <canvas id="chart-climate"></canvas>
+    <p class="chart-fallback"></p>
 </div>
-<div class="stats-card" style="grid-column: 1 / -1;">
-    <h4 style="font-size:0.8rem;color:var(--text-secondary);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.05em;">Monthly Details</h4>
-    {% set sel_year = (current_year|string) if (current_year|string) in climate.monthly_by_year else climate.years[0]|string %}
-    {% if climate.years %}
-    <div id="climate-year-selector" style="display:flex;gap:4px;margin-bottom:10px;flex-wrap:wrap;" data-default="{{ sel_year }}">
-        {% for y in climate.years %}
-        <button class="period-btn climate-yr-btn" data-year="{{ y }}">{{ y }}</button>
+
+{% set default_year = (now.year|string) if (now.year|string) in climate.monthly_by_year else climate.years[-1]|string %}
+{% set yearly_by_year = {} %}
+{% for entry in climate.yearly %}{% set _ = yearly_by_year.update({entry.year: entry}) %}{% endfor %}
+
+<div class="card stats-card">
+    <h4 class="subcard-title">Monthly Details</h4>
+    <div class="year-selector" id="climate-year-selector" data-default="{{ default_year }}" role="group" aria-label="Year">
+        {% for year in climate.years %}
+        <button type="button" class="period-btn climate-yr-btn" data-year="{{ year }}" aria-pressed="false">{{ year }}</button>
         {% endfor %}
     </div>
-    {% endif %}
-    <div id="climate-monthly-rows">
-        {% set ydata = climate.yearly | selectattr('year', 'equalto', sel_year|int) | list %}
-        {% if ydata %}
-        <div class="stat-row" style="font-weight:600;border-bottom:2px solid var(--border);padding-bottom:8px;margin-bottom:8px;">
-            <span class="stat-label">{{ sel_year }} average</span>
+
+    {#- Every year is rendered once; the switcher only toggles visibility, so
+        there is no second implementation of this table in JavaScript. -#}
+    {% for year in climate.years %}
+    <div class="year-panel" data-year="{{ year }}" hidden>
+        {% set summary = yearly_by_year.get(year) %}
+        {% if summary and summary.temp_avg is not none %}
+        <div class="stat-row stat-summary">
+            <span class="stat-label">{{ year }} average</span>
             <span class="stat-spacer"></span>
-            <span class="stat-val">{{ "%.1f"|format(ydata[0].temp_avg) }}°C</span>
-            <span style="font-size:0.7rem;color:var(--text-secondary);">min {{ "%.1f"|format(ydata[0].temp_min) }} max {{ "%.1f"|format(ydata[0].temp_max) }}</span>
+            <span class="stat-val">{{ "%.1f"|format(summary.temp_avg) }}°C</span>
+            <span class="stat-range">min {{ "%.1f"|format(summary.temp_min) }} max {{ "%.1f"|format(summary.temp_max) }}</span>
         </div>
         {% endif %}
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 24px;">
-            {% set all_months = climate.monthly_by_year[sel_year] %}
-            {% for col in [all_months[:6], all_months[6:]] %}
+        <div class="month-columns">
+            {% set year_months = climate.monthly_by_year[year|string] %}
+            {% for column in [year_months[:6], year_months[6:]] %}
             <div>
-                {% for m in col %}
+                {% for month in column %}
                 <div class="stat-row">
-                    <span class="stat-label">{{ months[m.month - 1] }}</span>
+                    <span class="stat-label">{{ months[month.month - 1] }}</span>
                     <span class="stat-spacer"></span>
-                    {% if m.temp_avg is not none %}
-                    <span class="stat-val">{{ "%.1f"|format(m.temp_avg) }}°C</span>
-                    <span style="font-size:0.7rem;color:var(--text-secondary);">min {{ "%.1f"|format(m.temp_min) }} max {{ "%.1f"|format(m.temp_max) }}</span>
+                    {% if month.temp_avg is not none %}
+                    <span class="stat-val">{{ "%.1f"|format(month.temp_avg) }}°C</span>
+                    <span class="stat-range">min {{ "%.1f"|format(month.temp_min) }} max {{ "%.1f"|format(month.temp_max) }}</span>
                     {% else %}
-                    <span style="font-size:0.8rem;color:var(--text-secondary);">—</span>
+                    <span class="stat-muted">—</span>
                     {% endif %}
                 </div>
                 {% endfor %}
@@ -587,24 +214,22 @@
             {% endfor %}
         </div>
     </div>
+    {% endfor %}
 </div>
+
+<script id="climate-data" type="application/json">{{ climate.monthly_all | tojson }}</script>
 {% endif %}
 
-{% if climate and climate.monthly_all %}
-<script id="climate-data" type="application/json">{{ {"monthly": climate.monthly_all} | tojson }}</script>
-<script id="climate-data-by-year" type="application/json">{{ climate.monthly_by_year | tojson }}</script>
-<script id="climate-data-yearly" type="application/json">{{ climate.yearly | tojson }}</script>
-{% endif %}
-
-<!-- Calendar Heatmap -->
-<div class="heatmap-card">
-    <h3>📆 Temperature Calendar</h3>
+<!-- ── Calendar ───────────────────────────────────────────────────────── -->
+<div class="card heatmap-card">
+    <h3 class="card-title">📆 Temperature Calendar</h3>
     <div class="heatmap-nav">
         <button type="button" id="heatmap-prev" aria-label="Previous month" disabled>&#8249;</button>
-        <span class="heatmap-month-label" id="heatmap-label">&nbsp;</span>
+        <span class="heatmap-month-label" id="heatmap-label" aria-live="polite">&nbsp;</span>
         <button type="button" id="heatmap-next" aria-label="Next month" disabled>&#8250;</button>
     </div>
-    <div class="heatmap-track" id="heatmap-track" tabindex="0" role="group" aria-label="Temperature calendar, one month per page"></div>
+    <div class="heatmap-track" id="heatmap-track" tabindex="0" role="group"
+         aria-label="Temperature calendar, one month per page"></div>
     <div class="heatmap-legend">
         <span>Cold</span>
         <div class="heatmap-legend-bar"></div>
@@ -615,699 +240,12 @@
 {% else %}
 <div class="no-data">
     <p>📡 Waiting for first weather reading...</p>
-    <p style="margin-top:8px;font-size:0.85rem;">Data arrives every 5 minutes from the balcony sensor.</p>
+    <p class="hint">Data arrives every few minutes from the balcony sensor.</p>
 </div>
 {% endif %}
 
-<footer>Balcony Weather Station · {{ now[:10] }}</footer>
+<footer>Balcony Weather Station · {{ now.strftime('%Y-%m-%d') }}</footer>
 
 </div><!-- .container -->
-
-{% if current %}
-<script>
-// ── Helpers ──────────────────────────────────────────────
-const COLORS = {
-    temp: { line: '#e53e3e', bg: 'rgba(229,62,62,0.08)' },
-    hum:  { line: '#3182ce', bg: 'rgba(49,130,206,0.08)' },
-    pres: { line: '#38a169', bg: 'rgba(56,161,105,0.08)' },
-};
-
-const isDark = () => window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-
-function chartStyle() {
-    return {
-        tickColor: isDark() ? '#a0aec0' : '#94a3b8',
-        gridColor: isDark() ? '#4a5568' : '#e2e8f0',
-    };
-}
-
-// ── Sparklines ───────────────────────────────────────────
-const sparkCharts = {};
-
-function renderSparklines(readings) {
-    if (!readings.length) return;
-
-    const datasets = {
-        'spark-temp': { color: COLORS.temp.line, values: readings.map(r => r.temperature) },
-        'spark-hum':  { color: COLORS.hum.line,  values: readings.map(r => r.humidity) },
-        'spark-pres': { color: COLORS.pres.line, values: readings.map(r => r.pressure) },
-    };
-
-    for (const [canvasId, ds] of Object.entries(datasets)) {
-        const canvas = document.getElementById(canvasId);
-        if (!canvas) continue;
-
-        const existing = sparkCharts[canvasId];
-        if (existing) {
-            // Update data in-place — avoids canvas resize from destroy/recreate
-            existing.data.labels = readings.map((_, i) => i);
-            existing.data.datasets[0].data = ds.values;
-            existing.options.scales.y.min = Math.min(...ds.values) - 1;
-            existing.options.scales.y.max = Math.max(...ds.values) + 1;
-            existing.update();
-        } else {
-            sparkCharts[canvasId] = new Chart(canvas, {
-                type: 'line',
-                data: {
-                    labels: readings.map((_, i) => i),
-                    datasets: [{
-                        data: ds.values,
-                        borderColor: ds.color,
-                        borderWidth: 1.5,
-                        fill: false,
-                        pointRadius: 0,
-                        tension: 0.3,
-                    }]
-                },
-                options: {
-                    responsive: false,
-                    animation: false,
-                    plugins: { legend: { display: false }, tooltip: { enabled: false } },
-                    scales: { x: { display: false }, y: { display: false, min: Math.min(...ds.values) - 1, max: Math.max(...ds.values) + 1 } },
-                    layout: { padding: 0 },
-                }
-            });
-        }
-    }
-}
-
-// ── Main charts ──────────────────────────────────────────
-const charts = {};
-
-// Time scale display formats for each period
-const TIME_FORMATS = {
-    '24h': { unit: 'hour', tooltip: 'HH:mm', display: 'HH:mm' },
-    '7d':  { unit: 'day',  tooltip: 'EEE HH:mm', display: 'EEE' },
-    '30d': { unit: 'day',  tooltip: 'MMM d', display: 'MMM d' },
-    'all': { unit: 'month', tooltip: 'MMM yyyy', display: "MMM ''yy" },
-};
-
-const GAP_THRESHOLD_MS = 15 * 60 * 1000; // break line if >15 min between readings
-
-// Convert readings to time data, inserting NaN points at gaps to break the line
-function toTimeData(readings) {
-    const points = [];
-    for (let i = 0; i < readings.length; i++) {
-        const t = new Date(readings[i].timestamp.replace(' ', 'T')).getTime();
-        points.push({ x: t, y: readings[i].value });
-
-        if (i < readings.length - 1) {
-            const nextT = new Date(readings[i + 1].timestamp.replace(' ', 'T')).getTime();
-            if (nextT - t > GAP_THRESHOLD_MS) {
-                // Insert a NaN point 1ms later to break the line
-                points.push({ x: t + 1, y: NaN });
-            }
-        }
-    }
-    return points;
-}
-
-function makeChartConfig(label, color, data, period) {
-    const cs = chartStyle();
-    const fmt = TIME_FORMATS[period] || TIME_FORMATS['24h'];
-
-    return {
-        type: 'line',
-        data: {
-            datasets: [{
-                label: label,
-                data: toTimeData(data),
-                borderColor: color.line,
-                backgroundColor: color.bg,
-                borderWidth: 2,
-                fill: true,
-                pointRadius: 0,
-                pointHoverRadius: 4,
-                tension: 0.3,
-                spanGaps: false,  // break the line at data gaps
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            animation: false,
-            plugins: { legend: { display: false } },
-            scales: {
-                x: {
-                    type: 'time',
-                    time: {
-                        unit: fmt.unit,
-                        displayFormats: { [fmt.unit]: fmt.display },
-                        tooltipFormat: fmt.tooltip,
-                    },
-                    ticks: { maxTicksLimit: 8, maxRotation: 0, color: cs.tickColor, font: { size: 10 } },
-                    grid: { display: false },
-                },
-                y: {
-                    ticks: { color: cs.tickColor, font: { size: 10 }, callback: v => v.toFixed(1) },
-                    grid: { color: cs.gridColor },
-                }
-            },
-            interaction: { intersect: false, mode: 'index' },
-        }
-    };
-}
-
-function destroyCharts() {
-    Object.values(charts).forEach(c => c.destroy());
-    for (const k in charts) delete charts[k];
-}
-
-const historyCache = {};
-
-async function loadPeriod(period) {
-    document.querySelectorAll('.period-btn').forEach(b => {
-        b.classList.toggle('active', b.dataset.period === period);
-    });
-
-    if (!historyCache[period]) {
-        const resp = await fetch(`/api/weather/history?period=${period}`);
-        historyCache[period] = await resp.json();
-    }
-    const readings = historyCache[period];
-
-    destroyCharts();
-    if (!readings.length) return;
-
-    const datasets = {
-        'chart-temp': { label: 'Temperature', color: COLORS.temp, values: readings.map(r => ({ timestamp: r.timestamp, value: r.temperature })) },
-        'chart-hum':  { label: 'Humidity', color: COLORS.hum, values: readings.map(r => ({ timestamp: r.timestamp, value: r.humidity })) },
-        'chart-pres': { label: 'Pressure', color: COLORS.pres, values: readings.map(r => ({ timestamp: r.timestamp, value: r.pressure })) },
-    };
-
-    for (const [canvasId, ds] of Object.entries(datasets)) {
-        const canvas = document.getElementById(canvasId);
-        if (!canvas) continue;
-        charts[canvasId] = new Chart(canvas, makeChartConfig(ds.label, ds.color, ds.values, period));
-    }
-}
-
-// ── Calendar heatmap ─────────────────────────────────────
-function tempToColor(temp) {
-    // Fixed perceptually-meaningful thresholds:
-    //   <0°C  = blue (freezing)
-    //   0-10  = light blue (cold)
-    //   10-18 = green (cool)
-    //   18-25 = yellow (warm)
-    //   25-30 = orange (hot)
-    //   30-35 = red-orange (very hot)
-    //   >35°C = red (extreme)
-    const t = Math.max(-10, Math.min(45, temp));
-    let hue, sat = 60, light = 55;
-    if (t < 0) {
-        // -10..0°C: blue (240→220)
-        hue = 240 - (t + 10) * (20 / 10);
-        sat = 65;
-    } else if (t < 10) {
-        // 0..10°C: light blue→blue-green (220→170)
-        hue = 220 - t * (50 / 10);
-        sat = 60;
-    } else if (t < 18) {
-        // 10..18°C: green (170→100)
-        hue = 170 - (t - 10) * (70 / 8);
-        sat = 55;
-    } else if (t < 25) {
-        // 18..25°C: yellow-green→yellow (100→45)
-        hue = 100 - (t - 18) * (55 / 7);
-        sat = 60;
-        light = 53;
-    } else if (t < 30) {
-        // 25..30°C: orange (45→20)
-        hue = 45 - (t - 25) * (25 / 5);
-        sat = 70;
-        light = 50;
-    } else if (t < 35) {
-        // 30..35°C: red-orange (20→5)
-        hue = 20 - (t - 30) * (15 / 5);
-        sat = 75;
-        light = 48;
-    } else {
-        // >35°C: deep red (5→0)
-        hue = 5 - Math.min(t - 35, 10) * (5 / 10);
-        sat = 80;
-        light = 44;
-    }
-    return `hsl(${Math.round(hue)},${sat}%,${Math.round(light)}%)`;
-}
-
-function buildLegendGradient() {
-    const stops = [];
-    const steps = 40;
-    for (let i = 0; i <= steps; i++) {
-        const temp = -10 + (i / steps) * 55; // -10..45°C
-        stops.push(tempToColor(temp));
-    }
-    return `linear-gradient(to right, ${stops.join(', ')})`;
-}
-
-const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June',
-                    'July', 'August', 'September', 'October', 'November', 'December'];
-const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-
-const heatmap = { track: null, months: [], index: 0 };
-
-const fmtLocalDate = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-
-function renderMonthPanel(year, month, dayMap, todayStr) {
-    const panel = document.createElement('div');
-    panel.className = 'heatmap-month';
-
-    const grid = document.createElement('div');
-    grid.className = 'heatmap-grid';
-    DAY_NAMES.forEach(l => {
-        const h = document.createElement('div');
-        h.className = 'heatmap-header';
-        h.textContent = l;
-        grid.appendChild(h);
-    });
-
-    const addPad = () => {
-        const pad = document.createElement('div');
-        pad.className = 'heatmap-cell heatmap-empty';
-        grid.appendChild(pad);
-    };
-
-    // Monday-first offset of the 1st, and number of days in the month
-    const lead = (new Date(year, month, 1).getDay() + 6) % 7;
-    const daysInMonth = new Date(year, month + 1, 0).getDate();
-    for (let i = 0; i < lead; i++) addPad();
-
-    const stats = { count: 0, sum: 0, min: null, max: null };
-
-    for (let day = 1; day <= daysInMonth; day++) {
-        const key = fmtLocalDate(new Date(year, month, day));
-        const cell = document.createElement('div');
-        cell.className = 'heatmap-cell';
-
-        const info = dayMap.get(key);
-        if (info) {
-            cell.style.backgroundColor = tempToColor(info.temp_avg);
-            cell.title = `${key}\nMin: ${info.temp_min}\u00b0C  Max: ${info.temp_max}\u00b0C  Avg: ${info.temp_avg}\u00b0C`;
-            cell.innerHTML = `<span class="cell-day">${day}</span><span class="cell-temp">${Math.round(info.temp_avg)}\u00b0</span>`;
-            stats.count++;
-            stats.sum += info.temp_avg;
-            stats.min = stats.min === null ? info.temp_min : Math.min(stats.min, info.temp_min);
-            stats.max = stats.max === null ? info.temp_max : Math.max(stats.max, info.temp_max);
-        } else {
-            cell.classList.add('heatmap-nodata');
-            cell.title = `${key}\nNo data`;
-            cell.innerHTML = `<span class="cell-day">${day}</span>`;
-        }
-        if (key === todayStr) cell.classList.add('is-today');
-
-        grid.appendChild(cell);
-    }
-
-    // Pad out the final week only — the panel is as tall as the month needs
-    const trail = (7 - ((lead + daysInMonth) % 7)) % 7;
-    for (let i = 0; i < trail; i++) addPad();
-
-    panel.appendChild(grid);
-
-    const summary = document.createElement('div');
-    summary.className = 'heatmap-month-summary';
-    if (stats.count) {
-        summary.innerHTML =
-            `<span>Avg <span class="avg">${(stats.sum / stats.count).toFixed(1)}\u00b0C</span></span>` +
-            `<span>Low <span class="lo">${stats.min.toFixed(1)}\u00b0C</span></span>` +
-            `<span>High <span class="hi">${stats.max.toFixed(1)}\u00b0C</span></span>` +
-            `<span>${stats.count} day${stats.count === 1 ? '' : 's'} with data</span>`;
-    } else {
-        summary.textContent = 'No readings this month';
-    }
-    panel.appendChild(summary);
-
-    return panel;
-}
-
-function updateHeatmapNav() {
-    const m = heatmap.months[heatmap.index];
-    const label = document.getElementById('heatmap-label');
-    if (m && label) label.textContent = `${MONTH_NAMES[m.month]} ${m.year}`;
-    const prev = document.getElementById('heatmap-prev');
-    const next = document.getElementById('heatmap-next');
-    if (prev) prev.disabled = heatmap.index <= 0;
-    if (next) next.disabled = heatmap.index >= heatmap.months.length - 1;
-}
-
-// The track holds every month side by side, so without this it would always be
-// as tall as the tallest one. Follow the panel in view, interpolating mid-swipe.
-function syncHeatmapHeight() {
-    const track = heatmap.track;
-    if (!track || !track.children.length || !track.clientWidth) return;
-    const pos = track.scrollLeft / track.clientWidth;
-    const last = track.children.length - 1;
-    const i = Math.max(0, Math.min(last, Math.floor(pos)));
-    const j = Math.max(0, Math.min(last, i + 1));
-    const frac = Math.max(0, Math.min(1, pos - i));
-    const height = track.children[i].offsetHeight * (1 - frac) + track.children[j].offsetHeight * frac;
-    track.style.height = `${Math.round(height)}px`;
-}
-
-function goToMonth(index, smooth = true) {
-    if (!heatmap.track || !heatmap.months.length) return;
-    heatmap.index = Math.max(0, Math.min(heatmap.months.length - 1, index));
-    heatmap.track.scrollTo({
-        left: heatmap.index * heatmap.track.clientWidth,
-        behavior: smooth ? 'smooth' : 'auto',
-    });
-    updateHeatmapNav();
-    syncHeatmapHeight();
-}
-
-async function buildHeatmap() {
-    const track = document.getElementById('heatmap-track');
-    if (!track) return;
-    heatmap.track = track;
-
-    try {
-        const resp = await fetch('/api/weather/daily?months=24');
-        const daily = await resp.json();
-        if (!daily.length) {
-            track.innerHTML = '<div class="heatmap-note">Not enough data yet</div>';
-            return;
-        }
-
-        const dayMap = new Map(daily.map(d => [d.day, d]));
-        const firstDate = new Date(daily[0].day + 'T00:00:00');
-        const lastDate = new Date(daily[daily.length - 1].day + 'T00:00:00');
-        const today = new Date();
-        const todayStr = fmtLocalDate(today);
-
-        // Always run the calendar up to the current month, even if today has no reading yet
-        const lastMonth = new Date(Math.max(
-            new Date(lastDate.getFullYear(), lastDate.getMonth(), 1).getTime(),
-            new Date(today.getFullYear(), today.getMonth(), 1).getTime(),
-        ));
-
-        track.innerHTML = '';
-        heatmap.months = [];
-        const cursor = new Date(firstDate.getFullYear(), firstDate.getMonth(), 1);
-        while (cursor <= lastMonth) {
-            track.appendChild(renderMonthPanel(cursor.getFullYear(), cursor.getMonth(), dayMap, todayStr));
-            heatmap.months.push({ year: cursor.getFullYear(), month: cursor.getMonth() });
-            cursor.setMonth(cursor.getMonth() + 1);
-        }
-
-        // Start on the most recent month
-        goToMonth(heatmap.months.length - 1, false);
-
-        document.getElementById('heatmap-prev').onclick = () => goToMonth(heatmap.index - 1);
-        document.getElementById('heatmap-next').onclick = () => goToMonth(heatmap.index + 1);
-
-        // Keep the label and the panel height in sync with swipe / trackpad scrolling
-        let scrollTimer;
-        let heightFrame = 0;
-        track.addEventListener('scroll', () => {
-            if (!heightFrame) {
-                heightFrame = requestAnimationFrame(() => { heightFrame = 0; syncHeatmapHeight(); });
-            }
-            clearTimeout(scrollTimer);
-            scrollTimer = setTimeout(() => {
-                if (!track.clientWidth) return;
-                const i = Math.round(track.scrollLeft / track.clientWidth);
-                if (i !== heatmap.index) {
-                    heatmap.index = Math.max(0, Math.min(heatmap.months.length - 1, i));
-                    updateHeatmapNav();
-                }
-            }, 80);
-        });
-
-        track.addEventListener('keydown', e => {
-            if (e.key === 'ArrowLeft') { e.preventDefault(); goToMonth(heatmap.index - 1); }
-            else if (e.key === 'ArrowRight') { e.preventDefault(); goToMonth(heatmap.index + 1); }
-        });
-
-        window.addEventListener('resize', () => goToMonth(heatmap.index, false));
-
-        // Cells are sized in vw, so panel heights change with the viewport
-        if (window.ResizeObserver) {
-            const ro = new ResizeObserver(() => syncHeatmapHeight());
-            for (const panel of track.children) ro.observe(panel);
-        }
-
-        // ── Update legend with fixed color scale ──────────
-        const legendBar = document.querySelector('.heatmap-legend-bar');
-        if (legendBar) {
-            legendBar.style.background = buildLegendGradient();
-        }
-    } catch (e) {
-        console.error('Heatmap error:', e);
-    }
-}
-
-// ── Climate chart ────────────────────────────────────────
-function buildClimateChart() {
-    const el = document.getElementById('climate-data');
-    if (!el) return;
-    const data = JSON.parse(el.textContent);
-    const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-    const cs = chartStyle();
-
-    const canvas = document.getElementById('chart-climate');
-    if (!canvas) return;
-    new Chart(canvas, {
-        type: 'line',
-        data: {
-            labels: data.monthly.map(m => months[m.month - 1]),
-            datasets: [{
-                label: 'Max',
-                data: data.monthly.map(m => m.temp_max),
-                borderColor: '#e53e3e',
-                backgroundColor: 'transparent',
-                borderWidth: 1.5,
-                borderDash: [4, 3],
-                pointRadius: 3,
-                pointHoverRadius: 5,
-                tension: 0.3,
-            }, {
-                label: 'Average',
-                data: data.monthly.map(m => m.temp_avg),
-                borderColor: '#38a169',
-                backgroundColor: 'transparent',
-                borderWidth: 2.5,
-                pointRadius: 4,
-                pointHoverRadius: 6,
-                tension: 0.3,
-            }, {
-                label: 'Min',
-                data: data.monthly.map(m => m.temp_min),
-                borderColor: '#3182ce',
-                backgroundColor: 'transparent',
-                borderWidth: 1.5,
-                borderDash: [4, 3],
-                pointRadius: 3,
-                pointHoverRadius: 5,
-                tension: 0.3,
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            animation: false,
-            plugins: {
-                legend: {
-                    display: true,
-                    position: 'bottom',
-                    labels: { color: cs.tickColor, font: { size: 10 }, boxWidth: 20, padding: 16 }
-                }
-            },
-            scales: {
-                x: {
-                    ticks: { color: cs.tickColor, font: { size: 10 } },
-                    grid: { display: false },
-                },
-                y: {
-                    ticks: { color: cs.tickColor, font: { size: 10 }, callback: v => v.toFixed(0) + '°' },
-                    grid: { color: cs.gridColor },
-                }
-            },
-            interaction: { intersect: false, mode: 'index' },
-        }
-    });
-}
-
-// ── Init ─────────────────────────────────────────────────
-document.querySelectorAll('.period-btn').forEach(btn => {
-    btn.addEventListener('click', () => loadPeriod(btn.dataset.period));
-});
-
-loadPeriod('24h');
-buildHeatmap();
-buildClimateChart();
-
-// ── Climate year switcher ─────────────────────────────────
-(function() {
-    const dataEl = document.getElementById('climate-data-by-year');
-    if (!dataEl) return;
-    const byYear = JSON.parse(dataEl.textContent);
-    const yearlyEl = document.getElementById('climate-data-yearly');
-    const yearlyList = yearlyEl ? JSON.parse(yearlyEl.textContent) : [];
-    const yearlyByYear = {};
-    yearlyList.forEach(y => { yearlyByYear[y.year] = y; });
-    const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-    const rowsDiv = document.getElementById('climate-monthly-rows');
-
-    function renderYear(year) {
-        // Button active states
-        document.querySelectorAll('.climate-yr-btn').forEach(b => {
-            b.classList.toggle('active', b.dataset.year === year);
-        });
-
-        // Build rows
-        const yearData = byYear[year] || [];
-        let html = '';
-
-        // Yearly summary row
-        const yInfo = yearlyByYear[parseInt(year)];
-        if (yInfo) {
-            html += `<div class="stat-row" style="font-weight:600;border-bottom:2px solid var(--border);padding-bottom:8px;margin-bottom:8px;">
-                <span class="stat-label">${year} average</span>
-                <span class="stat-spacer"></span>
-                <span class="stat-val">${yInfo.temp_avg.toFixed(1)}°C</span>
-                <span style="font-size:0.7rem;color:var(--text-secondary);">min ${yInfo.temp_min.toFixed(1)} max ${yInfo.temp_max.toFixed(1)}</span>
-            </div>`;
-        }
-
-        // Two-column monthly layout: Jan–Jun left, Jul–Dec right
-        html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:0 24px;">';
-        [yearData.slice(0, 6), yearData.slice(6, 12)].forEach(col => {
-            html += '<div>';
-            col.forEach(m => {
-                if (m.temp_avg != null) {
-                    html += `<div class="stat-row">
-                        <span class="stat-label">${months[m.month - 1]}</span>
-                        <span class="stat-spacer"></span>
-                        <span class="stat-val">${m.temp_avg.toFixed(1)}°C</span>
-                        <span style="font-size:0.7rem;color:var(--text-secondary);">min ${m.temp_min.toFixed(1)} max ${m.temp_max.toFixed(1)}</span>
-                    </div>`;
-                } else {
-                    html += `<div class="stat-row">
-                        <span class="stat-label">${months[m.month - 1]}</span>
-                        <span class="stat-spacer"></span>
-                        <span style="font-size:0.8rem;color:var(--text-secondary);">—</span>
-                    </div>`;
-                }
-            });
-            html += '</div>';
-        });
-        html += '</div>';
-        rowsDiv.innerHTML = html;
-    }
-
-    // Click handlers
-    document.querySelectorAll('.climate-yr-btn').forEach(btn => {
-        btn.addEventListener('click', () => renderYear(btn.dataset.year));
-    });
-
-    // Activate default year on load
-    const defaultYear = document.getElementById('climate-year-selector').dataset.default;
-    if (defaultYear && byYear[defaultYear]) {
-        renderYear(defaultYear);
-    }
-})();
-
-// ── Live polling ──────────────────────────────────────────
-async function pollStatus() {
-    try {
-        const resp = await fetch('/api/weather/status');
-        const s = await resp.json();
-        if (s.error) return;
-
-        // Current values
-        document.getElementById('val-temp').innerHTML = `${s.current.temperature.toFixed(1)}<span class="unit">°C</span>`;
-        document.getElementById('val-hum').innerHTML = `${s.current.humidity.toFixed(0)}<span class="unit">%</span>`;
-        document.getElementById('val-pres').innerHTML = `${s.current.pressure.toFixed(0)}<span class="unit">hPa</span>`;
-
-        // Detail rows
-        const dHeat = document.getElementById('detail-heat');
-        dHeat.textContent = s.heat_index != null ? `Feels like ${s.heat_index.toFixed(1)}°C` : '';
-
-        const dDew = document.getElementById('detail-dew');
-        dDew.textContent = s.dew_point != null ? `Dew point ${s.dew_point.toFixed(1)}°C` : '';
-
-        if (s.yesterday) {
-            const tDiff = s.current.temperature - s.yesterday.temperature;
-            const hDiff = s.current.humidity - s.yesterday.humidity;
-            const dTemp24 = document.getElementById('detail-temp-24h');
-            dTemp24.textContent = `vs 24h ago: ${tDiff >= 0 ? '+' : ''}${tDiff.toFixed(1)}°C`;
-            dTemp24.style.color = tDiff > 0 ? '#e53e3e' : tDiff < 0 ? '#3182ce' : 'inherit';
-
-            const dHum24 = document.getElementById('detail-hum-24h');
-            dHum24.textContent = `vs 24h ago: ${hDiff >= 0 ? '+' : ''}${hDiff.toFixed(0)}%`;
-            dHum24.style.color = hDiff > 0 ? '#3182ce' : hDiff < 0 ? '#e53e3e' : 'inherit';
-        }
-
-        // Pressure trend
-        const dPres = document.getElementById('detail-pres-trend');
-        if (s.pressure_trend) {
-            const pt = s.pressure_trend;
-            const arrow = pt.direction === 'rising' ? '↑' : pt.direction === 'falling' ? '↓' : '→';
-            dPres.innerHTML = `<span class="trend-${pt.direction}">${arrow} ${pt.delta >= 0 ? '+' : ''}${pt.delta.toFixed(1)} hPa</span>`;
-        } else {
-            dPres.innerHTML = '';
-        }
-
-        // Forecast
-        const fDiv = document.getElementById('label-forecast');
-        if (s.forecast && s.forecast !== 'Not enough data') {
-            let emoji = '🌤️';
-            if (s.forecast.includes('Storm') || s.forecast.includes('Gale') || s.forecast.includes('Thunderstorm')) emoji = '⛈️';
-            else if (s.forecast.includes('Rain')) emoji = '🌧️';
-            else if (s.forecast.includes('Wind')) emoji = '💨';
-            else if (s.forecast.includes('Fog') || s.forecast.includes('drizzle')) emoji = '🌫️';
-            else if (s.forecast.includes('Clearing') || s.forecast.includes('Improving') || s.forecast.includes('Fair') || s.forecast.includes('settled')) emoji = '☀️';
-            else if (s.forecast.includes('unsettled') || s.forecast.includes('worsen') || s.forecast.includes('Overcast')) emoji = '☁️';
-            fDiv.innerHTML = `<span style="background:var(--card-bg);color:var(--text);padding:8px 18px;border-radius:20px;font-size:0.9rem;box-shadow:var(--shadow);border:1px solid var(--border);">${emoji} ${s.forecast}</span>`;
-        } else {
-            fDiv.innerHTML = '';
-        }
-
-        // Frost warning
-        const frostDiv = document.getElementById('label-frost');
-        if (s.frost_warning) {
-            frostDiv.innerHTML = '<span style="background:#e53e3e;color:#fff;padding:8px 18px;border-radius:20px;font-size:0.9rem;font-weight:600;">❄️ Frost warning — protect your plants!</span>';
-        } else {
-            frostDiv.innerHTML = '';
-        }
-
-        // Timestamp
-        document.getElementById('label-updated').textContent = `Last updated: ${s.current.timestamp}`;
-
-        // Sparklines (updates in-place, no destroy/recreate)
-        if (s.spark_data && s.spark_data.length) {
-            renderSparklines(s.spark_data);
-        }
-
-        // Main charts — update if on 24h view
-        const activeBtn = document.querySelector('.period-btn.active');
-        if (activeBtn && activeBtn.dataset.period === '24h') {
-            const histResp = await fetch('/api/weather/history?period=24h');
-            const readings = await histResp.json();
-            if (readings.length) {
-                const dsDefs = {
-                    'chart-temp': { label: 'Temperature', color: COLORS.temp, values: readings.map(r => ({ timestamp: r.timestamp, value: r.temperature })) },
-                    'chart-hum':  { label: 'Humidity', color: COLORS.hum, values: readings.map(r => ({ timestamp: r.timestamp, value: r.humidity })) },
-                    'chart-pres': { label: 'Pressure', color: COLORS.pres, values: readings.map(r => ({ timestamp: r.timestamp, value: r.pressure })) },
-                };
-                for (const [canvasId, ds] of Object.entries(dsDefs)) {
-                    const existing = charts[canvasId];
-                    if (existing) {
-                        existing.data.datasets[0].data = toTimeData(ds.values);
-                        existing.update();
-                    }
-                }
-            }
-        }
-    } catch (e) {
-        // Silently ignore fetch errors
-    }
-}
-
-pollStatus();
-setInterval(pollStatus, 60_000);
-</script>
-{% endif %}
-
 </body>
 </html>

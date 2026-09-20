@@ -9,3 +9,9 @@ __pycache__
 .venv
 venv
 *.db
+tests
+backfill.py
+pyproject.toml
+requirements-dev.txt
+README.md
+CLAUDE.md
