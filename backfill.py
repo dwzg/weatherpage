@@ -10,6 +10,7 @@ import os
 import sys
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
+
 import requests
 
 BERLIN = ZoneInfo("Europe/Berlin")

@@ -1,0 +1,431 @@
+/* Balcony Weather Station — dashboard styles.
+   Light and dark themes are driven entirely by the tokens on :root. */
+
+:root {
+    --bg: #f0f4f8;
+    --card-bg: #ffffff;
+    --text: #1a202c;
+    --text-secondary: #64748b;
+    --accent-temp: #e53e3e;
+    --accent-hum: #3182ce;
+    --accent-pres: #38a169;
+    --accent-warn: #dd6b20;
+    --border: #e2e8f0;
+    --cell-text: rgba(0, 0, 0, 0.6);
+    --shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.06);
+    --radius: 12px;
+    --gap: 16px;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --bg: #1a202c;
+        --card-bg: #2d3748;
+        --text: #e2e8f0;
+        --text-secondary: #a0aec0;
+        --border: #4a5568;
+        --cell-text: rgba(255, 255, 255, 0.7);
+        --shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+    }
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    padding: 20px;
+}
+
+.container { max-width: 900px; margin: 0 auto; }
+
+header { text-align: center; padding: 24px 0 16px; }
+header h1 { font-size: 1.8rem; font-weight: 700; }
+header .subtitle { color: var(--text-secondary); font-size: 0.9rem; margin-top: 4px; }
+
+/* ── Shared card chrome ───────────────────────────────────────────────── */
+
+.card {
+    background: var(--card-bg);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    border: 1px solid var(--border);
+    /* Grid items default to min-width:auto, so a card whose content has a
+       wide minimum (the sparkline canvas) would push the grid past the
+       viewport instead of shrinking. */
+    min-width: 0;
+}
+
+.card-title {
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-secondary);
+    margin-bottom: 12px;
+}
+
+/* ── Banners (forecast, frost, stale) ─────────────────────────────────── */
+
+.banner-row { text-align: center; margin-bottom: 16px; }
+.banner-row:empty { margin-bottom: 0; }
+
+.banner {
+    display: inline-block;
+    padding: 8px 18px;
+    border-radius: 20px;
+    font-size: 0.9rem;
+    background: var(--card-bg);
+    color: var(--text);
+    box-shadow: var(--shadow);
+    border: 1px solid var(--border);
+}
+
+.banner-alert {
+    background: var(--accent-temp);
+    color: #fff;
+    font-weight: 600;
+    border-color: transparent;
+}
+
+.banner-warn {
+    background: var(--accent-warn);
+    color: #fff;
+    font-weight: 600;
+    border-color: transparent;
+}
+
+/* ── Current conditions ───────────────────────────────────────────────── */
+
+.current-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: var(--gap);
+    margin-bottom: 24px;
+}
+
+.current-card {
+    padding: 16px 20px 12px;
+    text-align: center;
+    position: relative;
+}
+
+.current-card .label {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 4px;
+}
+
+.current-card .value { font-size: 2.2rem; font-weight: 700; line-height: 1.2; }
+.current-card .unit {
+    font-size: 0.9rem;
+    font-weight: 400;
+    color: var(--text-secondary);
+    margin-left: 4px;
+}
+.current-card .detail { font-size: 0.8rem; color: var(--text-secondary); margin-top: 2px; }
+.current-card .detail-compare { margin-top: 2px; font-size: 0.75rem; }
+
+.current-card.temp .value { color: var(--accent-temp); }
+.current-card.hum .value { color: var(--accent-hum); }
+.current-card.pres .value { color: var(--accent-pres); }
+
+/* Warmer/wetter than the comparison reading reads red; cooler/drier blue.
+   For humidity the pairing is inverted, hence the separate modifiers. */
+.delta-up { color: var(--accent-temp); }
+.delta-down { color: var(--accent-hum); }
+.delta-up-hum { color: var(--accent-hum); }
+.delta-down-hum { color: var(--accent-temp); }
+
+.trend-rising { color: var(--accent-temp); }
+.trend-falling { color: var(--accent-hum); }
+.trend-steady { color: var(--text-secondary); }
+
+/* Chart.js sizes a responsive canvas from its parent, so the parent carries
+   the dimensions. Sizing the canvas directly does not work: Chart.js writes
+   an inline width onto it, which overrides the stylesheet and stops the card
+   from shrinking. */
+.current-card .sparkline-wrap {
+    position: relative;
+    margin: 6px auto 0;
+    width: 100%;
+    min-width: 0;
+    max-width: 200px;
+    height: 40px;
+}
+
+.current-card .sparkline { display: block; }
+
+.updated {
+    text-align: center;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    margin-bottom: 24px;
+}
+
+/* ── Period selector ──────────────────────────────────────────────────── */
+
+.period-selector {
+    display: flex;
+    justify-content: center;
+    gap: 4px;
+    margin-bottom: 20px;
+    padding: 4px;
+}
+
+.period-btn {
+    /* Shrink before the row can overflow a narrow phone. */
+    padding: 8px clamp(8px, 3vw, 20px);
+    min-width: 0;
+    border: none;
+    background: transparent;
+    border-radius: 8px;
+    cursor: pointer;
+    font: inherit;
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+    transition: background 0.15s, color 0.15s;
+    white-space: nowrap;
+}
+
+.period-btn:hover { color: var(--text); background: var(--border); }
+.period-btn.active { background: var(--text); color: var(--bg); }
+.period-btn:focus-visible { outline: 2px solid var(--accent-hum); outline-offset: 2px; }
+
+/* ── Charts ───────────────────────────────────────────────────────────── */
+
+.chart-card { padding: 20px; margin-bottom: var(--gap); }
+.chart-card canvas { max-height: 220px; }
+.chart-card.climate canvas { max-height: 240px; }
+
+.chart-note {
+    font-size: 0.72rem;
+    color: var(--text-secondary);
+    text-align: center;
+    margin-top: 8px;
+    min-height: 1em;
+}
+
+.chart-fallback {
+    text-align: center;
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+    padding: 24px 12px;
+}
+
+/* ── Stats and records ────────────────────────────────────────────────── */
+
+.stats-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--gap);
+    margin-bottom: 24px;
+}
+
+.stats-card { padding: 20px; }
+/* Inside .stats-grid the grid gap does the spacing; a stats-card placed
+   directly in the container needs its own margin. */
+.container > .stats-card { margin-bottom: var(--gap); }
+
+.stat-row {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 6px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.88rem;
+}
+
+.stat-row:last-child { border-bottom: none; }
+.stat-row .stat-label { color: var(--text); min-width: 0; }
+.stat-row .stat-val { font-weight: 600; white-space: nowrap; }
+.stat-row .stat-val.hi { color: var(--accent-temp); }
+.stat-row .stat-val.lo { color: var(--accent-hum); }
+.stat-row .stat-time {
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+    margin-left: auto;
+    white-space: nowrap;
+}
+.stat-row .stat-range { font-size: 0.7rem; color: var(--text-secondary); }
+.stat-row .stat-muted { font-size: 0.8rem; color: var(--text-secondary); }
+.stat-row .stat-spacer {
+    flex: 1;
+    border-bottom: 1px dotted var(--border);
+    min-width: 8px;
+    align-self: center;
+}
+
+.stat-row.stat-summary {
+    font-weight: 600;
+    border-bottom: 2px solid var(--border);
+    padding-bottom: 8px;
+    margin-bottom: 8px;
+}
+
+.subcard-title {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    margin-bottom: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.year-selector { display: flex; gap: 4px; margin-bottom: 10px; flex-wrap: wrap; }
+
+/* Jan–Jun and Jul–Dec side by side. */
+.month-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 0 24px; }
+.year-panel[hidden] { display: none; }
+
+/* ── Calendar heatmap ─────────────────────────────────────────────────── */
+
+.heatmap-card { padding: 20px; margin-bottom: 24px; }
+
+.heatmap-nav {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 12px;
+}
+
+.heatmap-nav button {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 8px;
+    width: 32px;
+    height: 32px;
+    flex: none;
+    font-size: 1.1rem;
+    line-height: 1;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s, opacity 0.15s;
+}
+
+.heatmap-nav button:hover:not(:disabled) { background: var(--border); }
+.heatmap-nav button:disabled { opacity: 0.3; cursor: default; }
+.heatmap-nav button:focus-visible { outline: 2px solid var(--accent-hum); outline-offset: 2px; }
+
+.heatmap-month-label { font-size: 1rem; font-weight: 600; text-align: center; flex: 1; }
+
+.heatmap-track {
+    display: flex;
+    align-items: flex-start;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scroll-snap-type: x mandatory;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+}
+
+.heatmap-track::-webkit-scrollbar { display: none; }
+.heatmap-track:focus-visible {
+    outline: 2px solid var(--accent-hum);
+    outline-offset: 4px;
+    border-radius: 6px;
+}
+
+.heatmap-month { flex: 0 0 100%; min-width: 0; scroll-snap-align: center; }
+.heatmap-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+
+.heatmap-header {
+    font-size: 0.7rem;
+    color: var(--text-secondary);
+    text-align: center;
+    padding: 2px 0;
+}
+
+.heatmap-cell {
+    height: clamp(38px, 8vw, 62px);
+    border-radius: 5px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 1px;
+    font-size: 0.7rem;
+    color: var(--cell-text);
+    cursor: default;
+    transition: transform 0.1s;
+}
+
+.heatmap-cell:hover { transform: scale(1.08); z-index: 1; }
+.heatmap-cell .cell-day { font-size: 0.68rem; opacity: 0.8; }
+.heatmap-cell .cell-temp { font-size: 0.8rem; font-weight: 600; }
+.heatmap-cell.heatmap-empty { background: transparent; }
+.heatmap-cell.heatmap-empty:hover { transform: none; }
+
+.heatmap-cell.heatmap-nodata {
+    background: transparent;
+    border: 1px dashed var(--border);
+    color: var(--text-secondary);
+}
+
+.heatmap-cell.is-today { box-shadow: inset 0 0 0 2px var(--text); }
+
+.heatmap-month-summary {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 14px;
+    margin-top: 12px;
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+}
+
+.heatmap-month-summary .hi { color: var(--accent-temp); font-weight: 600; }
+.heatmap-month-summary .lo { color: var(--accent-hum); font-weight: 600; }
+.heatmap-month-summary .avg { color: var(--text); font-weight: 600; }
+
+.heatmap-note { text-align: center; color: var(--text-secondary); padding: 20px; width: 100%; }
+
+.heatmap-legend {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    margin-top: 12px;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+}
+
+.heatmap-legend-bar { width: 120px; height: 8px; border-radius: 4px; }
+
+/* ── Empty state ──────────────────────────────────────────────────────── */
+
+.no-data { text-align: center; padding: 60px 20px; color: var(--text-secondary); }
+.no-data p { font-size: 1.1rem; }
+.no-data .hint { margin-top: 8px; font-size: 0.85rem; }
+
+footer { text-align: center; padding: 16px; color: var(--text-secondary); font-size: 0.75rem; }
+
+/* ── Responsive ───────────────────────────────────────────────────────── */
+
+@media (max-width: 600px) {
+    .current-grid { grid-template-columns: 1fr; }
+    .stats-grid { grid-template-columns: 1fr; }
+    .current-card .sparkline-wrap { max-width: 100%; }
+}
+
+@media (max-width: 480px) {
+    .heatmap-cell .cell-temp { display: none; }
+    .heatmap-cell .cell-day { font-size: 0.72rem; opacity: 1; }
+    .month-columns { grid-template-columns: 1fr; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+    }
+    .heatmap-cell:hover { transform: none; }
+}

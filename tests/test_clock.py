@@ -1,0 +1,69 @@
+"""Tests for the timestamp conventions."""
+
+from datetime import datetime, timedelta
+
+import pytest
+
+from app import clock
+
+
+class TestNormalise:
+    @pytest.mark.parametrize("raw,expected", [
+        ("2026-06-20T21:00:00", "2026-06-20 21:00:00"),
+        ("2026-06-20 21:00:00", "2026-06-20 21:00:00"),
+        ("2026-06-20T21:00:00.500", "2026-06-20 21:00:00"),
+        ("  2026-06-20T21:00:00  ", "2026-06-20 21:00:00"),
+        ("2026-06-20T21:00:00+02:00", "2026-06-20 21:00:00"),
+    ])
+    def test_accepted_forms(self, raw, expected):
+        assert clock.normalise_ts(raw) == expected
+
+    @pytest.mark.parametrize("raw", ["not-a-date", "", "unavailable", "2026-13-45"])
+    def test_rejects_rubbish(self, raw):
+        with pytest.raises(ValueError):
+            clock.normalise_ts(raw)
+
+    def test_output_sorts_lexicographically(self):
+        """Range queries are string comparisons, so ordering must hold."""
+        stamps = [clock.normalise_ts(f"2026-0{m}-0{d}T0{h}:00:00")
+                  for m in (1, 9) for d in (1, 9) for h in (1, 9)]
+        assert stamps == sorted(stamps)
+
+
+class TestPeriodCutoff:
+    REF = datetime(2026, 6, 20, 14, 30, 0)
+
+    @pytest.mark.parametrize("period,delta", [
+        ("3h", timedelta(hours=3)),
+        ("24h", timedelta(hours=24)),
+        ("7d", timedelta(days=7)),
+        ("30d", timedelta(days=30)),
+    ])
+    def test_relative_periods(self, period, delta):
+        assert clock.period_cutoff(period, self.REF) == self.REF - delta
+
+    def test_today_is_local_midnight(self):
+        assert clock.period_cutoff("today", self.REF) == datetime(2026, 6, 20, 0, 0, 0)
+
+    def test_all_is_unbounded(self):
+        assert clock.period_cutoff("all", self.REF) is None
+
+    def test_cutoff_formats_to_the_stored_shape(self):
+        """A cutoff with a 'T' or a UTC offset would silently match nothing."""
+        formatted = clock.fmt_ts(clock.period_cutoff("24h", self.REF))
+        assert formatted == "2026-06-19 14:30:00"
+        assert "T" not in formatted and "+" not in formatted
+
+
+class TestMonthsAgo:
+    def test_exact_boundaries(self):
+        ref = datetime(2026, 6, 20, 14, 30)
+        assert clock.months_ago(0, ref) == datetime(2026, 6, 1)
+        assert clock.months_ago(3, ref) == datetime(2026, 3, 1)
+        assert clock.months_ago(6, ref) == datetime(2025, 12, 1)
+        assert clock.months_ago(24, ref) == datetime(2024, 6, 1)
+
+    def test_does_not_drift_like_30_day_months(self):
+        """The old code used months*30 days, which slid off the boundary."""
+        ref = datetime(2026, 3, 31, 12, 0)
+        assert clock.months_ago(1, ref) == datetime(2026, 2, 1)
