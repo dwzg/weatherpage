@@ -77,6 +77,27 @@ class TestAuth:
         assert (await client.get("/api/weather/stats")).status_code == 200
 
 
+class TestHealthz:
+    """The probe doubles as "which build is this?", so it is worth pinning."""
+
+    async def test_reports_the_commit_it_was_built_from(self, client, monkeypatch):
+        from app.config import get_settings
+
+        monkeypatch.setenv("GIT_SHA", "abc123def456")
+        get_settings.cache_clear()
+        try:
+            body = (await client.get("/healthz")).json()
+            assert body["commit"] == "abc123def456"
+            assert body["status"] == "ok"
+        finally:
+            get_settings.cache_clear()
+
+    async def test_says_unknown_outside_a_built_image(self, client):
+        """Locally there is no commit, and claiming one would be worse."""
+        body = (await client.get("/healthz")).json()
+        assert body["commit"] == "unknown"
+
+
 class TestReadEndpoints:
     async def test_empty_database_returns_404_not_a_body_with_error(self, client):
         assert (await client.get("/api/weather/current")).status_code == 404

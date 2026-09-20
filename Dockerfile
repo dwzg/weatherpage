@@ -1,10 +1,17 @@
 FROM python:3.12-slim
 
+# The commit this image was built from. /healthz reports it, which is the
+# only way to tell which build a container is actually running: the version
+# string rarely changes, so a stalled deploy otherwise looks identical to a
+# fresh one from the outside.
+ARG GIT_SHA=unknown
+
 # Unbuffered output so container logs appear immediately; no .pyc files to
 # write into a layer that is thrown away anyway.
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    DATA_DIR=/data
+    DATA_DIR=/data \
+    GIT_SHA=$GIT_SHA
 
 WORKDIR /code
 

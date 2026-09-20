@@ -50,8 +50,13 @@ jobs:
           push: false
           load: true
           tags: weatherpage:ci
+          build-args: |
+            GIT_SHA=${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          # Match the deploy build: a plain manifest, no attestations.
+          provenance: false
+          sbom: false
 
       - name: Smoke-test the image
         run: |
@@ -61,6 +66,11 @@ jobs:
             sleep 1
           done
           curl -fsS http://127.0.0.1:8080/healthz
+          # The image must report the commit it was built from, or a stalled
+          # deploy is indistinguishable from a fresh one in production.
+          curl -fsS http://127.0.0.1:8080/healthz \
+            | python3 -c "import json,sys; c=json.load(sys.stdin)['commit']; \
+                          sys.exit(0 if c == '${{ github.sha }}' else f'healthz reported commit {c!r}')"
           curl -fsS -o /dev/null http://127.0.0.1:8080/
           curl -fsS -o /dev/null http://127.0.0.1:8080/static/css/dashboard.css
           docker logs weatherpage
