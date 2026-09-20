@@ -36,6 +36,15 @@ async def build_status() -> dict | None:
         database.get_reading_ago(COMPARISON_HOURS),
     )
 
+    # Where this pressure sits in the station's recent range is what the
+    # forecast reads; the trend above is shown on the pressure card but is
+    # not evidence about what happens next (see app.weather).
+    percentile = (
+        await database.get_pressure_percentile(pressure_trend["current"])
+        if pressure_trend
+        else None
+    )
+
     temperature = current["temperature"]
     humidity = current["humidity"]
     dew_point = weather.compute_dew_point(temperature, humidity)
@@ -48,12 +57,11 @@ async def build_status() -> dict | None:
     smooth_t = temp_trend["current"] if temp_trend else temperature
     smooth_h = humidity_trend["current"] if humidity_trend else humidity
     forecast = weather.compute_forecast(
-        pressure_trend,
+        percentile,
         smooth_h,
         smooth_t,
         weather.compute_dew_point(smooth_t, smooth_h),
         humidity_trend,
-        temp_trend,
     )
 
     return {
@@ -61,6 +69,7 @@ async def build_status() -> dict | None:
         "dew_point": dew_point,
         "heat_index": weather.compute_heat_index(temperature, humidity),
         "pressure_trend": pressure_trend,
+        "pressure_percentile": percentile,
         "forecast": forecast,
         "forecast_emoji": weather.forecast_emoji(forecast),
         "frost_warning": weather.is_frost_risk(temperature),

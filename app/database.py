@@ -13,6 +13,7 @@ local-time strings compared lexicographically. Build every bound with
 from __future__ import annotations
 
 import asyncio
+import bisect
 import itertools
 import logging
 from collections.abc import AsyncIterator, Iterable, Sequence
@@ -59,6 +60,11 @@ CYCLE_MIN_READINGS_PER_DAY = 200
 
 #: Complete days needed before the learned cycle is applied at all.
 CYCLE_MIN_DAYS = 14
+
+#: How much recent history the current pressure is ranked against, and the
+#: hourly readings needed before that ranking means anything.
+PERCENTILE_DAYS = 30
+PERCENTILE_MIN_READINGS = 7 * 24
 
 #: Bucket widths (minutes) tried in order when downsampling.
 _BUCKET_LADDER: tuple[int, ...] = (
@@ -484,21 +490,49 @@ async def get_pressure_trend(hours: int = TREND_WINDOW_HOURS) -> dict | None:
     delta = round(current_p - prev_p, 1)
     direction = _direction(delta)
 
-    acceleration = None
-    older_p = await _pressure_at(hours * 2, cycle)
-    if older_p is not None:
-        acceleration = _acceleration(direction, _direction(round(prev_p - older_p, 1)))
-
     return {
         "current": round(current_p, 1),
         "previous": round(prev_p, 1),
         "delta": delta,
         "direction": direction,
-        "acceleration": acceleration,
         "consistency": _consistency(corrected, direction),
         "hours": hours,
         "detided": bool(cycle),
     }
+
+
+async def get_pressure_percentile(pressure: float) -> float | None:
+    """Where ``pressure`` sits within the station's own recent range, 0-1.
+
+    Scored against observed rainfall, *where* the pressure sits predicts rain
+    at this station and which way it is moving does not. But a fixed
+    threshold does not transfer between months — "below 1020 hPa" scored a
+    critical success index of 0.05 in one month of the sample and 0.44 in
+    another — because the level a barometer calls low drifts with the
+    season. Ranking against the last :data:`PERCENTILE_DAYS` of this
+    station's own readings is stable across the whole sample, and needs
+    nothing from outside the box.
+
+    Returns ``None`` until there is enough history to rank against.
+    """
+    window = await _recent_pressures()
+    if len(window) < PERCENTILE_MIN_READINGS:
+        return None
+    return round(bisect.bisect_left(window, pressure) / len(window), 3)
+
+
+@cached
+async def _recent_pressures() -> list[float]:
+    """Sorted de-tided pressures, one per hour, over the ranking window."""
+    cutoff = clock.fmt_ts(clock.now() - timedelta(days=PERCENTILE_DAYS))
+    rows = await _fetch_all(
+        "SELECT timestamp, pressure FROM weather_readings "
+        "WHERE timestamp >= ? AND substr(timestamp, 15, 2) = '00' "
+        "ORDER BY timestamp ASC",
+        (cutoff,),
+    )
+    cycle = await get_pressure_cycle()
+    return sorted(_detide(row, cycle) for row in rows)
 
 
 @cached
@@ -581,15 +615,6 @@ def _direction(delta: float) -> str:
     if delta > 0.5:
         return "rising"
     return "falling" if delta < -0.5 else "steady"
-
-
-def _acceleration(current: str, previous: str) -> str | None:
-    """How this window's trend compares with the one before it."""
-    if current == "steady":
-        return "ending" if previous != "steady" else None
-    if previous == "steady":
-        return "starting"
-    return "sustained" if previous == current else "reversing"
 
 
 def _consistency(pressures: Iterable[float], direction: str) -> float:

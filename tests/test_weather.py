@@ -49,143 +49,120 @@ class TestFrost:
 
 
 class TestForecast:
-    """The rules read a de-tided pressure change (see database.get_pressure_cycle).
+    """The rules read where the pressure sits, never which way it is moving.
 
-    The thresholds are wide because they were picked from this station's own
-    distribution: the old 1.0/2.0 hPa bands fired on 67% and 39% of readings
-    and were measuring the daily pressure cycle rather than the weather.
+    Scored against observed rainfall over 90 days, the barometric tendency
+    had negative skill at this station while the pressure's rank within the
+    station's own recent range had real skill. See the note in app.weather.
     """
 
     SUMMER_AFTERNOON = datetime(2026, 7, 15, 14, 0)
     WINTER_NIGHT = datetime(2026, 1, 15, 2, 0)
 
-    def trend(self, delta=0.0, current=1013.0, consistency=1.0):
-        return {
-            "direction": "rising" if delta > 0 else "falling" if delta < 0 else "steady",
-            "delta": delta,
-            "current": current,
-            "acceleration": None,
-            "consistency": consistency,
-        }
+    def test_no_history_to_rank_against_describes_the_air(self):
+        """Before the station has a range to rank against, it does not predict."""
+        assert weather.compute_forecast(None, 50.0, 15.0, 4.0,
+                                        moment=self.WINTER_NIGHT) == "Little change"
+        assert weather.compute_forecast(None, 95.0, 10.0, 8.0,
+                                        moment=self.WINTER_NIGHT) == "Overcast and humid"
 
-    def test_no_trend_is_not_enough_data(self):
-        assert weather.compute_forecast(None, 50.0) == "Not enough data"
+    # ── The wet tiers ─────────────────────────────────────────────────────
 
-    # ── The bug that made the old forecast useless ────────────────────────
+    def test_low_pressure_and_damp_air_is_rain_likely(self):
+        assert weather.compute_forecast(
+            0.1, 90.0, 12.0, 10.5, moment=self.WINTER_NIGHT
+        ) == "Rain likely"
+
+    def test_low_pressure_and_humid_air_is_rain_possible(self):
+        assert weather.compute_forecast(
+            0.3, 70.0, 12.0, 6.5, moment=self.WINTER_NIGHT
+        ) == "Rain possible"
+
+    def test_low_pressure_in_dry_air_is_only_unsettled(self):
+        assert weather.compute_forecast(
+            0.3, 50.0, 12.0, 2.0, moment=self.WINTER_NIGHT
+        ) == "Unsettled"
+
+    def test_high_pressure_in_dry_air_is_settled(self):
+        assert weather.compute_forecast(
+            0.9, 50.0, 12.0, 2.0, moment=self.WINTER_NIGHT
+        ) == "Fair and settled"
+
+    def test_high_pressure_in_humid_air_is_hedged(self):
+        assert weather.compute_forecast(
+            0.9, 75.0, 12.0, 7.5, moment=self.WINTER_NIGHT
+        ) == "Settled but humid"
+
+    def test_middle_of_the_range_says_little(self):
+        assert weather.compute_forecast(
+            0.5, 50.0, 12.0, 2.0, moment=self.WINTER_NIGHT
+        ) == "Little change"
+
+    #: How strong a claim each phrase makes; descriptions of the air share
+    #: a rank because none of them predicts anything.
+    WETNESS: ClassVar[dict[str, int]] = {
+        "Fair and settled": 0,
+        "Settled but humid": 1, "Overcast and humid": 1, "Little change": 1,
+        "Fog or drizzle possible": 2, "Unsettled": 2,
+        "Rain possible": 3,
+        "Rain likely": 4, "Thunderstorm possible": 4,
+    }
+
+    @pytest.mark.parametrize("humidity", [30.0, 60.0, 75.0, 90.0])
+    def test_falling_down_the_pressure_range_never_reads_drier(self, humidity):
+        seen = [weather.compute_forecast(pct, humidity, 12.0, humidity / 10,
+                                         moment=self.WINTER_NIGHT)
+                for pct in (0.9, 0.7, 0.5, 0.3, 0.1)]
+        ranks = [self.WETNESS[p] for p in seen]
+        assert ranks == sorted(ranks), seen
+
+    # ── The old bug this replaces ─────────────────────────────────────────
 
     def test_dew_on_a_clear_night_is_not_rain(self):
         """A closed dew-point spread is dew forming, not rain arriving.
 
-        The old rules returned "Rain imminent" whenever the spread fell below
-        3 °C, which on a calm clear night happens every single night.
+        The rules this replaces returned "Rain imminent" whenever the spread
+        fell below 3 °C, which on a calm clear night happens every night.
         """
-        clear_night = weather.compute_forecast(
-            self.trend(-0.4), 95.0, 10.0, 8.5, moment=self.WINTER_NIGHT
+        phrase = weather.compute_forecast(
+            0.8, 95.0, 10.0, 8.5, humidity_trend={"delta": 2.0}, moment=self.WINTER_NIGHT
         )
-        assert "Rain" not in clear_night
+        assert "Rain" not in phrase
 
-    def test_small_pressure_moves_say_nothing(self):
-        """Anything inside the steady band must not claim weather is coming."""
-        for delta in (-1.4, -0.5, 0.0, 0.5, 1.4):
-            phrase = weather.compute_forecast(
-                self.trend(delta), 50.0, 15.0, 4.0, moment=self.WINTER_NIGHT
-            )
-            assert phrase == "Little change", f"{delta:+} hPa produced {phrase!r}"
+    # ── Refinements ───────────────────────────────────────────────────────
 
-    def test_a_slight_fall_in_dry_air_is_not_worth_mentioning(self):
-        assert weather.compute_forecast(
-            self.trend(-2.0), 50.0, 15.0, 4.0, moment=self.WINTER_NIGHT
-        ) == "Little change"
-
-    # ── Falling ───────────────────────────────────────────────────────────
-
-    def test_slight_fall_into_humid_air_is_rain_possible(self):
-        assert weather.compute_forecast(
-            self.trend(-2.0), 80.0, 15.0, 11.0, moment=self.WINTER_NIGHT
-        ) == "Rain possible"
-
-    def test_moderate_fall_into_humid_air_is_rain_likely(self):
-        assert weather.compute_forecast(
-            self.trend(-3.0), 80.0, 15.0, 11.0, moment=self.WINTER_NIGHT
-        ) == "Rain likely"
-
-    def test_moderate_fall_in_dry_air_turns_unsettled(self):
-        assert weather.compute_forecast(
-            self.trend(-3.0), 50.0, 15.0, 4.0, moment=self.WINTER_NIGHT
-        ) == "Turning unsettled"
-
-    def test_rapid_fall_is_a_storm(self):
-        assert weather.compute_forecast(
-            self.trend(-5.0), 80.0, 15.0, 5.0, moment=self.WINTER_NIGHT
-        ) == "Stormy weather likely"
-
-    def test_squally_rapid_fall_is_hedged(self):
-        assert weather.compute_forecast(
-            self.trend(-5.0, consistency=0.55), 60.0, 15.0, 5.0, moment=self.WINTER_NIGHT
-        ) == "Unsettled, possibly stormy"
-
-    def test_thunderstorm_needs_a_warm_summer_afternoon(self):
-        warm = {"humidity": 60.0, "temperature": 28.0, "dew_point": 15.0,
-                "temp_trend": {"delta": 2.0}}
-        assert weather.compute_forecast(
-            self.trend(-3.0), **warm, moment=self.SUMMER_AFTERNOON
-        ) == "Thunderstorm possible"
-        # Same air, wrong time of year: falls through to the humidity rules.
-        assert weather.compute_forecast(
-            self.trend(-3.0), **warm, moment=self.WINTER_NIGHT
-        ) == "Turning unsettled"
-
-    # ── Rising ────────────────────────────────────────────────────────────
-
-    def test_moderate_rise_clears_up(self):
-        assert weather.compute_forecast(
-            self.trend(3.0), 40.0, 15.0, 2.0, moment=self.WINTER_NIGHT
-        ) == "Clearing up nicely"
-
-    def test_rapid_rise_clears_rapidly(self):
-        assert weather.compute_forecast(
-            self.trend(5.0), 40.0, 15.0, 2.0, moment=self.WINTER_NIGHT
-        ) == "Clearing rapidly"
-
-    def test_slight_rise_defers_to_the_steady_rules(self):
-        assert weather.compute_forecast(
-            self.trend(2.0, current=1030.0), 30.0, 15.0, -5.0, moment=self.WINTER_NIGHT
-        ) == "Fair and settled"
-
-    # ── Steady ────────────────────────────────────────────────────────────
-
-    def test_high_steady_pressure_is_settled(self):
-        assert weather.compute_forecast(
-            self.trend(current=1030.0), 30.0, 15.0, -5.0, moment=self.WINTER_NIGHT
-        ) == "Fair and settled"
-
-    def test_high_pressure_with_saturated_air_is_overcast(self):
-        assert weather.compute_forecast(
-            self.trend(current=1030.0), 95.0, 10.0, 8.0, moment=self.WINTER_NIGHT
-        ) == "High pressure, overcast"
-
-    def test_low_steady_pressure_is_unsettled(self):
-        assert weather.compute_forecast(
-            self.trend(current=1000.0), 95.0, 10.0, 8.0, moment=self.WINTER_NIGHT
-        ) == "Low pressure, unsettled"
-
-    def test_fog_needs_rising_humidity(self):
+    def test_fog_needs_a_tight_spread_and_rising_humidity(self):
         saturated = {"humidity": 95.0, "temperature": 10.0, "dew_point": 8.0}
         assert weather.compute_forecast(
-            self.trend(), **saturated, humidity_trend={"delta": 2.0}, moment=self.WINTER_NIGHT
+            0.8, **saturated, humidity_trend={"delta": 2.0}, moment=self.WINTER_NIGHT
         ) == "Fog or drizzle possible"
         assert weather.compute_forecast(
-            self.trend(), **saturated, humidity_trend={"delta": 0.0}, moment=self.WINTER_NIGHT
+            0.8, **saturated, humidity_trend={"delta": 0.0}, moment=self.WINTER_NIGHT
         ) == "Overcast and humid"
+
+    def test_thunderstorm_needs_a_warm_summer_afternoon(self):
+        warm = {"humidity": 60.0, "temperature": 28.0, "dew_point": 19.0}
+        assert weather.compute_forecast(
+            0.5, **warm, moment=self.SUMMER_AFTERNOON
+        ) == "Thunderstorm possible"
+        # Same air, wrong time of year: nothing convective about it.
+        assert weather.compute_forecast(
+            0.5, **warm, moment=self.WINTER_NIGHT
+        ) == "Little change"
+
+    def test_the_wettest_tier_outranks_a_thunderstorm(self):
+        assert weather.compute_forecast(
+            0.1, 90.0, 28.0, 26.0, moment=self.SUMMER_AFTERNOON
+        ) == "Rain likely"
 
     def test_every_branch_returns_a_phrase(self):
         """No input combination may fall through to None."""
-        for delta in (-6.0, -3.0, -2.0, 0.0, 2.0, 3.0, 6.0):
-            for humidity in (10.0, 55.0, 99.0):
-                for pressure in (990.0, 1013.0, 1040.0):
+        for pct in (None, 0.0, 0.25, 0.4, 0.5, 0.6, 1.0):
+            for humidity in (10.0, 55.0, 70.0, 99.0):
+                for dew in (None, 8.0):
                     result = weather.compute_forecast(
-                        self.trend(delta, pressure), humidity,
-                        moment=self.SUMMER_AFTERNOON,
+                        pct, humidity, 10.0, dew,
+                        humidity_trend={"delta": 2.0}, moment=self.SUMMER_AFTERNOON,
                     )
                     assert isinstance(result, str) and result
 
@@ -196,17 +173,11 @@ class TestForecastEmoji:
     EXPECTED: ClassVar[dict[str, str]] = {
         "Rain likely": "🌧️",
         "Rain possible": "🌧️",
-        "Stormy weather likely": "⛈️",
-        "Unsettled, possibly stormy": "⛈️",
         "Thunderstorm possible": "⛈️",
         "Fog or drizzle possible": "🌫️",
-        "Turning unsettled": "☁️",
-        "High pressure, overcast": "☁️",
-        "Low pressure, unsettled": "☁️",
+        "Unsettled": "☁️",
         "Overcast and humid": "☁️",
-        "Humid but clearing": "☀️",
-        "Clearing up nicely": "☀️",
-        "Clearing rapidly": "☀️",
+        "Settled but humid": "☁️",
         "Fair and settled": "☀️",
         "Little change": "🌤️",
     }
@@ -217,13 +188,10 @@ class TestForecastEmoji:
 
     def test_worsening_never_gets_a_sun(self):
         """"settled" is a substring of "unsettled", which the original got wrong."""
-        for forecast, emoji in self.EXPECTED.items():
-            if "unsettled" in forecast.lower():
-                assert emoji != "☀️"
-                assert weather.forecast_emoji(forecast) != "☀️"
+        assert weather.forecast_emoji("Unsettled") != "☀️"
 
     def test_matching_is_case_insensitive(self):
-        assert weather.forecast_emoji("LOW PRESSURE, UNSETTLED") == "☁️"
+        assert weather.forecast_emoji("RAIN LIKELY") == "🌧️"
 
     def test_missing_forecast_falls_back(self):
         assert weather.forecast_emoji(None) == weather.DEFAULT_FORECAST_EMOJI
@@ -232,17 +200,17 @@ class TestForecastEmoji:
     def test_covers_every_phrase_the_engine_emits(self):
         """Guards against a new forecast phrase with no emoji rule."""
         emitted = set()
-        for delta in (-6.0, -3.0, -2.0, 0.0, 2.0, 3.0, 6.0):
-            for humidity in (10.0, 45.0, 60.0, 75.0, 90.0):
-                for pressure in (1000.0, 1013.0, 1030.0):
-                    for consistency in (0.3, 1.0):
-                        for dew in (None, 8.0):
-                            emitted.add(weather.compute_forecast(
-                                TestForecast().trend(delta, pressure, consistency),
-                                humidity, 10.0, dew,
-                                humidity_trend={"delta": 2.0},
-                                temp_trend={"delta": 2.0},
-                                moment=TestForecast.SUMMER_AFTERNOON,
-                            ))
+        for pct in (None, 0.0, 0.1, 0.3, 0.5, 0.7, 1.0):
+            for humidity in (10.0, 45.0, 60.0, 75.0, 90.0, 99.0):
+                for temperature in (5.0, 28.0):
+                    for dew in (None, 4.0, 27.0):
+                        for rising in ({"delta": 2.0}, {"delta": 0.0}):
+                            for moment in (TestForecast.SUMMER_AFTERNOON,
+                                           TestForecast.WINTER_NIGHT):
+                                emitted.add(weather.compute_forecast(
+                                    pct, humidity, temperature, dew,
+                                    humidity_trend=rising, moment=moment,
+                                ))
         unknown = {p for p in emitted if p not in self.EXPECTED}
         assert not unknown, f"forecast phrases with no expected emoji: {unknown}"
+        assert emitted == set(self.EXPECTED), f"unreachable phrases: {set(self.EXPECTED) - emitted}"

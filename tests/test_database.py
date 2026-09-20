@@ -136,6 +136,56 @@ class TestTrends:
             await db.get_recent_trend("wind_speed")
 
 
+class TestPressurePercentile:
+    """Where the current pressure sits in the station's own recent range.
+
+    This is what the forecast reads. A fixed hPa threshold does not survive
+    the seasons — scored against observed rain, "below 1020 hPa" ranged from
+    a critical success index of 0.05 in one month of the sample to 0.44 in
+    another — so the reading is ranked against the station's own history
+    instead.
+    """
+
+    async def fill(self, db, days: int, end: datetime, low: float = 1000.0, high: float = 1030.0):
+        """``days`` of hourly readings sweeping evenly between two pressures."""
+        hours = days * 24
+        for i in range(hours):
+            moment = end - timedelta(hours=hours - 1 - i)
+            await db.insert_reading(20.0, 50.0, round(low + (high - low) * (i % 24) / 23, 1),
+                                    ts(moment))
+
+    async def test_needs_history_before_it_will_rank(self, db):
+        now = clock.now().replace(minute=0, second=0, microsecond=0, tzinfo=None)
+        await self.fill(db, days=3, end=now)
+        assert await db.get_pressure_percentile(1013.0) is None
+
+    async def test_ranks_within_the_recent_range(self, db):
+        now = clock.now().replace(minute=0, second=0, microsecond=0, tzinfo=None)
+        await self.fill(db, days=20, end=now, low=1000.0, high=1030.0)
+
+        assert await db.get_pressure_percentile(999.0) == 0.0
+        assert await db.get_pressure_percentile(1031.0) == 1.0
+        middle = await db.get_pressure_percentile(1015.0)
+        assert 0.4 < middle < 0.6, middle
+
+    async def test_the_same_reading_ranks_differently_in_a_different_regime(self, db):
+        """The point of ranking: 1015 hPa is low in one month, high in another."""
+        now = clock.now().replace(minute=0, second=0, microsecond=0, tzinfo=None)
+        await self.fill(db, days=20, end=now, low=1015.0, high=1040.0)
+        in_a_high = await db.get_pressure_percentile(1017.0)
+
+        from app import cache
+
+        await db.insert_reading(20.0, 50.0, 1013.0, ts(now + timedelta(hours=1)))
+        cache.invalidate()
+        await self.fill(db, days=20, end=now + timedelta(hours=2), low=995.0, high=1020.0)
+        cache.invalidate()
+        in_a_low = await db.get_pressure_percentile(1017.0)
+
+        assert in_a_high < 0.2, in_a_high
+        assert in_a_low > 0.7, in_a_low
+
+
 class TestDailyPressureCycle:
     """The station's sea-level pressure carries a daily swing of its own.
 
