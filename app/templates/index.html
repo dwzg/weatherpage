@@ -180,6 +180,9 @@
             box-shadow: var(--shadow);
             border: 1px solid var(--border);
         }
+        /* Inside .stats-grid the grid gap spaces the cards; a stats-card placed
+           directly in the container (the climate one) needs its own margin. */
+        .container > .stats-card { margin-bottom: 16px; }
         .stats-card h3 {
             font-size: 0.85rem;
             text-transform: uppercase;
