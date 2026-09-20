@@ -11,60 +11,90 @@ Dynamic weather dashboard ("Balcony Weather Station") served by a FastAPI app in
 ```
  Home Assistant → GH Actions (relay) → Docker App (FastAPI + SQLite)
                                             ├── POST   /api/weather            ← data ingestion (API key)
-                                            ├── DELETE /api/weather/cleanup    ← off-grid/dupe pruning (API key)
+                                            ├── DELETE /api/weather/cleanup    ← off-grid/range pruning (API key)
                                             ├── GET    /api/weather/current
                                             ├── GET    /api/weather/status     ← everything the dashboard polls
                                             ├── GET    /api/weather/history?period=...
                                             ├── GET    /api/weather/stats?period=...
                                             ├── GET    /api/weather/daily?months=...  ← calendar heatmap
+                                            ├── GET    /healthz                ← container healthcheck
                                             └── GET    /                       ← serves UI
 ```
 
-- **`app/main.py`** — FastAPI app. Holds the derived-value logic that is *not* in the database layer: `compute_dew_point`, `compute_heat_index` (NOAA Rothfusz, returns `None` below 27°C), and `compute_forecast`, a rules engine combining pressure trend/acceleration/consistency, humidity, temperature trend, dew point spread and time of year into a short forecast string.
-- **`app/database.py`** — all SQLite access (async via `aiosqlite`). Single `weather_readings` table; everything else is an aggregate query (stats, extremes-with-times, daily summaries, climate stats, pressure/recent trends).
-- **`app/templates/index.html`** — the entire frontend: one Jinja2 template with all CSS and JS inline (~1300 lines). Server-renders the initial page, then the JS takes over.
-- **`backfill.py`** — standalone script (repo root, not in the image) that replays a Home Assistant history window into the app to fill an outage. Its `START`/`END` constants are edited per use; run as `source .env && python3 backfill.py`. Needs `HA_TOKEN` and `WP_API_KEY`, and posts to the production URL.
-- **`Dockerfile`** — Python 3.12 slim, uvicorn on 8080, SQLite persisted via the `/data` volume. Copies only `app/`.
-- **`.github/workflows/deploy.yml`** — on push to `main`: build image → push to GHCR → trigger Portainer webhook → prune untagged images.
-- **`.github/workflows/main.yml`** — `workflow_dispatch` relay: receives weather inputs from Home Assistant and POSTs them to the running app.
+### Modules
+
+| File | Responsibility |
+| --- | --- |
+| `app/config.py` | Every environment variable, read once into a frozen `Settings`. Nothing else touches `os.environ`. |
+| `app/clock.py` | The timestamp convention: formatting, parsing, period cutoffs, month arithmetic. |
+| `app/weather.py` | Pure derived values — dew point, heat index, the forecast rules engine, forecast emoji. No I/O. |
+| `app/database.py` | All SQLite access: connection pool, migrations, queries. |
+| `app/cache.py` | Memoisation for the whole-table aggregates, dropped on every write. |
+| `app/models.py` | Pydantic request/response schemas, including the sensor plausibility ranges. |
+| `app/services.py` | Assembles the dashboard payload shared by the API and the page render. |
+| `app/api.py` | The `/api/weather` router and the API-key dependency. |
+| `app/main.py` | App factory, lifespan, the `/` and `/healthz` routes, static mount. |
+| `app/templates/index.html` | Markup only — no inline CSS or JS. |
+| `app/static/css/dashboard.css` | All styles. |
+| `app/static/js/*.js` | ES modules: `format` (shared helpers), `charts`, `heatmap`, `climate`, `poll`, `main` (entry point). |
+| `backfill.py` | Standalone script (not in the image) that replays a Home Assistant window to fill an outage. |
 
 ## Data conventions
 
 These are implicit across the codebase and easy to break:
 
-- **Timestamps are naive local-time strings**, `YYYY-MM-DD HH:MM:SS`, matching what Home Assistant sends. `insert_reading` normalizes `T` → space. Nothing is stored in UTC and no rows carry an offset.
-- **Range queries are lexicographic string comparisons.** `_period_to_cutoff()` produces a local-time `datetime`, `_fmt_cutoff()` formats it to the same string shape, and SQL compares `timestamp >= ?`. Keep any new query on that path — comparing against an ISO-with-`T` or UTC string silently matches nothing.
-- The timezone comes from the `TIMEZONE` env var (default `Europe/Berlin`) via `database._now()`. Use that, not `datetime.now()`.
-- **Readings are expected on a 5-minute grid with `:00` seconds.** `remove_off_grid_readings()` deletes anything off-grid plus duplicate timestamps (keeping the lowest id); `remove_readings_in_range()` clears a window and re-deduplicates. Chart gaps are a real signal, so don't "fix" missing slots by interpolating.
-- **Every DB function opens and closes its own connection** (`db = await get_db()` … `finally: await db.close()`). There's no shared pool or app-level connection; follow the pattern rather than introducing one.
-- `API_KEY` (env) guards only `POST /api/weather` and `DELETE /api/weather/cleanup`, via the `X-API-Key` header. When the env var is unset, those endpoints are unauthenticated — which is how local dev works.
+- **Timestamps are naive local-time strings**, `YYYY-MM-DD HH:MM:SS`, matching what Home Assistant sends. Nothing is stored in UTC and no rows carry an offset.
+- **Range queries are lexicographic string comparisons.** Build every bound through `clock.fmt_ts()` / `clock.period_cutoff()` — comparing against an ISO-with-`T` or UTC string silently matches nothing. `clock.normalise_ts()` is the only entry point for incoming timestamps.
+- Because the format is fixed-width, the aggregate queries slice it with `substr()` instead of `strftime()`/`date()`. Same results, measurably faster over a large archive.
+- The timezone comes from the `TIMEZONE` env var (default `Europe/Berlin`) via `clock.now()`. Never use a bare `datetime.now()`.
+- **`timestamp` is UNIQUE.** Ingestion upserts, so re-posting a slot corrects it rather than duplicating it. On first start against an older database the migration de-duplicates (keeping the earliest row per timestamp) and then adds the index.
+- **Readings are expected on a 5-minute grid with `:00` seconds.** `remove_off_grid_readings()` deletes anything off-grid; `remove_readings_in_range()` clears a window. Chart gaps are a real signal, so don't "fix" missing slots by interpolating.
+- **Incoming readings are range-checked** (`app/models.py`): temperature −90…60 °C, humidity 0…100 %, pressure 800…1100 hPa. A sensor glitch or a Home Assistant `unavailable` is rejected with 422 rather than stored forever.
+- **Ordering is by `timestamp`, never by `id`.** A backfill inserts old readings with fresh ids, so `ORDER BY id DESC` would make a backfilled row "current".
+
+## Database access
+
+- A small connection pool (`database.POOL_SIZE`) is opened in the lifespan via `connect()` and closed by `disconnect()`. Use `async with database.acquire() as db:` — don't open your own connection.
+- **Migrations run before the pool is opened.** A connection caches the schema it saw at open time, and `ON CONFLICT(timestamp)` is resolved when a statement is prepared, so a connection opened before the unique index existed would reject every upsert for the life of the process.
+- The whole-table aggregates (`get_stats`, `get_extremes_with_times`, `get_climate_stats`, `get_daily_extremes`, `get_daily_summaries`, `get_history_series`) are `@cached`. Any new write path must call `invalidate_cache()`, or the dashboard will serve stale numbers until the next reading arrives.
+- `get_history_series()` downsamples: a period whose raw series would exceed `TARGET_CHART_POINTS` is averaged into buckets, and each point then carries `*_min`/`*_max` for the range band. `/api/weather/history` returns `{readings, interval_seconds, bucketed}` — not a bare array.
 
 ## Frontend conventions
 
-- No build step, no framework, no bundler. Chart.js 4 and its date-fns adapter load from jsDelivr, so **the page needs network access to render charts** — in a sandbox they fail with `Chart is not defined` while the rest of the page still works.
-- `pollStatus()` hits `/api/weather/status` every 60s and updates the current cards, sparklines and (when the 24h period is active) the main charts in place. It never rebuilds the calendar or the climate chart, which are one-shot on load.
-- Period buttons call `loadPeriod()`, which caches each period's response in `historyCache`.
-- Charts use a **time scale**, and `toTimeData()` inserts a `NaN` point when consecutive readings are more than `GAP_THRESHOLD_MS` (15 min) apart, so outages show as breaks of proportional width rather than straight lines.
-- The temperature calendar is a month pager: one panel per month in a horizontally scroll-snapping track, with `syncHeatmapHeight()` driving the track's height from the scroll offset so it fits the month in view.
-- **Card spacing gotcha:** `.stats-card` intentionally has no bottom margin because inside `.stats-grid` the grid `gap` does the spacing. A stats-card placed directly in `.container` needs `.container > .stats-card`'s margin — an inline `grid-column: 1 / -1` on such a card is a no-op leftover.
+- No build step, no framework, no bundler. The page loads `static/js/main.js` as an ES module; Chart.js 4 and its date-fns adapter come from jsDelivr, so **charts need network access** — without it the page still renders values, records and the calendar, and shows a note where the charts would be.
+- **Asset URLs are root-relative (`/static/...`), deliberately.** `url_for()` builds an absolute URL from the request, which behind the HTTPS reverse proxy comes out as `http://` and is blocked as mixed content, leaving the page with no CSS and no JS.
+- The page is server-rendered, then `poll.js` updates the same elements every 60 s. Anything the server renders *and* the poller rewrites must have one source of truth: the forecast emoji is computed server-side and sent in `/status`, and every year's Monthly Details table is rendered server-side with the year switcher only toggling `hidden`.
+- Charts use a **time scale**; `toTimeData()` inserts a `NaN` point when consecutive points are more than three intervals apart, so outages show as breaks of proportional width. The threshold comes from the response's `interval_seconds`, so a bucketed series doesn't read as one long outage.
+- Axis ticks are labelled by `tickFormatter`, which picks decimals from the tick step — pressure spans ~2 hPa a day and would otherwise repeat the same whole number.
+- Sparklines are `responsive: true` inside a fixed-size `.sparkline-wrap`. Sizing the canvas directly does not work: Chart.js writes an inline width onto it, which overrides the stylesheet and stops the card shrinking.
+- **Grid overflow gotcha:** grid items default to `min-width: auto`, so a card whose content has a wide minimum pushes the grid past the viewport. `.card` sets `min-width: 0`.
+- Card spacing: `.stats-card` has no bottom margin because inside `.stats-grid` the grid `gap` does the spacing; `.container > .stats-card` adds its own.
 
 ## Local Development
 
 ```bash
-pip install -r app/requirements.txt
+pip install -r requirements-dev.txt
 
-# DATA_DIR must be set or the app tries to write to /data
 mkdir -p /tmp/weather_data
-DATA_DIR=/tmp/weather_data uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload
+DATA_DIR=/tmp/weather_data uvicorn app.main:app --reload --port 8080
 ```
 
-Run uvicorn **from the repo root**: the Jinja environment is built with `FileSystemLoader("app/templates")`, a path relative to the working directory.
+Templates and static files are resolved from the package directory, so the working directory no longer matters.
 
-An empty database renders the "waiting for first reading" placeholder, so seed some rows before working on the UI — either POST to `/api/weather` or insert straight into `weather.db`. Several sections only appear with enough history: the climate chart and Monthly Details card need complete days, and the calendar needs daily summaries.
+An empty database renders the "waiting for first reading" placeholder, so seed some rows before working on the UI. Several sections only appear with enough history: the climate chart and Monthly Details need complete days, and the calendar needs daily summaries.
 
 ## Testing
 
-There is no test suite, linter config or CI on pull requests — `deploy.yml` only runs on push to `main`. Verification is manual: run the app locally against seeded data and check the endpoints and the rendered page.
+`pytest` and `ruff` run on every pull request (`.github/workflows/ci.yml`), alongside a Docker build and a container smoke test.
+
+```bash
+pytest -q          # 161 tests
+ruff check .
+```
+
+`tests/conftest.py` gives each test its own `DATA_DIR`, a fixed timezone and a clean settings cache. Use the `db` fixture for the storage layer and `client` for anything that goes through HTTP.
+
+For UI changes, drive the page in a real browser (Playwright is available). Measuring the DOM — element boxes, computed styles, console errors — is more reliable than eyeballing a screenshot for spacing work. The sandbox cannot reach jsDelivr, so intercept those requests and serve Chart.js from a local copy if you need the charts to render.
 
 ```bash
 curl -X POST http://localhost:8080/api/weather \
@@ -72,10 +102,8 @@ curl -X POST http://localhost:8080/api/weather \
   -d '{"temperature":"22.5","humidity":"55","pressure":"1013","timestamp":"2026-06-20T21:00:00"}'
 
 curl 'http://localhost:8080/api/weather/status'
-curl 'http://localhost:8080/api/weather/daily?months=24'
+curl 'http://localhost:8080/api/weather/history?period=all'
 ```
-
-For UI changes, driving the page in a real browser (Playwright is available in this environment) catches layout and JS errors that reading the template does not. Measuring the DOM — element boxes, computed styles, console errors — is more reliable than eyeballing a screenshot for spacing work.
 
 ## Docker
 
@@ -84,6 +112,8 @@ docker build -t weatherpage .
 docker run -p 8080:8080 -v weather_data:/data weatherpage
 ```
 
+The image runs as root because the deployment bind-mounts a host directory to `/data`; the Dockerfile notes what to change to run unprivileged.
+
 ## Deployment
 
 Deployed via Docker Compose managed by Portainer. The compose file lives in a separate repo at `~/git/docker-compose/weatherpage/docker-compose.yml`:
@@ -91,15 +121,22 @@ Deployed via Docker Compose managed by Portainer. The compose file lives in a se
 - Volume: `/opt/docker/weatherpage:/data` (persists SQLite DB)
 - Network: external `nginx-proxy-network`
 
-Every push to `main` builds and pushes a new image, then triggers the Portainer webhook to pull and restart. Since the deploy only runs post-merge, a failure lands on `main` with nothing on the PR to show it: the webhook step is skipped and the old image keeps serving. The GHCR push occasionally fails with `ERROR: unknown blob`, which is a transient registry error — re-run the failed job.
+Every push to `main` builds and pushes a new image, then triggers the Portainer webhook to pull and restart. Images are also tagged with the commit SHA, so a bad deploy can be rolled back by pinning the previous SHA in the compose file. Since the deploy only runs post-merge, a failure lands on `main` with nothing on the PR to show it: the webhook step is skipped and the old image keeps serving. The GHCR push occasionally fails with `ERROR: unknown blob`, which is a transient registry error — re-run the failed job.
 
 ## GitHub Secrets
 
 - `APP_URL` — base URL of the running app. Used by the relay workflow (`main.yml`) to forward HA webhook data.
-- `API_KEY` — shared secret protecting the `POST /api/weather` endpoint. Must match between the app (env var), the relay workflow, and (eventually) Home Assistant.
+- `API_KEY` — shared secret protecting `POST /api/weather` and `DELETE /api/weather/cleanup`. Must match between the app (env var), the relay workflow, and (eventually) Home Assistant. When the env var is unset those endpoints are unauthenticated, which is how local dev works.
 - `PORTAINER_WEBHOOK_URL` — Portainer webhook URL triggered by `deploy.yml` after a successful image push.
 - `GITHUB_TOKEN` — auto-provided, used for GHCR login and push.
 - `DELETE_PACKAGES_TOKEN` — personal access token with `delete:packages` scope for cleaning old untagged images.
+
+Workflow inputs are passed to the shell through `env:`, never interpolated into a `run:` body — `${{ inputs.x }}` is substituted before the shell sees it, so a crafted value would execute as shell on the runner.
+
+## Known limitations
+
+- During the autumn DST fallback the local hour repeats, so two distinct instants share a timestamp and sort as equal. Fixing that means migrating the stored format.
+- The aggregates scan the whole table; the cache hides this between writes, but a much longer archive would want a rollup table.
 
 ## Future: Direct Home Assistant Integration
 
