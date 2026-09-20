@@ -49,60 +49,125 @@ class TestFrost:
 
 
 class TestForecast:
+    """The rules read a de-tided pressure change (see database.get_pressure_cycle).
+
+    The thresholds are wide because they were picked from this station's own
+    distribution: the old 1.0/2.0 hPa bands fired on 67% and 39% of readings
+    and were measuring the daily pressure cycle rather than the weather.
+    """
+
     SUMMER_AFTERNOON = datetime(2026, 7, 15, 14, 0)
     WINTER_NIGHT = datetime(2026, 1, 15, 2, 0)
 
-    def trend(self, direction="steady", delta=0.0, current=1013.0, **kw):
-        return {"direction": direction, "delta": delta, "current": current,
-                "acceleration": kw.get("acceleration"), "consistency": kw.get("consistency", 1.0)}
+    def trend(self, delta=0.0, current=1013.0, consistency=1.0):
+        return {
+            "direction": "rising" if delta > 0 else "falling" if delta < 0 else "steady",
+            "delta": delta,
+            "current": current,
+            "acceleration": None,
+            "consistency": consistency,
+        }
 
     def test_no_trend_is_not_enough_data(self):
         assert weather.compute_forecast(None, 50.0) == "Not enough data"
 
-    def test_near_saturation_while_falling_predicts_rain(self):
-        result = weather.compute_forecast(
-            self.trend("falling", -1.5), 95.0, 10.0, 8.5, moment=self.WINTER_NIGHT
+    # ── The bug that made the old forecast useless ────────────────────────
+
+    def test_dew_on_a_clear_night_is_not_rain(self):
+        """A closed dew-point spread is dew forming, not rain arriving.
+
+        The old rules returned "Rain imminent" whenever the spread fell below
+        3 °C, which on a calm clear night happens every single night.
+        """
+        clear_night = weather.compute_forecast(
+            self.trend(-0.4), 95.0, 10.0, 8.5, moment=self.WINTER_NIGHT
         )
-        assert result == "Rain imminent"
+        assert "Rain" not in clear_night
 
-    def test_sharp_fall_in_humid_air_is_a_storm(self):
-        result = weather.compute_forecast(
-            self.trend("falling", -3.0), 80.0, 15.0, 5.0, moment=self.WINTER_NIGHT
-        )
-        assert result == "Storm likely"
+    def test_small_pressure_moves_say_nothing(self):
+        """Anything inside the steady band must not claim weather is coming."""
+        for delta in (-1.4, -0.5, 0.0, 0.5, 1.4):
+            phrase = weather.compute_forecast(
+                self.trend(delta), 50.0, 15.0, 4.0, moment=self.WINTER_NIGHT
+            )
+            assert phrase == "Little change", f"{delta:+} hPa produced {phrase!r}"
 
-    def test_inconsistent_trend_is_treated_as_steady(self):
-        """A jittery sensor must not produce a storm warning."""
-        noisy = self.trend("falling", -3.0, consistency=0.3)
-        assert weather.compute_forecast(noisy, 60.0, 15.0, 5.0, moment=self.WINTER_NIGHT) == "Little change"
+    def test_a_slight_fall_in_dry_air_is_not_worth_mentioning(self):
+        assert weather.compute_forecast(
+            self.trend(-2.0), 50.0, 15.0, 4.0, moment=self.WINTER_NIGHT
+        ) == "Little change"
 
-    def test_squally_strong_fall_is_hedged(self):
-        squally = self.trend("falling", -3.0, consistency=0.55)
-        result = weather.compute_forecast(squally, 60.0, 15.0, 5.0, moment=self.WINTER_NIGHT)
-        assert result == "Unsettled, possibly stormy"
+    # ── Falling ───────────────────────────────────────────────────────────
+
+    def test_slight_fall_into_humid_air_is_rain_possible(self):
+        assert weather.compute_forecast(
+            self.trend(-2.0), 80.0, 15.0, 11.0, moment=self.WINTER_NIGHT
+        ) == "Rain possible"
+
+    def test_moderate_fall_into_humid_air_is_rain_likely(self):
+        assert weather.compute_forecast(
+            self.trend(-3.0), 80.0, 15.0, 11.0, moment=self.WINTER_NIGHT
+        ) == "Rain likely"
+
+    def test_moderate_fall_in_dry_air_turns_unsettled(self):
+        assert weather.compute_forecast(
+            self.trend(-3.0), 50.0, 15.0, 4.0, moment=self.WINTER_NIGHT
+        ) == "Turning unsettled"
+
+    def test_rapid_fall_is_a_storm(self):
+        assert weather.compute_forecast(
+            self.trend(-5.0), 80.0, 15.0, 5.0, moment=self.WINTER_NIGHT
+        ) == "Stormy weather likely"
+
+    def test_squally_rapid_fall_is_hedged(self):
+        assert weather.compute_forecast(
+            self.trend(-5.0, consistency=0.55), 60.0, 15.0, 5.0, moment=self.WINTER_NIGHT
+        ) == "Unsettled, possibly stormy"
 
     def test_thunderstorm_needs_a_warm_summer_afternoon(self):
-        falling = self.trend("falling", -1.5)
         warm = {"humidity": 60.0, "temperature": 28.0, "dew_point": 15.0,
                 "temp_trend": {"delta": 2.0}}
-        assert weather.compute_forecast(falling, **warm, moment=self.SUMMER_AFTERNOON) == "Thunderstorm possible"
-        # Same air, wrong time of year: falls through to the humidity rules.
-        assert weather.compute_forecast(falling, **warm, moment=self.WINTER_NIGHT) == "Rain possible"
-
-    def test_rising_pressure_clears_up(self):
         assert weather.compute_forecast(
-            self.trend("rising", 1.5), 40.0, 15.0, 2.0, moment=self.WINTER_NIGHT
+            self.trend(-3.0), **warm, moment=self.SUMMER_AFTERNOON
+        ) == "Thunderstorm possible"
+        # Same air, wrong time of year: falls through to the humidity rules.
+        assert weather.compute_forecast(
+            self.trend(-3.0), **warm, moment=self.WINTER_NIGHT
+        ) == "Turning unsettled"
+
+    # ── Rising ────────────────────────────────────────────────────────────
+
+    def test_moderate_rise_clears_up(self):
+        assert weather.compute_forecast(
+            self.trend(3.0), 40.0, 15.0, 2.0, moment=self.WINTER_NIGHT
         ) == "Clearing up nicely"
+
+    def test_rapid_rise_clears_rapidly(self):
+        assert weather.compute_forecast(
+            self.trend(5.0), 40.0, 15.0, 2.0, moment=self.WINTER_NIGHT
+        ) == "Clearing rapidly"
+
+    def test_slight_rise_defers_to_the_steady_rules(self):
+        assert weather.compute_forecast(
+            self.trend(2.0, current=1030.0), 30.0, 15.0, -5.0, moment=self.WINTER_NIGHT
+        ) == "Fair and settled"
+
+    # ── Steady ────────────────────────────────────────────────────────────
 
     def test_high_steady_pressure_is_settled(self):
         assert weather.compute_forecast(
             self.trend(current=1030.0), 30.0, 15.0, -5.0, moment=self.WINTER_NIGHT
         ) == "Fair and settled"
 
-    def test_low_steady_pressure_near_saturation_risks_rain(self):
+    def test_high_pressure_with_saturated_air_is_overcast(self):
+        assert weather.compute_forecast(
+            self.trend(current=1030.0), 95.0, 10.0, 8.0, moment=self.WINTER_NIGHT
+        ) == "High pressure, overcast"
+
+    def test_low_steady_pressure_is_unsettled(self):
         assert weather.compute_forecast(
             self.trend(current=1000.0), 95.0, 10.0, 8.0, moment=self.WINTER_NIGHT
-        ) == "Low pressure, rain risk"
+        ) == "Low pressure, unsettled"
 
     def test_fog_needs_rising_humidity(self):
         saturated = {"humidity": 95.0, "temperature": 10.0, "dew_point": 8.0}
@@ -115,51 +180,34 @@ class TestForecast:
 
     def test_every_branch_returns_a_phrase(self):
         """No input combination may fall through to None."""
-        for direction in ("rising", "falling", "steady"):
-            for delta in (0.0, 1.5, 3.0):
-                for humidity in (10.0, 55.0, 99.0):
-                    for pressure in (990.0, 1013.0, 1040.0):
-                        result = weather.compute_forecast(
-                            self.trend(direction, delta, pressure), humidity,
-                            moment=self.SUMMER_AFTERNOON,
-                        )
-                        assert isinstance(result, str) and result
+        for delta in (-6.0, -3.0, -2.0, 0.0, 2.0, 3.0, 6.0):
+            for humidity in (10.0, 55.0, 99.0):
+                for pressure in (990.0, 1013.0, 1040.0):
+                    result = weather.compute_forecast(
+                        self.trend(delta, pressure), humidity,
+                        moment=self.SUMMER_AFTERNOON,
+                    )
+                    assert isinstance(result, str) and result
 
 
 class TestForecastEmoji:
-    """Every phrase the engine can produce, and the emoji it must get.
-
-    The original rules matched case-sensitively and tested "settled" before
-    "unsettled", so nine of these showed the wrong picture — a storm warning
-    with a sun beside it, among others.
-    """
+    """Every phrase the engine can produce, and the emoji it must get."""
 
     EXPECTED: ClassVar[dict[str, str]] = {
-        "Rain imminent": "🌧️",
         "Rain likely": "🌧️",
         "Rain possible": "🌧️",
-        "Low pressure, rain risk": "🌧️",
+        "Stormy weather likely": "⛈️",
         "Unsettled, possibly stormy": "⛈️",
-        "Storm likely": "⛈️",
-        "Gale approaching": "⛈️",
         "Thunderstorm possible": "⛈️",
-        "Wind picking up": "💨",
         "Fog or drizzle possible": "🌫️",
-        "Beginning to worsen": "☁️",
-        "Becoming unsettled": "☁️",
-        "Slightly worsening": "☁️",
-        "Turning overcast": "☁️",
+        "Turning unsettled": "☁️",
         "High pressure, overcast": "☁️",
         "Low pressure, unsettled": "☁️",
         "Overcast and humid": "☁️",
-        "High pressure, settled": "☀️",
         "Humid but clearing": "☀️",
         "Clearing up nicely": "☀️",
-        "Beginning to improve": "☀️",
-        "Slowly improving": "☀️",
-        "Fair": "☀️",
+        "Clearing rapidly": "☀️",
         "Fair and settled": "☀️",
-        "Trend easing, little change": "🌤️",
         "Little change": "🌤️",
     }
 
@@ -168,10 +216,14 @@ class TestForecastEmoji:
         assert weather.forecast_emoji(forecast) == emoji
 
     def test_worsening_never_gets_a_sun(self):
+        """"settled" is a substring of "unsettled", which the original got wrong."""
         for forecast, emoji in self.EXPECTED.items():
-            if "unsettled" in forecast.lower() or "worsen" in forecast.lower():
+            if "unsettled" in forecast.lower():
                 assert emoji != "☀️"
                 assert weather.forecast_emoji(forecast) != "☀️"
+
+    def test_matching_is_case_insensitive(self):
+        assert weather.forecast_emoji("LOW PRESSURE, UNSETTLED") == "☁️"
 
     def test_missing_forecast_falls_back(self):
         assert weather.forecast_emoji(None) == weather.DEFAULT_FORECAST_EMOJI
@@ -180,20 +232,17 @@ class TestForecastEmoji:
     def test_covers_every_phrase_the_engine_emits(self):
         """Guards against a new forecast phrase with no emoji rule."""
         emitted = set()
-        for direction in ("rising", "falling", "steady"):
-            for delta in (0.0, 1.5, 3.0):
-                for humidity in (10.0, 45.0, 60.0, 75.0, 90.0):
-                    for pressure in (1000.0, 1013.0, 1030.0):
-                        for accel in (None, "starting", "ending"):
-                            for dew in (None, 8.0):
-                                emitted.add(weather.compute_forecast(
-                                    {"direction": direction, "delta": delta,
-                                     "current": pressure, "acceleration": accel,
-                                     "consistency": 1.0},
-                                    humidity, 10.0, dew,
-                                    humidity_trend={"delta": 2.0},
-                                    temp_trend={"delta": 2.0},
-                                    moment=TestForecast.SUMMER_AFTERNOON,
-                                ))
+        for delta in (-6.0, -3.0, -2.0, 0.0, 2.0, 3.0, 6.0):
+            for humidity in (10.0, 45.0, 60.0, 75.0, 90.0):
+                for pressure in (1000.0, 1013.0, 1030.0):
+                    for consistency in (0.3, 1.0):
+                        for dew in (None, 8.0):
+                            emitted.add(weather.compute_forecast(
+                                TestForecast().trend(delta, pressure, consistency),
+                                humidity, 10.0, dew,
+                                humidity_trend={"delta": 2.0},
+                                temp_trend={"delta": 2.0},
+                                moment=TestForecast.SUMMER_AFTERNOON,
+                            ))
         unknown = {p for p in emitted if p not in self.EXPECTED}
         assert not unknown, f"forecast phrases with no expected emoji: {unknown}"

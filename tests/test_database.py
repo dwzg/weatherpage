@@ -136,6 +136,101 @@ class TestTrends:
             await db.get_recent_trend("wind_speed")
 
 
+class TestDailyPressureCycle:
+    """The station's sea-level pressure carries a daily swing of its own.
+
+    A BME280 reduces to sea level using temperature, so a sensor that warms
+    in the afternoon writes a day/night rhythm into the pressure it reports.
+    On this station it is about 3 hPa — bigger than the real tide and bigger
+    than the changes the forecast thresholds look for — so it is learned and
+    subtracted before any trend is taken.
+    """
+
+    AMPLITUDE = 1.5  # hPa, half of a 3 hPa daily swing
+    #: 17:00 sits six hours after the cycle's peak, where the uncorrected
+    #: six-hour change is at its most misleading.
+    NOW = datetime(2026, 9, 15, 17, 0)
+    STEP = timedelta(minutes=15)
+
+    @pytest.fixture(autouse=True)
+    def _pinned(self, monkeypatch, db):
+        """Pin the clock, and count a 15-minute day as complete."""
+        from app import database
+
+        monkeypatch.setattr(clock, "now", lambda: self.NOW)
+        monkeypatch.setattr(database, "CYCLE_MIN_READINGS_PER_DAY", 90)
+
+    def cycle_pressure(self, moment: datetime, base: float = 1013.0) -> float:
+        """A pure daily cycle: peak at 11:00, trough at 23:00, no weather."""
+        import math
+
+        hour = moment.hour + moment.minute / 60
+        return base + self.AMPLITUDE * math.cos((hour - 11) / 24 * 2 * math.pi)
+
+    async def fill(self, db, days: int, falling_hours: float = 0.0, fall_rate: float = 0.0):
+        """``days`` of quiet readings, optionally ending in a real pressure fall."""
+        moment = self.NOW - timedelta(days=days)
+        fall_starts = self.NOW - timedelta(hours=falling_hours)
+        while moment <= self.NOW:
+            pressure = self.cycle_pressure(moment)
+            if falling_hours and moment > fall_starts:
+                pressure += fall_rate * (moment - fall_starts).total_seconds() / 3600
+            await db.insert_reading(20.0, 50.0, round(pressure, 1), ts(moment))
+            moment += self.STEP
+
+    async def test_young_database_learns_nothing(self, db):
+        await self.fill(db, days=5)
+        assert await db.get_pressure_cycle() == {}
+
+    async def test_learned_cycle_matches_the_injected_one(self, db):
+        await self.fill(db, days=20)
+        cycle = await db.get_pressure_cycle()
+        assert cycle, "20 complete days should be enough to learn from"
+
+        def slots_apart(a: int, b: int) -> int:
+            """Distance between two half-hour slots, the short way round."""
+            return min((a - b) % 48, (b - a) % 48)
+
+        peak = max(cycle, key=lambda slot: cycle[slot])
+        trough = min(cycle, key=lambda slot: cycle[slot])
+        # Within an hour of the injected extremes: pressure is stored to
+        # 0.1 hPa, and near a turning point several slots round to the same
+        # value, so which one comes out on top is arbitrary.
+        assert slots_apart(peak, 11 * 2) <= 2, f"peak landed in slot {peak}"
+        assert slots_apart(trough, 23 * 2) <= 2, f"trough landed in slot {trough}"
+        assert cycle[peak] - cycle[trough] == pytest.approx(2 * self.AMPLITUDE, abs=0.2)
+
+    async def test_pure_daily_cycle_produces_no_trend(self, db):
+        """The whole point: an artefact-only day must not look like weather."""
+        await self.fill(db, days=20)
+
+        trend = await db.get_pressure_trend()
+        assert trend["detided"] is True
+        assert abs(trend["delta"]) < 0.5, f"the cycle leaked a {trend['delta']} hPa trend"
+        assert trend["direction"] == "steady"
+
+    async def test_uncorrected_trend_is_dominated_by_the_cycle(self, db):
+        """What the forecast used to see on that same quiet day.
+
+        Five days is too few to learn a cycle from, so no correction is
+        applied and the daily swing alone reads as a pressure change — which
+        is how the old rules came to announce gales on quiet evenings.
+        """
+        await self.fill(db, days=5)
+
+        trend = await db.get_pressure_trend()
+        assert trend["detided"] is False
+        assert trend["delta"] < -1.0
+
+    async def test_real_change_still_shows_through(self, db):
+        """De-tiding must not flatten an actual synoptic fall."""
+        await self.fill(db, days=20, falling_hours=6, fall_rate=-0.8)
+
+        trend = await db.get_pressure_trend()
+        assert trend["direction"] == "falling"
+        assert trend["delta"] == pytest.approx(-4.0, abs=1.0)  # -0.8 hPa/h over 6h
+
+
 class TestReadingAgo:
     async def test_finds_the_closest_reading(self, db):
         now = clock.now().replace(second=0, microsecond=0, tzinfo=None)

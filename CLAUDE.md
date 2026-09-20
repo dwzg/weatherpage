@@ -50,6 +50,8 @@ These are implicit across the codebase and easy to break:
 - **`timestamp` is UNIQUE.** Ingestion upserts, so re-posting a slot corrects it rather than duplicating it. On first start against an older database the migration de-duplicates (keeping the earliest row per timestamp) and then adds the index.
 - **Readings are expected on a 5-minute grid with `:00` seconds.** `remove_off_grid_readings()` deletes anything off-grid; `remove_readings_in_range()` clears a window. Chart gaps are a real signal, so don't "fix" missing slots by interpolating.
 - **Incoming readings are range-checked** (`app/models.py`): temperature −90…60 °C, humidity 0…100 %, pressure 800…1100 hPa. A sensor glitch or a Home Assistant `unavailable` is rejected with 422 rather than stored forever.
+- **The pressure trend is de-tided, and the forecast depends on that.** This station's sea-level pressure carries a ~3 hPa daily swing of its own (the BME280 reduces to sea level using temperature, and the sensor warms in the sun) — several times the real atmospheric tide here. `get_pressure_cycle()` learns that swing per half-hour slot from complete days and `get_pressure_trend()` subtracts it at both ends. Forecast thresholds are calibrated against the *de-tided* distribution; feeding them a raw change makes them report the time of day. The learned cycle needs `CYCLE_MIN_DAYS` complete days, and below that no correction is applied at all (`detided: false` in the trend).
+- **Both ends of every trend are medians** over `SMOOTHING_WINDOW_MINUTES`, not single readings, so one noisy sample cannot push a delta across a threshold.
 - **Ordering is by `timestamp`, never by `id`.** A backfill inserts old readings with fresh ids, so `ORDER BY id DESC` would make a backfilled row "current".
 
 ## Database access
@@ -88,7 +90,7 @@ An empty database renders the "waiting for first reading" placeholder, so seed s
 `pytest` and `ruff` run on every pull request (`.github/workflows/ci.yml`), alongside a Docker build and a container smoke test.
 
 ```bash
-pytest -q          # 161 tests
+pytest -q          # 163 tests
 ruff check .
 ```
 

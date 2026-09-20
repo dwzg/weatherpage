@@ -39,8 +39,21 @@ async def build_status() -> dict | None:
     temperature = current["temperature"]
     humidity = current["humidity"]
     dew_point = weather.compute_dew_point(temperature, humidity)
+
+    # The forecast reads the smoothed half-hour values, not the latest
+    # sample: its thresholds are close enough together that one noisy
+    # reading would otherwise flip the phrase on the banner. The displayed
+    # dew point stays on the live reading; the forecast gets its own from
+    # the smoothed pair so the spread is consistent with them.
+    smooth_t = temp_trend["current"] if temp_trend else temperature
+    smooth_h = humidity_trend["current"] if humidity_trend else humidity
     forecast = weather.compute_forecast(
-        pressure_trend, humidity, temperature, dew_point, humidity_trend, temp_trend
+        pressure_trend,
+        smooth_h,
+        smooth_t,
+        weather.compute_dew_point(smooth_t, smooth_h),
+        humidity_trend,
+        temp_trend,
     )
 
     return {

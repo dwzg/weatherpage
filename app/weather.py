@@ -14,23 +14,41 @@ from datetime import datetime
 # ── Thresholds ─────────────────────────────────────────────────────────────
 # Named rather than inlined so the forecast rules below read as prose.
 
-#: Dew-point spread under which the air is close enough to saturation that
-#: fog, drizzle or rain becomes the dominant signal.
+#: Dew-point spread under which the air is close enough to saturation for
+#: fog or drizzle. It is NOT a rain signal: on a clear, calm night the
+#: temperature falls to the dew point and this closes every time, which is
+#: dew forming on the balcony rather than rain on the way.
 SATURATION_SPREAD_C = 3.0
 
-#: Pressure change (hPa over the trend window) separating the severity bands.
-PRESSURE_DELTA_STRONG = 2.0
-PRESSURE_DELTA_MODERATE = 1.0
+# Pressure bands, in hPa of change over the trend window, measured on the
+# de-tided series (see database.get_pressure_cycle). They were chosen from
+# this station's own distribution so each band means something: over 89 days
+# a rapid move fires about 2% of the time and a moderate one about 14%,
+# where the previous 1.0/2.0 thresholds fired on 67% and 39% of readings —
+# they were measuring the daily cycle, not the weather.
 
-#: Below this fraction the readings disagree so much that the direction is
-#: sensor jitter rather than weather, and is treated as steady.
-CONSISTENCY_MIN = 0.5
-#: A strong move that is this inconsistent is squally rather than a clean front.
+#: A move this large is a front going through.
+PRESSURE_DELTA_RAPID = 4.0
+#: Enough movement to expect the weather to change.
+PRESSURE_DELTA_MODERATE = 2.5
+#: Below this the barometer is not saying anything; absolute pressure and
+#: humidity decide instead.
+PRESSURE_DELTA_STEADY = 1.5
+
+#: Below this fraction the readings disagree so much that a strong move is
+#: squally rather than a clean front.
 CONSISTENCY_SQUALLY = 0.6
 
-#: Absolute pressure bands for a steady trend.
+#: Absolute pressure bands, used when the trend is flat.
 PRESSURE_HIGH = 1025.0
 PRESSURE_LOW = 1005.0
+
+#: Humidity above which a falling barometer means rain rather than just wind.
+HUMIDITY_WET = 70.0
+#: Humidity at which the air itself is the story.
+HUMIDITY_MUGGY = 85.0
+#: Humidity below which nothing is going to fall out of the sky soon.
+HUMIDITY_DRY = 40.0
 
 #: Conditions under which a falling trend is convective (thundery) rather
 #: than frontal: a warm, humid summer afternoon.
@@ -105,11 +123,9 @@ def is_frost_risk(temp_c: float) -> bool:
 class ForecastInputs:
     """Everything the rules below consult, derived once from raw readings."""
 
-    direction: str
-    delta: float  # absolute pressure change over the trend window
+    delta: float  # signed pressure change over the trend window
     pressure: float
     humidity: float
-    acceleration: str | None
     consistency: float
     near_saturation: bool
     humidity_rising: bool
@@ -127,13 +143,6 @@ class ForecastInputs:
         temp_trend: dict | None,
         moment: datetime,
     ) -> ForecastInputs:
-        consistency = pressure_trend.get("consistency", 1.0)
-        direction = pressure_trend["direction"]
-
-        # A direction the readings do not agree on is jitter, not weather.
-        if consistency < CONSISTENCY_MIN:
-            direction = "steady"
-
         spread = (
             temperature - dew_point
             if temperature is not None and dew_point is not None
@@ -141,12 +150,10 @@ class ForecastInputs:
         )
 
         return cls(
-            direction=direction,
-            delta=abs(pressure_trend["delta"]),
+            delta=pressure_trend["delta"],
             pressure=pressure_trend["current"],
             humidity=humidity,
-            acceleration=pressure_trend.get("acceleration"),
-            consistency=consistency,
+            consistency=pressure_trend.get("consistency", 1.0),
             near_saturation=spread is not None and spread < SATURATION_SPREAD_C,
             humidity_rising=_is_rising(humidity_trend),
             temp_rising=_is_rising(temp_trend),
@@ -166,66 +173,66 @@ def _is_rising(trend: dict | None) -> bool:
 
 def _falling(f: ForecastInputs) -> str:
     """Pressure dropping — how fast, and into how much moisture."""
-    # Air already near saturation is the strongest rain signal there is.
-    if f.near_saturation:
-        return "Rain imminent" if f.delta > PRESSURE_DELTA_MODERATE else "Rain likely"
+    drop = -f.delta
 
-    if f.delta > PRESSURE_DELTA_STRONG:
+    if drop > PRESSURE_DELTA_RAPID:
         if f.consistency < CONSISTENCY_SQUALLY:
             return "Unsettled, possibly stormy"
-        return "Storm likely" if f.humidity > 50 else "Gale approaching"
+        return "Stormy weather likely"
 
-    if f.delta > PRESSURE_DELTA_MODERATE:
+    if drop > PRESSURE_DELTA_MODERATE:
         if f.convective and f.temp_rising:
             return "Thunderstorm possible"
-        if f.humidity > 70:
+        if f.humidity > HUMIDITY_WET:
             return "Rain likely"
-        return "Rain possible" if f.humidity > 40 else "Wind picking up"
+        return "Turning unsettled"
 
-    if f.acceleration == "starting":
-        return "Beginning to worsen"
-    if f.humidity > 70:
-        return "Becoming unsettled"
-    return "Slightly worsening" if f.humidity > 40 else "Turning overcast"
+    # A slight fall is only worth mentioning if there is moisture for it to
+    # act on. Otherwise the barometer is within its own noise, and saying
+    # "slowly worsening" every time it drifts down is how the old rules
+    # ended up changing their mind 42 times a day.
+    if f.humidity > HUMIDITY_WET:
+        return "Rain possible"
+    return _steady(f)
 
 
 def _rising(f: ForecastInputs) -> str:
     """Pressure climbing — conditions improving at some rate."""
-    if f.delta > PRESSURE_DELTA_STRONG:
-        return "High pressure, settled"
-
+    if f.delta > PRESSURE_DELTA_RAPID:
+        return "Clearing rapidly"
     if f.delta > PRESSURE_DELTA_MODERATE:
-        if f.humidity > 70 or f.near_saturation:
-            return "Humid but clearing"
-        return "Clearing up nicely"
+        return "Humid but clearing" if f.humidity > HUMIDITY_WET else "Clearing up nicely"
 
-    if f.acceleration == "starting":
-        return "Beginning to improve"
-    return "Slowly improving" if f.humidity > 70 else "Fair"
+    # A slight rise says no more than a flat barometer does.
+    return _steady(f)
 
 
 def _steady(f: ForecastInputs) -> str:
-    """No meaningful pressure change — absolute pressure decides."""
+    """No meaningful pressure change — the air itself decides."""
     if f.pressure > PRESSURE_HIGH:
-        if f.humidity < 50:
-            return "Fair and settled"
-        return "High pressure, overcast" if f.near_saturation else "High pressure, settled"
+        if f.near_saturation:
+            return "High pressure, overcast"
+        return "Fair and settled"
 
     if f.pressure < PRESSURE_LOW:
-        return "Low pressure, rain risk" if f.near_saturation else "Low pressure, unsettled"
+        return "Low pressure, unsettled"
 
     if f.near_saturation and f.humidity_rising:
         return "Fog or drizzle possible"
-    if f.humidity > 80:
+    if f.humidity > HUMIDITY_MUGGY:
         return "Overcast and humid"
-    if f.humidity < 40:
+    if f.humidity < HUMIDITY_DRY:
         return "Fair and settled"
-    if f.acceleration == "ending":
-        return "Trend easing, little change"
     return "Little change"
 
 
-_BRANCHES = {"falling": _falling, "rising": _rising, "steady": _steady}
+def _branch(delta: float):
+    """Which rule set applies — a flat barometer is its own case."""
+    if delta < -PRESSURE_DELTA_STEADY:
+        return _falling
+    if delta > PRESSURE_DELTA_STEADY:
+        return _rising
+    return _steady
 
 
 def compute_forecast(
@@ -239,9 +246,17 @@ def compute_forecast(
 ) -> str:
     """A short forecast phrase from the pressure trend and current conditions.
 
-    The pressure trend picks the branch; humidity, dew-point spread, trend
-    consistency and (for thunderstorms) the time of year refine it. ``moment``
-    defaults to the current local time and exists so tests can pin the clock.
+    The size of the pressure change picks the branch; humidity, dew-point
+    spread, trend consistency and (for thunderstorms) the time of year refine
+    it. ``moment`` defaults to the current local time and exists so tests can
+    pin the clock.
+
+    This is a barometric outlook from one sensor, not a meteorological
+    forecast: it has no wind direction and nothing upstream of the balcony,
+    so it distinguishes settling from deteriorating and declines to be more
+    specific than that. It expects the de-tided trend that
+    :func:`database.get_pressure_trend` produces — handed the raw change it
+    will mostly report the time of day.
     """
     if not pressure_trend:
         return NO_DATA
@@ -254,7 +269,7 @@ def compute_forecast(
     inputs = ForecastInputs.build(
         pressure_trend, humidity, temperature, dew_point, humidity_trend, temp_trend, moment
     )
-    return _BRANCHES[inputs.direction](inputs)
+    return _branch(inputs.delta)(inputs)
 
 
 #: Forecast phrase fragments mapped to the emoji shown beside them.
@@ -266,11 +281,10 @@ def compute_forecast(
 #: worsening group is therefore tested before the improving one, and every
 #: fragment here is lowercase.
 _FORECAST_EMOJI: tuple[tuple[tuple[str, ...], str], ...] = (
-    (("storm", "gale", "thunder"), "⛈️"),
+    (("storm", "thunder"), "⛈️"),
     (("rain",), "🌧️"),
-    (("wind",), "💨"),
     (("fog", "drizzle"), "🌫️"),
-    (("unsettled", "worsen", "overcast"), "☁️"),
+    (("unsettled", "overcast"), "☁️"),
     (("clearing", "improv", "fair", "settled"), "☀️"),
 )
 

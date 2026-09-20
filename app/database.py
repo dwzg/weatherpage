@@ -42,6 +42,24 @@ POOL_SIZE = 4
 #: bucketed to stay near this, instead of shipping every 5-minute row.
 TARGET_CHART_POINTS = 1500
 
+#: The window the pressure trend is measured over, in hours.
+TREND_WINDOW_HOURS = 6
+
+#: Width of the median window at each end of a trend comparison, in minutes,
+#: and the number of readings that spans.
+SMOOTHING_WINDOW_MINUTES = 30
+SMOOTHING_READINGS = max(int(SMOOTHING_WINDOW_MINUTES / READING_INTERVAL_MINUTES), 1)
+
+#: How far back the daily pressure cycle is learned from.
+CYCLE_LEARN_DAYS = 90
+
+#: Readings a day needs before it counts toward the learned cycle — a day
+#: with an outage in it would bias the slots that are missing.
+CYCLE_MIN_READINGS_PER_DAY = 200
+
+#: Complete days needed before the learned cycle is applied at all.
+CYCLE_MIN_DAYS = 14
+
 #: Bucket widths (minutes) tried in order when downsampling.
 _BUCKET_LADDER: tuple[int, ...] = (
     READING_INTERVAL_MINUTES, 10, 15, 30, 60, 180, 360, 720, 1440,
@@ -436,57 +454,127 @@ async def get_extremes_with_times(period: str = "today") -> dict | None:
     return result
 
 
-async def get_pressure_trend(hours: int = 6) -> dict | None:
+async def get_pressure_trend(hours: int = TREND_WINDOW_HOURS) -> dict | None:
     """Pressure change over ``hours``, with acceleration and consistency.
 
-    ``current`` is the median of the last half hour rather than the latest
-    reading, so a single jittery sample cannot flip the direction.
+    Both ends of the comparison are medians — the last half hour against a
+    half hour centred on ``hours`` ago — so one jittery sample cannot flip
+    the direction, and both are corrected for the station's daily pressure
+    cycle (see :func:`get_pressure_cycle`). Without that correction the
+    change is dominated by the time of day rather than by the weather.
     """
     recent = await _fetch_all(
-        "SELECT pressure FROM weather_readings ORDER BY timestamp DESC LIMIT 12"
+        "SELECT timestamp, pressure FROM weather_readings "
+        f"ORDER BY timestamp DESC LIMIT {SMOOTHING_READINGS * 2}"
     )
     if not recent:
         return None
-    pressures = [row["pressure"] for row in recent]
 
-    half_hour = sorted(pressures[:6])
-    current_p = round(half_hour[len(half_hour) // 2], 1)
+    cycle = await get_pressure_cycle()
+    corrected = [_detide(row, cycle) for row in recent]
 
-    prev_p = await _pressure_at(hours)
+    current_p = _median(corrected[:SMOOTHING_READINGS])
+    prev_p = await _pressure_at(hours, cycle)
     if prev_p is None:
         first = await _fetch_one(
-            "SELECT pressure FROM weather_readings ORDER BY timestamp ASC LIMIT 1"
+            "SELECT timestamp, pressure FROM weather_readings ORDER BY timestamp ASC LIMIT 1"
         )
-        prev_p = round(first["pressure"], 1) if first else current_p
+        prev_p = _detide(first, cycle) if first else current_p
 
     delta = round(current_p - prev_p, 1)
     direction = _direction(delta)
 
     acceleration = None
-    if hours == 6:
-        older_p = await _pressure_at(12)
-        if older_p is not None:
-            acceleration = _acceleration(direction, _direction(round(prev_p - older_p, 1)))
+    older_p = await _pressure_at(hours * 2, cycle)
+    if older_p is not None:
+        acceleration = _acceleration(direction, _direction(round(prev_p - older_p, 1)))
 
     return {
-        "current": current_p,
-        "previous": prev_p,
+        "current": round(current_p, 1),
+        "previous": round(prev_p, 1),
         "delta": delta,
         "direction": direction,
         "acceleration": acceleration,
-        "consistency": _consistency(pressures, direction),
+        "consistency": _consistency(corrected, direction),
+        "hours": hours,
+        "detided": bool(cycle),
     }
 
 
-async def _pressure_at(hours: int) -> float | None:
-    """The first reading at or after ``hours`` ago, rounded."""
-    cutoff = clock.fmt_ts(clock.now() - timedelta(hours=hours))
-    row = await _fetch_one(
-        "SELECT pressure FROM weather_readings WHERE timestamp >= ? "
-        "ORDER BY timestamp ASC LIMIT 1",
-        (cutoff,),
+@cached
+async def get_pressure_cycle() -> dict[int, float]:
+    """The station's own mean daily pressure cycle, per half-hour slot.
+
+    A BME280 reduces its reading to sea level using temperature, so a sensor
+    that bakes in the afternoon sun writes its own day/night rhythm into the
+    "pressure" it reports. Measured over this station's history that swing is
+    around 3 hPa — several times the real atmospheric tide at this latitude,
+    and far larger than the change any forecast rule is looking for. So the
+    mean offset of each slot is learned from complete days and subtracted
+    before any trend is taken.
+
+    Returns an empty mapping until :data:`CYCLE_MIN_DAYS` complete days exist,
+    in which case no correction is applied at all — a young database has no
+    cycle to learn from, and half a cycle is worse than none.
+    """
+    cutoff = clock.fmt_ts(clock.now() - timedelta(days=CYCLE_LEARN_DAYS))
+    rows = await _fetch_all(
+        """
+        WITH recent AS (
+            SELECT substr(timestamp, 1, 10) AS day,
+                   CAST(substr(timestamp, 12, 2) AS INTEGER) * 2
+                     + (CAST(substr(timestamp, 15, 2) AS INTEGER) / 30) AS slot,
+                   pressure
+            FROM weather_readings
+            WHERE timestamp >= ?
+        ),
+        complete AS (
+            SELECT day, AVG(pressure) AS mean_pressure
+            FROM recent
+            GROUP BY day
+            HAVING COUNT(*) >= ?
+        )
+        SELECT r.slot AS slot,
+               AVG(r.pressure - c.mean_pressure) AS offset,
+               COUNT(DISTINCT r.day) AS days
+        FROM recent r
+        JOIN complete c ON c.day = r.day
+        GROUP BY r.slot
+        """,
+        (cutoff, CYCLE_MIN_READINGS_PER_DAY),
     )
-    return round(row["pressure"], 1) if row else None
+    if not rows or max(row["days"] for row in rows) < CYCLE_MIN_DAYS:
+        return {}
+    return {int(row["slot"]): round(row["offset"], 2) for row in rows}
+
+
+def _slot_of(timestamp: str) -> int:
+    """The half-hour slot of the day a timestamp falls in (0-47)."""
+    return int(timestamp[11:13]) * 2 + int(timestamp[14:16]) // 30
+
+
+def _detide(row: Any, cycle: dict[int, float]) -> float:
+    """A reading's pressure with the station's daily cycle removed."""
+    return row["pressure"] - cycle.get(_slot_of(row["timestamp"]), 0.0)
+
+
+def _median(values: Sequence[float]) -> float:
+    ordered = sorted(values)
+    return ordered[len(ordered) // 2]
+
+
+async def _pressure_at(hours: float, cycle: dict[int, float]) -> float | None:
+    """Median corrected pressure in a window centred ``hours`` ago."""
+    centre = clock.now() - timedelta(hours=hours)
+    half = timedelta(minutes=SMOOTHING_WINDOW_MINUTES / 2)
+    rows = await _fetch_all(
+        "SELECT timestamp, pressure FROM weather_readings "
+        "WHERE timestamp >= ? AND timestamp <= ? ORDER BY timestamp ASC",
+        (clock.fmt_ts(centre - half), clock.fmt_ts(centre + half)),
+    )
+    if not rows:
+        return None
+    return _median([_detide(row, cycle) for row in rows])
 
 
 def _direction(delta: float) -> str:
@@ -523,29 +611,44 @@ def _consistency(pressures: Iterable[float], direction: str) -> float:
 
 
 async def get_recent_trend(column: str, hours: int = 3) -> dict | None:
-    """Change in ``column`` over the last ``hours``."""
+    """Change in ``column`` over the last ``hours``.
+
+    Both ends are medians over :data:`SMOOTHING_WINDOW_MINUTES`, like the
+    pressure trend: a single noisy sample at either end would otherwise move
+    the delta across a forecast threshold on its own.
+    """
     if column not in METRICS:
         raise ValueError(f"unknown metric: {column!r}")
 
-    latest = await _fetch_one(
-        f"SELECT {column} AS value FROM weather_readings ORDER BY timestamp DESC LIMIT 1"
+    recent = await _fetch_all(
+        f"SELECT {column} AS value FROM weather_readings "
+        f"ORDER BY timestamp DESC LIMIT {SMOOTHING_READINGS}"
     )
-    if not latest:
+    if not recent:
         return None
 
-    cutoff = clock.fmt_ts(clock.now() - timedelta(hours=hours))
-    earlier = await _fetch_one(
-        f"SELECT {column} AS value FROM weather_readings WHERE timestamp >= ? "
-        f"ORDER BY timestamp ASC LIMIT 1",
-        (cutoff,),
-    )
-    current_val = round(latest["value"], 1)
-    prev_val = round(earlier["value"], 1) if earlier else current_val
+    current_val = round(_median([row["value"] for row in recent]), 1)
+    earlier = await _median_at(column, hours)
+    prev_val = round(earlier, 1) if earlier is not None else current_val
     return {
         "current": current_val,
         "previous": prev_val,
         "delta": round(current_val - prev_val, 1),
     }
+
+
+async def _median_at(column: str, hours: float) -> float | None:
+    """Median of ``column`` in a smoothing window centred ``hours`` ago."""
+    centre = clock.now() - timedelta(hours=hours)
+    half = timedelta(minutes=SMOOTHING_WINDOW_MINUTES / 2)
+    rows = await _fetch_all(
+        f"SELECT {column} AS value FROM weather_readings "
+        f"WHERE timestamp >= ? AND timestamp <= ? ORDER BY timestamp ASC",
+        (clock.fmt_ts(centre - half), clock.fmt_ts(centre + half)),
+    )
+    if not rows:
+        return None
+    return _median([row["value"] for row in rows])
 
 
 async def get_reading_ago(hours: int = 24, tolerance_hours: float = 2.0) -> dict | None:
