@@ -88,6 +88,22 @@ regression, scores it walk-forward with weekly refits, and writes
 skill over climatology, ranking at least as well as the rules, and no sharp
 regression against the shipped model. Refusing to ship is a normal outcome.
 
+**The labels are the 25 km reanalysis on purpose.** Open-Meteo's 2 km series
+is also fetched, but only ever scored against. Trained and judged on it the
+same features manage AUC 0.715 / CSI 0.220, against 0.831 / 0.473 on the
+reanalysis: point rain is 8% of hours and turns on convective detail a
+barometer cannot see, while "did it rain around here" is the synoptic
+question these sensors answer. So the percentage on the page means rain
+**in the area**, and the page says so — judged on point rain the model's
+Brier skill is −0.256, because it quotes area odds. Retraining on the
+higher-resolution source is the intuitive move and it was measured to be
+wrong.
+
+A learned "has it been raining" stage, feeding a persistence-like signal in,
+was also tried and dropped: it moved Brier by 0.0007 and AUC by 0.004, which
+is noise at this sample size, because the humidity features already carry
+that signal.
+
 Three things are load-bearing here:
 
 - **One feature path.** Training does not reimplement the features: it calls

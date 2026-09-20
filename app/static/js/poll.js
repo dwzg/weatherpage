@@ -138,7 +138,7 @@ function updateNowcast(nowcast) {
         row.appendChild(el);
     }
     el.textContent = '';
-    el.append(`🤖 Rain ${nowcast.label} · `);
+    el.append(`🤖 Rain nearby ${nowcast.label} · `);
     const value = document.createElement('strong');
     value.textContent = `${Math.round(nowcast.probability * 100)}%`;
     el.append(value, ` in ${nowcast.horizon_hours} h`);

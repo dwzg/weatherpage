@@ -32,7 +32,7 @@
     {%- if nowcast %}
     <span class="banner banner-nowcast" id="label-nowcast"
           title="Learned from this station's own history">
-        🤖 Rain {{ nowcast.label }} ·
+        🤖 Rain nearby {{ nowcast.label }} ·
         <strong>{{ "%.0f"|format(nowcast.probability * 100) }}%</strong>
         in {{ nowcast.horizon_hours }} h
     </span>
@@ -60,7 +60,11 @@
                 its recent peak and changes, dew-point spread, pressure changes, temperature
                 — and returns the probability of at least
                 {{ nowcast.rain_mm if nowcast else 0.2 }} mm of rain in the next
-                {{ nowcast.horizon_hours if nowcast else 6 }} hours.
+                {{ nowcast.horizon_hours if nowcast else 6 }} hours
+                <em>somewhere in the surrounding area</em>. That is the question the
+                sensors can answer: trained instead on rain at this exact point, the
+                same model scores far worse, because whether a summer shower crosses
+                this balcony or the next valley is not something a barometer knows.
             </p>
             <p>
                 They disagree sometimes, and that is the point: the phrase is a category,
