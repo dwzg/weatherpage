@@ -26,7 +26,10 @@ class Settings:
     data_dir: Path
     timezone: ZoneInfo
     api_key: str | None
-    #: Serialised into asset URLs so a deploy busts the browser cache.
+    #: Serialised into asset URLs so a deploy busts the browser cache. It
+    #: must change whenever the assets do, which the app version does not:
+    #: it sat at 2.0.0 across every deploy, so browsers kept serving the
+    #: stylesheet and modules from before a release. The commit does change.
     asset_version: str
     #: The commit this image was built from, baked in by the Dockerfile.
     #: "unknown" outside a built image, which is the honest answer locally.
@@ -51,6 +54,10 @@ def get_settings() -> Settings:
         data_dir=Path(os.environ.get("DATA_DIR", "/data")),
         timezone=ZoneInfo(os.environ.get("TIMEZONE", "Europe/Berlin")),
         api_key=os.environ.get("API_KEY") or None,
-        asset_version=os.environ.get("ASSET_VERSION") or __version__,
+        asset_version=(
+            os.environ.get("ASSET_VERSION")
+            or (git_sha[:12] if (git_sha := os.environ.get("GIT_SHA")) else None)
+            or __version__
+        ),
         git_sha=os.environ.get("GIT_SHA") or "unknown",
     )

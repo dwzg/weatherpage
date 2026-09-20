@@ -46,38 +46,36 @@
     <details class="prediction-note">
         <summary>How these two predictions work</summary>
         <div class="prediction-note-body">
-            <p>
-                <strong>The outlook</strong> is a handful of thresholds. It ranks the
-                current pressure against this station's own last 30 days and reads that
-                rank together with the humidity. It says nothing about which way the
-                barometer is moving, because scored against observed rainfall here that
-                turned out to carry no useful signal.
-            </p>
-            <p>
-                <strong>The rain chance</strong> is a logistic regression fitted to this
-                station's readings against observed rainfall, and retrained every week as
-                more data arrives. It reads ten measurements — pressure ranks, humidity and
-                its recent peak and changes, dew-point spread, pressure changes, temperature
-                — and returns the probability of at least
-                {{ nowcast.rain_mm if nowcast else 0.2 }} mm of rain in the next
-                {{ nowcast.horizon_hours if nowcast else 6 }} hours
-                <em>somewhere in the surrounding area</em>. That is the question the
-                sensors can answer: trained instead on rain at this exact point, the
-                same model scores far worse, because whether a summer shower crosses
-                this balcony or the next valley is not something a barometer knows.
-            </p>
-            <p>
-                They disagree sometimes, and that is the point: the phrase is a category,
-                the percentage is a calibrated probability. Over the most recent validation
-                the model matched a persistence baseline on the yes/no call while scoring
-                far better as a probability. Neither sees wind, radar or anything upstream
-                of the balcony, so treat both as a hint rather than a forecast.
-            </p>
+            <dl>
+                <dt>☀️ The outlook</dt>
+                <dd>
+                    Thresholds on two numbers: where the pressure sits in this station's
+                    own last 30 days, and the humidity. It ignores which way the barometer
+                    is moving — measured against real rainfall here, that carries no signal.
+                </dd>
+
+                <dt>🤖 The rain chance</dt>
+                <dd>
+                    A model fitted to this station's readings against observed rainfall and
+                    retrained weekly. Ten measurements in, one number out: the chance of
+                    {{ nowcast.rain_mm if nowcast else 0.2 }} mm of rain within
+                    {{ nowcast.horizon_hours if nowcast else 6 }} hours
+                    <strong>in the surrounding area</strong> — not on this balcony. Whether a
+                    shower crosses here or the next valley is not something a barometer knows.
+                </dd>
+
+                <dt>Why both</dt>
+                <dd>
+                    The phrase is a category; the percentage is a calibrated probability, and
+                    they can disagree. Neither sees wind, radar or anything upstream of the
+                    balcony, so treat both as a hint rather than a forecast.
+                </dd>
+            </dl>
             {%- if nowcast and nowcast.skill %}
             <p class="prediction-provenance">
                 Model trained {{ nowcast.trained_at }} ·
                 Brier {{ "%.3f"|format(nowcast.skill.brier) }} ·
-                skill over climatology {{ "%+.0f"|format(nowcast.skill.bss * 100) }}% ·
+                {{ "%+.0f"|format(nowcast.skill.bss * 100) }}% skill over climatology ·
                 AUC {{ nowcast.skill.auc }}
             </p>
             {%- endif %}
