@@ -191,7 +191,11 @@ Deployed via Docker Compose managed by Portainer. The compose file lives in a se
 - Volume: `/opt/docker/weatherpage:/data` (persists SQLite DB)
 - Network: external `nginx-proxy-network`
 
-Every push to `main` builds and pushes a new image, then triggers the Portainer webhook to pull and restart. Images are also tagged with the commit SHA, so a bad deploy can be rolled back by pinning the previous SHA in the compose file. Since the deploy only runs post-merge, a failure lands on `main` with nothing on the PR to show it: the webhook step is skipped and the old image keeps serving. The GHCR push occasionally fails with `ERROR: unknown blob`, which is a transient registry error — re-run the failed job.
+Every push to `main` builds and pushes a new image, then triggers the Portainer webhook to pull and restart. Images are also tagged with the commit SHA, so a bad deploy can be rolled back by pinning the previous SHA in the compose file.
+
+**`GET /healthz` reports the commit the running container was built from.** That is how to tell a stalled deploy from a fresh one: the version string moves rarely, so without it the two look identical from outside. The Dockerfile takes it as `GIT_SHA` and both workflows pass `${{ github.sha }}`; it reads `unknown` outside a built image.
+
+**The image must be pushed as a plain manifest, not an index** — `provenance: false` and `sbom: false` on `build-push-action`. The container driver `setup-buildx-action` provides attaches a provenance attestation by default, which makes the tag an OCI index whose children are *untagged* package versions. `delete-untagged-action` then deletes them, leaving a tag that still resolves while every pull fails with `manifest unknown`. That cleanup step also now runs **before** the push rather than after, so it can never race the webhook for the image just built. Since the deploy only runs post-merge, a failure lands on `main` with nothing on the PR to show it: the webhook step is skipped and the old image keeps serving. The GHCR push occasionally fails with `ERROR: unknown blob`, which is a transient registry error — re-run the failed job.
 
 ## GitHub Secrets
 

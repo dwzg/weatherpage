@@ -65,11 +65,17 @@ def create_app() -> FastAPI:
 
     @application.get("/healthz", include_in_schema=False)
     async def healthz() -> dict:
-        """Liveness probe for the container runtime."""
+        """Liveness probe for the container runtime, and which build is serving.
+
+        ``commit`` answers "did the deploy actually land" without having to
+        infer it from behaviour — the version string moves rarely, so a
+        container still running last week's image looks identical otherwise.
+        """
         current = await database.get_current()
         return {
             "status": "ok",
             "version": __version__,
+            "commit": get_settings().git_sha,
             "latest_reading": current["timestamp"] if current else None,
         }
 

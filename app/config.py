@@ -28,6 +28,9 @@ class Settings:
     api_key: str | None
     #: Serialised into asset URLs so a deploy busts the browser cache.
     asset_version: str
+    #: The commit this image was built from, baked in by the Dockerfile.
+    #: "unknown" outside a built image, which is the honest answer locally.
+    git_sha: str
 
     @property
     def db_path(self) -> Path:
@@ -49,4 +52,5 @@ def get_settings() -> Settings:
         timezone=ZoneInfo(os.environ.get("TIMEZONE", "Europe/Berlin")),
         api_key=os.environ.get("API_KEY") or None,
         asset_version=os.environ.get("ASSET_VERSION") or __version__,
+        git_sha=os.environ.get("GIT_SHA") or "unknown",
     )

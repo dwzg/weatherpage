@@ -39,6 +39,16 @@ jobs:
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Clean up BEFORE pushing, never after: this deletes untagged package
+      # versions, and the image pushed moments earlier can legitimately have
+      # some. Running it last raced the webhook and won.
+      - name: Delete old untagged package versions
+        continue-on-error: true
+        uses: minish144/delete-untagged-action@v2
+        with:
+          github-token: ${{ secrets.DELETE_PACKAGES_TOKEN }}
+          personal-account: true
+
       - name: Build and push Docker image to GHCR
         uses: docker/build-push-action@v6
         with:
@@ -50,16 +60,21 @@ jobs:
           tags: |
             ghcr.io/${{ github.repository_owner }}/weatherpage:latest
             ghcr.io/${{ github.repository_owner }}/weatherpage:${{ github.sha }}
+          build-args: |
+            GIT_SHA=${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          # Push one plain manifest, not an index. The container driver that
+          # setup-buildx-action gives us attaches a provenance attestation by
+          # default, which turns the tag into an OCI index whose children are
+          # untagged package versions — and untagged versions get deleted
+          # here, leaving the tag pointing at manifests that no longer exist.
+          # Portainer then fails to pull with "manifest unknown" while the
+          # tag itself still resolves. Nothing consumes the attestation.
+          provenance: false
+          sbom: false
 
       - name: Trigger Portainer webhook
         uses: distributhor/workflow-webhook@v3
         with:
           webhook_url: ${{ secrets.PORTAINER_WEBHOOK_URL }}
-
-      - name: Delete old untagged package versions
-        uses: minish144/delete-untagged-action@v2
-        with:
-          github-token: ${{ secrets.DELETE_PACKAGES_TOKEN }}
-          personal-account: true
