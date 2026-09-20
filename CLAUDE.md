@@ -28,6 +28,9 @@ Dynamic weather dashboard ("Balcony Weather Station") served by a FastAPI app in
 | `app/config.py` | Every environment variable, read once into a frozen `Settings`. Nothing else touches `os.environ`. |
 | `app/clock.py` | The timestamp convention: formatting, parsing, period cutoffs, month arithmetic. |
 | `app/weather.py` | Pure derived values — dew point, heat index, the forecast rules engine, forecast emoji. No I/O. |
+| `app/nowcast.py` | Loads `app/model.json` and evaluates it. Pure arithmetic — no ML dependency in the image. |
+| `app/model.json` | The fitted nowcast, written by CI. Data, not code: treat it as something that might be wrong. |
+| `ml/train.py` | The retraining job. Runs in CI only; the one thing in this project that fetches anything. |
 | `app/database.py` | All SQLite access: connection pool, migrations, queries. |
 | `app/cache.py` | Memoisation for the whole-table aggregates, dropped on every write. |
 | `app/models.py` | Pydantic request/response schemas, including the sensor plausibility ranges. |
@@ -60,6 +63,51 @@ These are implicit across the codebase and easy to break:
 - **Migrations run before the pool is opened.** A connection caches the schema it saw at open time, and `ON CONFLICT(timestamp)` is resolved when a statement is prepared, so a connection opened before the unique index existed would reject every upsert for the life of the process.
 - The whole-table aggregates (`get_stats`, `get_extremes_with_times`, `get_climate_stats`, `get_daily_extremes`, `get_daily_summaries`, `get_history_series`) are `@cached`. Any new write path must call `invalidate_cache()`, or the dashboard will serve stale numbers until the next reading arrives.
 - `get_history_series()` downsamples: a period whose raw series would exceed `TARGET_CHART_POINTS` is averaged into buckets, and each point then carries `*_min`/`*_max` for the range band. `/api/weather/history` returns `{readings, interval_seconds, bucketed}` — not a bare array.
+
+## The two predictions
+
+The dashboard shows two, deliberately different in kind, and the page itself
+explains the difference to the reader under "How these two predictions work".
+
+| | rule-based outlook | learned nowcast |
+| --- | --- | --- |
+| lives in | `app/weather.py` | `app/nowcast.py` + `app/model.json` |
+| output | a phrase (`Rain likely`) | a probability (`38%`) |
+| fitted by | hand, from measured tiers | `ml/train.py`, weekly in CI |
+| answers | is it settling or deteriorating | chance of ≥0.2 mm within 6 h |
+
+Neither may fetch anything at runtime, and neither needs to.
+
+### How the nowcast is trained and shipped
+
+`ml/train.py` (run by `.github/workflows/retrain.yml`, Mondays) pulls the
+station's readings from its own public history endpoint and observed hourly
+rainfall from Open-Meteo's ERA5 archive for the labels. It fits a logistic
+regression, scores it walk-forward with weekly refits, and writes
+`app/model.json` **only if** the candidate clears the gates in that file:
+skill over climatology, ranking at least as well as the rules, and no sharp
+regression against the shipped model. Refusing to ship is a normal outcome.
+
+Three things are load-bearing here:
+
+- **One feature path.** Training does not reimplement the features: it calls
+  `services.nowcast_features()`, the same function the running app calls,
+  against a throwaway database with the clock pinned to each historical hour.
+  Add a feature by adding it there and to `FEATURES` in `ml/train.py`, never
+  by computing it separately in the trainer.
+- **Readings are fed in as the replay clock reaches them.** The app's
+  "latest reading" queries are `ORDER BY timestamp DESC LIMIT n` with no upper
+  bound — right in production, but against a fully populated table every
+  historical hour would get the values from the end of the series. That bug
+  produced a model that looked plausible and had learned nothing.
+- **The image carries no ML dependency.** `app/nowcast.py` evaluates the
+  model with a dot product and a sigmoid; numpy and scikit-learn live in
+  `ml/requirements.txt` and are installed only by the retraining job.
+
+A `GITHUB_TOKEN` push does not start another workflow, so the retraining job
+cannot deploy by committing — it calls `deploy.yml` through
+`workflow_dispatch` explicitly. Remove that trigger and retrained models will
+sit on `main` undeployed.
 
 ### Calibrating the forecast
 
@@ -94,7 +142,7 @@ An empty database renders the "waiting for first reading" placeholder, so seed s
 `pytest` and `ruff` run on every pull request (`.github/workflows/ci.yml`), alongside a Docker build and a container smoke test.
 
 ```bash
-pytest -q          # 163 tests
+pytest -q          # 191 tests
 ruff check .
 ```
 
