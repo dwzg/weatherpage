@@ -71,6 +71,69 @@ class TestMigration:
         assert len(await db.get_history("all")) == 3
 
 
+LEGACY_UNIQUE_SCHEMA = LEGACY_SCHEMA + """
+CREATE UNIQUE INDEX idx_timestamp_unique ON weather_readings(timestamp);
+"""
+
+
+@pytest.fixture
+def pre_offset_db(tmp_path):
+    """A database from after timestamps became unique but before the offset.
+
+    Its unique index carries the name the current one uses, over ``timestamp``
+    alone — so a ``CREATE UNIQUE INDEX IF NOT EXISTS`` would quietly leave the
+    repeated autumn hour collapsing into a single row.
+    """
+    path = tmp_path / "weather.db"
+    con = sqlite3.connect(path)
+    con.executescript(LEGACY_UNIQUE_SCHEMA)
+    con.executemany(
+        "INSERT INTO weather_readings (temperature, humidity, pressure, timestamp) "
+        "VALUES (?, ?, ?, ?)",
+        [
+            (20.0, 50.0, 1013.0, "2026-06-20 12:00:00"),   # summer: +02:00
+            (2.0, 80.0, 1005.0, "2026-01-10 08:00:00"),    # winter: +01:00
+            (9.0, 90.0, 1010.0, "2026-10-25 02:30:00"),    # the repeated hour
+        ],
+    )
+    con.commit()
+    con.close()
+    return path
+
+
+class TestOffsetMigration:
+    async def test_existing_rows_get_the_offset_of_their_own_season(self, pre_offset_db, db):
+        async with db.acquire() as conn:
+            cursor = await conn.execute(
+                f"SELECT timestamp, utc_offset FROM weather_readings {db.ORDER_OLDEST_FIRST}"
+            )
+            rows = [(r["timestamp"], r["utc_offset"]) for r in await cursor.fetchall()]
+        assert rows == [
+            ("2026-01-10 08:00:00", 60),
+            ("2026-06-20 12:00:00", 120),
+            # Nothing recorded which pass this was, so it is read as the first.
+            ("2026-10-25 02:30:00", 120),
+        ]
+
+    async def test_readings_are_not_lost(self, pre_offset_db, db):
+        assert len(await db.get_history("all")) == 3
+
+    async def test_the_unique_index_is_rebuilt_over_both_columns(self, pre_offset_db, db):
+        async with db.acquire() as conn:
+            definition = await db._index_definition(conn, "idx_timestamp_unique")
+        assert definition is not None and "utc_offset" in definition
+
+    async def test_the_repeated_hour_can_then_be_completed(self, pre_offset_db, db):
+        await db.insert_reading(8.0, 92.0, 1011.0, "2026-10-25 02:30:00", utc_offset=60)
+        assert len(await db.get_history("all")) == 4
+
+    async def test_migration_is_idempotent(self, pre_offset_db, db):
+        async with db.acquire() as conn:
+            await db._migrate(conn)
+            await db._migrate(conn)
+        assert len(await db.get_history("all")) == 3
+
+
 class TestFreshDatabase:
     async def test_starts_empty_and_usable(self, db):
         assert await db.get_history("all") == []

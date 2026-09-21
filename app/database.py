@@ -7,7 +7,9 @@ per call, so a page render does not pay a dozen connection setups.
 
 Timestamps follow the convention documented in :mod:`app.clock`: naive
 local-time strings compared lexicographically. Build every bound with
-``clock.fmt_ts`` so comparisons stay on that path.
+``clock.fmt_ts`` so comparisons stay on that path. Each row also carries the
+UTC offset of the instant it was taken at, which is what tells the two passes
+through the repeated autumn hour apart — see :data:`ORDER_OLDEST_FIRST`.
 """
 
 from __future__ import annotations
@@ -34,6 +36,17 @@ log = logging.getLogger(__name__)
 #: Metrics stored per reading. Used to build aggregate SQL, so the names must
 #: stay in sync with the column names — never interpolate anything else.
 METRICS: tuple[str, ...] = ("temperature", "humidity", "pressure")
+
+#: Chronological ordering, oldest first, and its reverse.
+#:
+#: The local timestamp alone is not a total order: during the autumn DST
+#: fallback 02:00-02:59 happens twice and the two runs share every string.
+#: Within one local timestamp the larger UTC offset is the earlier instant
+#: (+02:00 before +01:00), so the offset breaks the tie. Order by these rather
+#: than by ``timestamp`` alone, and never by ``id`` — a backfill inserts old
+#: readings with fresh ids.
+ORDER_OLDEST_FIRST = "ORDER BY timestamp ASC, utc_offset DESC"
+ORDER_NEWEST_FIRST = "ORDER BY timestamp DESC, utc_offset ASC"
 
 #: Connections kept open. SQLite serialises writes anyway; a handful of
 #: readers is plenty for a single-dashboard app and avoids reconnect cost.
@@ -156,6 +169,10 @@ async def _fetch_one(sql: str, params: Sequence[Any] = ()) -> dict | None:
 
 # ── Schema ─────────────────────────────────────────────────────────────────
 
+# ``utc_offset`` is minutes east of UTC for the instant the reading was
+# taken. The DEFAULT is never the right answer for a real reading and exists
+# only so the column can be added NOT NULL to an existing table; the migration
+# fills every row in immediately afterwards, and every insert supplies it.
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS weather_readings (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -163,6 +180,7 @@ CREATE TABLE IF NOT EXISTS weather_readings (
     humidity REAL NOT NULL,
     pressure REAL NOT NULL,
     timestamp TEXT NOT NULL,
+    utc_offset INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_timestamp ON weather_readings(timestamp);
@@ -170,36 +188,90 @@ CREATE INDEX IF NOT EXISTS idx_timestamp ON weather_readings(timestamp);
 
 _DEDUPE = """
 DELETE FROM weather_readings WHERE id NOT IN (
-    SELECT MIN(id) FROM weather_readings GROUP BY timestamp
+    SELECT MIN(id) FROM weather_readings GROUP BY timestamp, utc_offset
 )
 """
 
+#: The unique index ingestion upserts against. Both columns: a repeated local
+#: hour holds two genuinely different readings, and collapsing them would
+#: throw an hour of the archive away once a year.
+_UNIQUE_INDEX = (
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_timestamp_unique "
+    "ON weather_readings(timestamp, utc_offset)"
+)
+
+
+async def _has_column(db: aiosqlite.Connection, table: str, column: str) -> bool:
+    cursor = await db.execute(f"PRAGMA table_info({table})")
+    return any(row["name"] == column for row in await cursor.fetchall())
+
+
+async def _index_definition(db: aiosqlite.Connection, name: str) -> str | None:
+    """The ``CREATE INDEX`` statement behind ``name``, or ``None``."""
+    cursor = await db.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?", (name,)
+    )
+    row = await cursor.fetchone()
+    return row["sql"] if row else None
+
+
+async def _add_utc_offset(db: aiosqlite.Connection) -> None:
+    """Give an older table its ``utc_offset`` column and fill it in.
+
+    Nothing recorded which pass through a repeated autumn hour an existing
+    row belongs to, so every row is read as the first pass — see
+    :func:`app.clock.resolve_offset`. The offset only changes at a DST
+    boundary, so it is resolved once per distinct hour rather than per row.
+    """
+    if await _has_column(db, "weather_readings", "utc_offset"):
+        return
+
+    await db.execute(
+        "ALTER TABLE weather_readings ADD COLUMN utc_offset INTEGER NOT NULL DEFAULT 0"
+    )
+    cursor = await db.execute(
+        "SELECT DISTINCT substr(timestamp, 1, 13) AS hour FROM weather_readings"
+    )
+    hours = [row["hour"] for row in await cursor.fetchall()]
+    await db.executemany(
+        "UPDATE weather_readings SET utc_offset = ? WHERE substr(timestamp, 1, 13) = ?",
+        [(clock.resolve_offset(f"{hour}:00:00"), hour) for hour in hours],
+    )
+    log.warning(
+        "migration: added utc_offset to %d hour(s) of existing readings", len(hours)
+    )
+
 
 async def _migrate(db: aiosqlite.Connection) -> None:
-    """Create the schema and make ``timestamp`` unique.
+    """Create the schema and make ``(timestamp, utc_offset)`` unique.
 
-    A unique timestamp lets ingestion upsert instead of appending duplicates,
-    which is what the cleanup endpoint used to have to undo by hand. An
-    existing database may already contain duplicates, so the index creation
-    is attempted first and only falls back to de-duplicating (keeping the
-    earliest row per timestamp, exactly as cleanup always has) if it fails.
+    A unique key lets ingestion upsert instead of appending duplicates, which
+    is what the cleanup endpoint used to have to undo by hand. An existing
+    database may already contain duplicates, so the index creation is
+    attempted first and only falls back to de-duplicating (keeping the
+    earliest row per key, exactly as cleanup always has) if it fails.
+
+    A database from before the offset existed carries the same index name
+    over ``timestamp`` alone, which would keep collapsing the repeated autumn
+    hour into one row. ``CREATE INDEX IF NOT EXISTS`` would silently accept
+    that index, so it is dropped by definition rather than by name.
     """
     await db.executescript(_SCHEMA)
+    await _add_utc_offset(db)
+
+    existing = await _index_definition(db, "idx_timestamp_unique")
+    if existing is not None and "utc_offset" not in existing:
+        await db.execute("DROP INDEX idx_timestamp_unique")
+
     try:
-        await db.execute(
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_timestamp_unique "
-            "ON weather_readings(timestamp)"
-        )
+        await db.execute(_UNIQUE_INDEX)
     except aiosqlite.IntegrityError:
         cursor = await db.execute(_DEDUPE)
         log.warning(
             "migration: removed %d duplicate reading(s) to make timestamps unique",
             cursor.rowcount,
         )
-        await db.execute(
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_timestamp_unique "
-            "ON weather_readings(timestamp)"
-        )
+        await db.execute(_UNIQUE_INDEX)
     await db.commit()
 
 
@@ -212,25 +284,35 @@ async def init_db() -> None:
 
 
 async def insert_reading(
-    temperature: float, humidity: float, pressure: float, timestamp: str
+    temperature: float,
+    humidity: float,
+    pressure: float,
+    timestamp: str,
+    utc_offset: int | None = None,
 ) -> int:
-    """Store a reading, replacing any existing one with the same timestamp.
+    """Store a reading, replacing any existing one for the same instant.
 
     Returns the row id. ``timestamp`` may use the ISO ``T`` separator; it is
-    normalised to the stored format.
+    normalised to the stored format. ``utc_offset`` says which pass through a
+    repeated autumn hour this is; left out, it is resolved from the timestamp
+    against the arrival time, which is right for a live reading and falls back
+    to the first pass for anything replayed.
     """
     ts = clock.normalise_ts(timestamp)
+    if utc_offset is None:
+        utc_offset = clock.resolve_offset(timestamp, arrival=clock.now())
     async with _write_lock, acquire() as db:
         cursor = await db.execute(
             """
-            INSERT INTO weather_readings (temperature, humidity, pressure, timestamp)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(timestamp) DO UPDATE SET
+            INSERT INTO weather_readings
+                (temperature, humidity, pressure, timestamp, utc_offset)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(timestamp, utc_offset) DO UPDATE SET
                 temperature = excluded.temperature,
                 humidity    = excluded.humidity,
                 pressure    = excluded.pressure
             """,
-            (temperature, humidity, pressure, ts),
+            (temperature, humidity, pressure, ts, utc_offset),
         )
         await db.commit()
     invalidate_cache()
@@ -288,7 +370,7 @@ async def get_current() -> dict | None:
     """
     return await _fetch_one(
         f"SELECT timestamp, {', '.join(METRICS)} FROM weather_readings "
-        f"ORDER BY timestamp DESC LIMIT 1"
+        f"{ORDER_NEWEST_FIRST} LIMIT 1"
     )
 
 
@@ -349,7 +431,9 @@ def _bucketed_sql(where: str, bucket_minutes: int) -> str:
         for m in METRICS
     )
     # strftime('%s') reads the stored string as UTC. That is the wrong instant
-    # but a consistent one, which is all bucketing needs.
+    # but a consistent one, which is all bucketing needs. It also puts both
+    # passes through a repeated autumn hour in the same bucket, which is what
+    # a chart wants: they share one position on a wall-clock axis.
     return f"""
         SELECT
             strftime('%Y-%m-%d %H:%M:00',
@@ -382,7 +466,7 @@ async def get_history_series(
     if bucket <= READING_INTERVAL_MINUTES:
         rows = await _fetch_all(
             f"SELECT timestamp, {', '.join(METRICS)} FROM weather_readings "
-            f"{where} ORDER BY timestamp ASC",
+            f"{where} {ORDER_OLDEST_FIRST}",
             params,
         )
         return HistorySeries(rows, READING_INTERVAL_MINUTES * 60, bucketed=False)
@@ -398,7 +482,7 @@ async def get_history(period: str = "24h") -> list[dict]:
     where, params = _cutoff_clause(period)
     return await _fetch_all(
         f"SELECT timestamp, {', '.join(METRICS)} FROM weather_readings "
-        f"{where} ORDER BY timestamp ASC",
+        f"{where} {ORDER_OLDEST_FIRST}",
         params,
     )
 
@@ -445,7 +529,7 @@ async def get_extremes_with_times(period: str = "today") -> dict | None:
             selects.append(
                 f"SELECT * FROM (SELECT '{metric}' AS metric, '{kind}' AS kind, "
                 f"{metric} AS value, timestamp FROM weather_readings {where} "
-                f"ORDER BY {metric} {order}, timestamp ASC LIMIT 1)"
+                f"ORDER BY {metric} {order}, timestamp ASC, utc_offset DESC LIMIT 1)"
             )
             query_params.extend(params)
 
@@ -473,7 +557,7 @@ async def get_pressure_trend(hours: int = TREND_WINDOW_HOURS) -> dict | None:
     """
     recent = await _fetch_all(
         "SELECT timestamp, pressure FROM weather_readings "
-        f"ORDER BY timestamp DESC LIMIT {SMOOTHING_READINGS * 2}"
+        f"{ORDER_NEWEST_FIRST} LIMIT {SMOOTHING_READINGS * 2}"
     )
     if not recent:
         return None
@@ -485,7 +569,7 @@ async def get_pressure_trend(hours: int = TREND_WINDOW_HOURS) -> dict | None:
     prev_p = await _pressure_at(hours, cycle)
     if prev_p is None:
         first = await _fetch_one(
-            "SELECT timestamp, pressure FROM weather_readings ORDER BY timestamp ASC LIMIT 1"
+            f"SELECT timestamp, pressure FROM weather_readings {ORDER_OLDEST_FIRST} LIMIT 1"
         )
         prev_p = _detide(first, cycle) if first else current_p
 
@@ -543,7 +627,7 @@ async def _recent_pressures(days: int = PERCENTILE_DAYS) -> list[float]:
     rows = await _fetch_all(
         "SELECT timestamp, pressure FROM weather_readings "
         "WHERE timestamp >= ? AND substr(timestamp, 15, 2) = '00' "
-        "ORDER BY timestamp ASC",
+        f"{ORDER_OLDEST_FIRST}",
         (cutoff,),
     )
     cycle = await get_pressure_cycle()
@@ -618,7 +702,7 @@ async def _pressure_at(hours: float, cycle: dict[int, float]) -> float | None:
     half = timedelta(minutes=SMOOTHING_WINDOW_MINUTES / 2)
     rows = await _fetch_all(
         "SELECT timestamp, pressure FROM weather_readings "
-        "WHERE timestamp >= ? AND timestamp <= ? ORDER BY timestamp ASC",
+        f"WHERE timestamp >= ? AND timestamp <= ? {ORDER_OLDEST_FIRST}",
         (clock.fmt_ts(centre - half), clock.fmt_ts(centre + half)),
     )
     if not rows:
@@ -681,7 +765,7 @@ async def get_recent_trend(column: str, hours: int = 3) -> dict | None:
 
     recent = await _fetch_all(
         f"SELECT {column} AS value FROM weather_readings "
-        f"ORDER BY timestamp DESC LIMIT {SMOOTHING_READINGS}"
+        f"{ORDER_NEWEST_FIRST} LIMIT {SMOOTHING_READINGS}"
     )
     if not recent:
         return None
@@ -702,7 +786,7 @@ async def _median_at(column: str, hours: float) -> float | None:
     half = timedelta(minutes=SMOOTHING_WINDOW_MINUTES / 2)
     rows = await _fetch_all(
         f"SELECT {column} AS value FROM weather_readings "
-        f"WHERE timestamp >= ? AND timestamp <= ? ORDER BY timestamp ASC",
+        f"WHERE timestamp >= ? AND timestamp <= ? {ORDER_OLDEST_FIRST}",
         (clock.fmt_ts(centre - half), clock.fmt_ts(centre + half)),
     )
     if not rows:
