@@ -47,6 +47,14 @@ METRICS: tuple[str, ...] = ("temperature", "humidity", "pressure")
 #: (+02:00 before +01:00), so the offset breaks the tie. Order by these rather
 #: than by ``timestamp`` alone, and never by ``id`` — a backfill inserts old
 #: readings with fresh ids.
+#: Both orderings mix directions, which no same-direction index can serve: an
+#: index on ``(timestamp, utc_offset)`` read backwards gives ``timestamp DESC,
+#: utc_offset DESC``, not this. Before ``idx_timestamp_desc`` existed, every
+#: "latest reading" query therefore scanned the whole table and sorted it —
+#: 35 ms for a ``LIMIT 1`` over 500 days, growing with the archive, on the one
+#: path every page render and every poll goes through. The index below is
+#: declared with exactly these directions, and serves the reverse by being
+#: scanned backwards, so one index covers both constants.
 ORDER_OLDEST_FIRST = "ORDER BY timestamp ASC, utc_offset DESC"
 ORDER_NEWEST_FIRST = "ORDER BY timestamp DESC, utc_offset ASC"
 
@@ -182,6 +190,12 @@ async def _fetch_one(sql: str, params: Sequence[Any] = ()) -> dict | None:
 # taken. The DEFAULT is never the right answer for a real reading and exists
 # only so the column can be added NOT NULL to an existing table; the migration
 # fills every row in immediately afterwards, and every insert supplies it.
+#
+# The index carries the directions of ORDER_NEWEST_FIRST verbatim — see the
+# note beside those constants. It also serves the plain range scans the chart
+# periods do (``WHERE timestamp >= ?``), because a range on the leading column
+# does not care which way the index is sorted, which is why the old
+# ``idx_timestamp`` is dropped by the migration rather than kept beside it.
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS weather_readings (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -192,7 +206,6 @@ CREATE TABLE IF NOT EXISTS weather_readings (
     utc_offset INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
-CREATE INDEX IF NOT EXISTS idx_timestamp ON weather_readings(timestamp);
 """
 
 _DEDUPE = """
@@ -207,6 +220,14 @@ DELETE FROM weather_readings WHERE id NOT IN (
 _UNIQUE_INDEX = (
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_timestamp_unique "
     "ON weather_readings(timestamp, utc_offset)"
+)
+
+#: The index every read goes through. Created by the migration rather than by
+#: _SCHEMA because it names ``utc_offset``, which an older database does not
+#: have until ``_add_utc_offset`` has run.
+_ORDER_INDEX = (
+    "CREATE INDEX IF NOT EXISTS idx_timestamp_desc "
+    "ON weather_readings(timestamp DESC, utc_offset ASC)"
 )
 
 
@@ -449,10 +470,22 @@ async def _migrate(db: aiosqlite.Connection) -> None:
 
     A database whose rollup is missing or unbuilt has it summarised here,
     once, over whatever archive it already holds.
+
+    ``idx_timestamp`` is dropped: ``idx_timestamp_desc`` supersedes it, and
+    an index nothing reads still costs a write on every insert.
     """
     await db.executescript(_SCHEMA)
     await db.executescript(_ROLLUP_SCHEMA)
     await _add_utc_offset(db)
+
+    # Only now can this be built: it names utc_offset, which the step above
+    # may have just added. It answers everything its single-column predecessor
+    # did — including the range scans, since a range on the leading column is
+    # indifferent to the index's direction — so that one is dropped rather
+    # than left beside it: a redundant index is not free, it is rewritten on
+    # every one of the ~288 inserts a day.
+    await db.execute(_ORDER_INDEX)
+    await db.execute("DROP INDEX IF EXISTS idx_timestamp")
 
     existing = await _index_definition(db, "idx_timestamp_unique")
     if existing is not None and "utc_offset" not in existing:

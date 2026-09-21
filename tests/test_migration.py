@@ -139,3 +139,52 @@ class TestFreshDatabase:
         assert await db.get_history("all") == []
         await db.insert_reading(20.0, 50.0, 1013.0, "2026-06-20T12:00:00")
         assert len(await db.get_history("all")) == 1
+
+
+async def _plan(conn, sql: str) -> str:
+    """The query plan for ``sql``, as one string to search."""
+    cursor = await conn.execute(f"EXPLAIN QUERY PLAN {sql}")
+    return " | ".join(row["detail"] for row in await cursor.fetchall())
+
+
+class TestOrderingUsesAnIndex:
+    """Both ordering constants must be answered from the index, not a sort.
+
+    They mix directions, so an index on ``(timestamp, utc_offset)`` cannot
+    serve them: SQLite falls back to scanning the table and sorting it, which
+    is invisible until the archive is large and then costs ~35 ms on every
+    "latest reading" query — on the path every page render and every poll
+    takes. Nothing else in the suite would notice that coming back, because
+    the answers stay correct; only the plan changes.
+    """
+
+    async def test_the_index_is_created_with_both_directions(self, db):
+        async with db.acquire() as conn:
+            definition = await db._index_definition(conn, "idx_timestamp_desc")
+        assert definition is not None
+        assert "timestamp DESC" in definition and "utc_offset ASC" in definition
+
+    @pytest.mark.parametrize("order", ["ORDER_NEWEST_FIRST", "ORDER_OLDEST_FIRST"])
+    async def test_neither_ordering_falls_back_to_a_sort(self, db, order):
+        sql = (
+            "SELECT timestamp, temperature, humidity, pressure "
+            f"FROM weather_readings {getattr(db, order)} LIMIT 1"
+        )
+        async with db.acquire() as conn:
+            plan = await _plan(conn, sql)
+        assert "idx_timestamp_desc" in plan, plan
+        assert "TEMP B-TREE" not in plan, plan
+
+    async def test_range_scans_still_use_an_index(self, db):
+        """The dropped idx_timestamp served these; this one has to as well."""
+        sql = (
+            "SELECT timestamp, temperature FROM weather_readings "
+            f"WHERE timestamp >= '2026-06-20 00:00:00' {db.ORDER_OLDEST_FIRST}"
+        )
+        async with db.acquire() as conn:
+            plan = await _plan(conn, sql)
+        assert "idx_timestamp_desc" in plan, plan
+
+    async def test_the_superseded_index_is_gone(self, legacy_db, db):
+        async with db.acquire() as conn:
+            assert await db._index_definition(conn, "idx_timestamp") is None
