@@ -5,6 +5,7 @@
    mean two implementations of the same table drifting apart. */
 
 import { MONTH_ABBR, chartStyle, chartsAvailable, t, formatNumber, LOCALE } from './format.js';
+import { createPager } from './pager.js';
 
 const SERIES = [
     { key: 'temp_max', label: t('Max'),     color: '#e53e3e', width: 1.5, dash: [4, 3], radius: 3 },
@@ -63,28 +64,31 @@ function buildChart() {
     });
 }
 
-function showYear(year) {
-    document.querySelectorAll('.climate-yr-btn').forEach((btn) => {
-        const active = btn.dataset.year === year;
-        btn.classList.toggle('active', active);
-        btn.setAttribute('aria-pressed', String(active));
-    });
-    document.querySelectorAll('.year-panel').forEach((panel) => {
-        panel.hidden = panel.dataset.year !== year;
-    });
-}
+/* The year pages are server-rendered side by side; this only turns them,
+   with the same pager the temperature calendar uses. */
+function initYearPager() {
+    const track = document.getElementById('climate-track');
+    if (!track || !track.children.length) return;
 
-function initYearSwitcher() {
-    const selector = document.getElementById('climate-year-selector');
-    if (!selector) return;
+    const label = document.getElementById('climate-label');
+    const years = [...track.children].map((page) => page.dataset.year);
+    const showYear = (index) => {
+        if (label && years[index]) label.textContent = years[index];
+    };
 
-    selector.querySelectorAll('.climate-yr-btn').forEach((btn) => {
-        btn.addEventListener('click', () => showYear(btn.dataset.year));
+    const pager = createPager({
+        track,
+        prev: document.getElementById('climate-prev'),
+        next: document.getElementById('climate-next'),
+        onChange: showYear,
     });
-    if (selector.dataset.default) showYear(selector.dataset.default);
+
+    // Open on the current year when there is one, else the most recent.
+    const wanted = years.indexOf(track.dataset.default);
+    pager.goTo(wanted >= 0 ? wanted : years.length - 1, false);
 }
 
 export function initClimate() {
     buildChart();
-    initYearSwitcher();
+    initYearPager();
 }

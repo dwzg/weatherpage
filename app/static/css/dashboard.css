@@ -117,24 +117,28 @@ header .subtitle { color: var(--text-secondary); font-size: 0.9rem; margin-top: 
 
 .predictions { text-align: center; margin-bottom: 16px; }
 
+/* One card, two depths. The summary rules are child selectors on purpose:
+   the technical details are a <details> nested inside this body, and a
+   descendant selector would give that one the same ⓘ and centring as the
+   card's own handle. */
 .prediction-note {
     display: inline-block;
-    max-width: 62ch;
+    max-width: 82ch;
     text-align: left;
     font-size: 0.8rem;
     color: var(--text-secondary);
 }
-.prediction-note summary {
+.prediction-note > summary {
     cursor: pointer;
     text-align: center;
     padding: 2px 8px;
     border-radius: 12px;
     list-style: none;
 }
-.prediction-note summary::-webkit-details-marker { display: none; }
-.prediction-note summary::before { content: "ⓘ "; }
-.prediction-note summary:hover { color: var(--text); }
-.prediction-note[open] summary { color: var(--text); }
+.prediction-note > summary::-webkit-details-marker { display: none; }
+.prediction-note > summary::before { content: "ⓘ "; }
+.prediction-note > summary:hover { color: var(--text); }
+.prediction-note[open] > summary { color: var(--text); }
 .prediction-note-body {
     margin-top: 8px;
     padding: 14px 18px;
@@ -143,6 +147,8 @@ header .subtitle { color: var(--text-secondary); font-size: 0.9rem; margin-top: 
     border-radius: var(--radius);
     box-shadow: var(--shadow);
 }
+/* The card is as wide as the widest table; the prose inside it is not. */
+.prediction-note-body dl { max-width: 62ch; }
 .prediction-note-body dt {
     color: var(--text);
     font-weight: 600;
@@ -162,9 +168,28 @@ header .subtitle { color: var(--text-secondary); font-size: 0.9rem; margin-top: 
 
 /* ── The deep dive ────────────────────────────────────────────────────── */
 
-/* Wider than the plain explainer: the tables below want the room, and 62ch
-   of prose is a comfortable measure that a four-column table is not. */
-.prediction-deep { max-width: 82ch; margin-top: 6px; }
+/* A section inside the explainer card rather than a second card beside it:
+   no chrome of its own, just a rule separating it from the short answer. */
+.prediction-deep {
+    margin-top: 14px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+}
+.prediction-deep > summary {
+    cursor: pointer;
+    color: var(--text);
+    font-weight: 600;
+    list-style: none;
+}
+.prediction-deep > summary::-webkit-details-marker { display: none; }
+.prediction-deep > summary::before {
+    content: "\25b8";
+    display: inline-block;
+    width: 1em;
+    transition: transform 0.15s;
+}
+.prediction-deep[open] > summary::before { transform: rotate(90deg); }
+.prediction-deep-body { margin-top: 10px; }
 .prediction-deep h3 {
     font-size: 0.86rem;
     color: var(--text);
@@ -380,6 +405,11 @@ header .subtitle { color: var(--text-secondary); font-size: 0.9rem; margin-top: 
     padding: 24px 12px;
 }
 
+/* It only has anything to say when Chart.js failed to load. Its padding used
+   to sit invisibly at the bottom of a card; now that the climate card has the
+   year pages under it, 48px of empty paragraph would show as a hole. */
+.chart-fallback:empty { display: none; }
+
 /* ── Stats and records ────────────────────────────────────────────────── */
 
 .stats-grid {
@@ -438,17 +468,24 @@ header .subtitle { color: var(--text-secondary); font-size: 0.9rem; margin-top: 
     letter-spacing: 0.05em;
 }
 
-.year-selector { display: flex; gap: 4px; margin-bottom: 10px; flex-wrap: wrap; }
-
 /* Jan–Jun and Jul–Dec side by side. */
 .month-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 0 24px; }
-.year-panel[hidden] { display: none; }
+
+/* The monthly table used to be a card of its own with a row of year buttons.
+   It is now a page of the climate card, so the chart and the numbers it plots
+   are one thing, and the years are turned like the calendar's months. */
+.climate-years { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--border); }
+.climate-year { padding: 0 2px; }
 
 /* ── Calendar heatmap ─────────────────────────────────────────────────── */
 
 .heatmap-card { padding: 20px; margin-bottom: 24px; }
 
-.heatmap-nav {
+/* ── The pager: one page in view, arrows and swipe ────────────────────── */
+/* Shared by the temperature calendar and the climate year; the behaviour
+   that goes with it is static/js/pager.js. */
+
+.pager-nav {
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -456,7 +493,7 @@ header .subtitle { color: var(--text-secondary); font-size: 0.9rem; margin-top: 
     margin-bottom: 12px;
 }
 
-.heatmap-nav button {
+.pager-nav button {
     background: var(--bg);
     border: 1px solid var(--border);
     color: var(--text);
@@ -473,13 +510,13 @@ header .subtitle { color: var(--text-secondary); font-size: 0.9rem; margin-top: 
     transition: background 0.15s, opacity 0.15s;
 }
 
-.heatmap-nav button:hover:not(:disabled) { background: var(--border); }
-.heatmap-nav button:disabled { opacity: 0.3; cursor: default; }
-.heatmap-nav button:focus-visible { outline: 2px solid var(--accent-hum); outline-offset: 2px; }
+.pager-nav button:hover:not(:disabled) { background: var(--border); }
+.pager-nav button:disabled { opacity: 0.3; cursor: default; }
+.pager-nav button:focus-visible { outline: 2px solid var(--accent-hum); outline-offset: 2px; }
 
-.heatmap-month-label { font-size: 1rem; font-weight: 600; text-align: center; flex: 1; }
+.pager-label { font-size: 1rem; font-weight: 600; text-align: center; flex: 1; }
 
-.heatmap-track {
+.pager-track {
     display: flex;
     align-items: flex-start;
     overflow-x: auto;
@@ -490,15 +527,26 @@ header .subtitle { color: var(--text-secondary); font-size: 0.9rem; margin-top: 
     -ms-overflow-style: none;
 }
 
-.heatmap-track::-webkit-scrollbar { display: none; }
-.heatmap-track:focus-visible {
+.pager-track::-webkit-scrollbar { display: none; }
+.pager-track:focus-visible {
     outline: 2px solid var(--accent-hum);
     outline-offset: 4px;
     border-radius: 6px;
 }
 
-.heatmap-month { flex: 0 0 100%; min-width: 0; scroll-snap-align: center; }
-.heatmap-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+.pager-page { flex: 0 0 100%; min-width: 0; scroll-snap-align: center; }
+.heatmap-grid {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 6px;
+    /* Room for the hover below to grow into. The track clips on both axes —
+       overflow-y is hidden, and overflow-x cannot scroll left of zero — so
+       without this inset the top row and the edge columns lose the part of a
+       hovered cell that sticks out, which reads as the day overlapping the
+       card's border. Measured: the growth is 2.3px a side at the widest the
+       card gets, so 4px leaves the edge column a little over 1.5px to spare. */
+    padding: 4px;
+}
 
 .heatmap-header {
     font-size: 0.7rem;
@@ -521,7 +569,11 @@ header .subtitle { color: var(--text-secondary); font-size: 0.9rem; margin-top: 
     transition: transform 0.1s;
 }
 
-.heatmap-cell:hover { transform: scale(1.08); z-index: 1; }
+/* The grow is bounded by the gutter it grows into. At the widest the card
+   ever gets — a 900px container — a cell is about 117px, so 4% is 2.3px a
+   side against a 3px half-gap. It was 8%, which is 4.7px a side: enough to
+   put a hovered day on top of both its neighbours. */
+.heatmap-cell:hover { transform: scale(1.04); z-index: 1; }
 .heatmap-cell .cell-day { font-size: 0.68rem; opacity: 0.8; }
 .heatmap-cell .cell-temp { font-size: 0.8rem; font-weight: 600; }
 .heatmap-cell.heatmap-empty { background: transparent; }

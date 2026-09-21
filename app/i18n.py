@@ -362,12 +362,14 @@ GERMAN: dict[str, str] = {
 
     # ── Climate ────────────────────────────────────────────────────────────
     "Climate": "Klima",
-    "Monthly Details": "Monatsdetails",
-    "Year": "Jahr",
     "{year} average": "Mittel {year}",
     "min {min} max {max}": "min {min} max {max}",
 
     # ── Calendar ───────────────────────────────────────────────────────────
+    "Previous year": "Vorheriges Jahr",
+    "Next year": "Nächstes Jahr",
+    "Monthly averages, one year per page":
+        "Monatsmittel, ein Jahr pro Seite",
     "Temperature Calendar": "Temperaturkalender",
     "Previous month": "Vorheriger Monat",
     "Next month": "Nächster Monat",

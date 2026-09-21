@@ -40,7 +40,7 @@ Dynamic weather dashboard ("Balcony Weather Station") served by a FastAPI app in
 | `app/main.py` | App factory, lifespan, the `/` and `/healthz` routes, static mount. |
 | `app/templates/index.html` | Markup only — no inline CSS or JS. |
 | `app/static/css/dashboard.css` | All styles. |
-| `app/static/js/*.js` | ES modules: `i18n` (the catalogue the render embedded), `format` (shared helpers), `charts`, `heatmap`, `climate`, `poll`, `main` (entry point). |
+| `app/static/js/*.js` | ES modules: `i18n` (the catalogue the render embedded), `format` (shared helpers), `pager` (the scroll-snap pager both the calendar and the climate year use), `charts`, `heatmap`, `climate`, `poll`, `main` (entry point). |
 | `backfill.py` | Standalone script (not in the image) that replays a Home Assistant window to fill an outage. |
 
 ## Data conventions
@@ -86,10 +86,14 @@ Neither may fetch anything at runtime, and neither needs to.
 
 ### The explainer on the page
 
-Two `<details>` under the banners. The first is the short answer. The second,
-"The technical details", is the working: the rule ladder with its measured hit
-rates, the model card, the skill table against both baselines, and a live
-breakdown of what each feature is contributing to the current probability.
+One card under the banners, opened by a single handle. Inside it the short
+answer comes first, and "The technical details" is a `<details>` nested in the
+same body — the working: the rule ladder with its measured hit rates, the model
+card, the skill table against both baselines, and a live breakdown of what each
+feature is contributing to the current probability. It was two sibling
+`<details>`, which read as two panels arguing about which one to open. The
+summary rules in the stylesheet are child selectors (`.prediction-note >
+summary`) precisely so the nested handle does not inherit the card's own.
 
 - **The ladder is generated from the thresholds, not retyped.**
   `weather.RULE_LADDER` describes each rung of `compute_forecast()` and reads
@@ -169,13 +173,15 @@ The rules in `app/weather.py` were fitted offline against observed hourly precip
 
 - No build step, no framework, no bundler. The page loads `static/js/main.js` as an ES module; Chart.js 4 and its date-fns adapter come from jsDelivr, so **charts need network access** — without it the page still renders values, records and the calendar, and shows a note where the charts would be.
 - **Asset URLs are root-relative (`/static/...`), deliberately.** `url_for()` builds an absolute URL from the request, which behind the HTTPS reverse proxy comes out as `http://` and is blocked as mixed content, leaving the page with no CSS and no JS.
-- The page is server-rendered, then `poll.js` updates the same elements every 60 s. Anything the server renders *and* the poller rewrites must have one source of truth: the forecast emoji is computed server-side and sent in `/status`, and every year's Monthly Details table is rendered server-side with the year switcher only toggling `hidden`.
+- The page is server-rendered, then `poll.js` updates the same elements every 60 s. Anything the server renders *and* the poller rewrites must have one source of truth: the forecast emoji is computed server-side and sent in `/status`, and every year's monthly table is rendered server-side with the pager only scrolling between them.
 - Charts use a **time scale**; `toTimeData()` inserts a `NaN` point when consecutive points are more than three intervals apart, so outages show as breaks of proportional width. The threshold comes from the response's `interval_seconds`, so a bucketed series doesn't read as one long outage.
 - Axis ticks are labelled by `tickFormatter`, which picks decimals from the tick step — pressure spans ~2 hPa a day and would otherwise repeat the same whole number.
 - Chart **dates** are formatted with `Intl.DateTimeFormat` through `i18n.dateFormat()`, not with the date-fns adapter's patterns: the adapter bundle ships English only. The adapter is still loaded — the time scale needs it to generate ticks — but `ticks.callback` and the tooltip `title` callback override every label it would produce. The clock stays 24-hour in both languages.
 - Sparklines are `responsive: true` inside a fixed-size `.sparkline-wrap`. Sizing the canvas directly does not work: Chart.js writes an inline width onto it, which overrides the stylesheet and stops the card shrinking.
 - **Grid overflow gotcha:** grid items default to `min-width: auto`, so a card whose content has a wide minimum pushes the grid past the viewport. `.card` sets `min-width: 0`. The same failure one level down is why every table in the explainer sits in a `.table-scroll` wrapper: a four-column table narrower than a phone scrolls inside its own box instead of dragging the page sideways.
 - Card spacing: `.stats-card` has no bottom margin because inside `.stats-grid` the grid `gap` does the spacing; `.container > .stats-card` adds its own.
+- **The calendar and the climate year are one pager, not two.** `static/js/pager.js` owns the scroll-snap paging — arrows, swipe, arrow keys, and the height interpolation that keeps a track from being as tall as its tallest page — and the markup carries `.pager-nav` / `.pager-track` / `.pager-page` beside whatever the section calls itself. The height interpolation in particular is fiddly enough that a second copy would drift.
+- **The calendar's hover grow is bounded by the gutter it grows into.** `scale(1.04)` on a cell that is at most ~117px wide is 2.3px a side against a 3px half-gap, and `.heatmap-grid` carries 4px of padding because the track clips on both axes (`overflow-y: hidden`, and `overflow-x` cannot scroll left of zero). It was `scale(1.08)`, which put a hovered day on top of both its neighbours and past the card's edge. If you change either number, measure the result rather than eyeballing it.
 
 ## Languages
 
@@ -223,7 +229,7 @@ An empty database renders the "waiting for first reading" placeholder, so seed s
 `pytest` and `ruff` run on every pull request (`.github/workflows/ci.yml`), alongside a Docker build and a container smoke test.
 
 ```bash
-pytest -q          # 332 tests
+pytest -q          # 340 tests
 ruff check .
 ```
 
@@ -267,6 +273,7 @@ Every push to `main` builds and pushes a new image, then triggers the Portainer 
 ## GitHub Secrets
 
 - `APP_URL` — base URL of the running app. Used by the relay workflow (`main.yml`) to forward HA webhook data.
+- `STATION_LATITUDE` / `STATION_LONGITUDE` — where the station stands, read by `ml/train.py` to ask Open-Meteo for the rainfall that labels the training data. **They are deliberately not in the repository**, and the trainer has no fallback: a default would either be wrong, and quietly label the data with another place's weather, or be the real location, which is what these keep out of a public file. An unset secret fails the retraining run. To run the trainer locally, export them or pass `--latitude` / `--longitude`.
 - `API_KEY` — shared secret protecting `POST /api/weather` and `DELETE /api/weather/cleanup`. Must match between the app (env var), the relay workflow, and (eventually) Home Assistant. When the env var is unset those endpoints are unauthenticated, which is how local dev works.
 - `PORTAINER_WEBHOOK_URL` — Portainer webhook URL triggered by `deploy.yml` after a successful image push.
 - `GITHUB_TOKEN` — auto-provided, used for GHCR login and push.

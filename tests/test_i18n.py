@@ -392,3 +392,65 @@ class TestDeepDiveStructure:
         assert rule, "no .table-scroll rule"
         assert "auto" in rule.group(1)
         assert TEMPLATE.read_text().count('class="table-scroll"') >= 3
+
+
+class TestPagerStructure:
+    """The calendar and the climate year page the same way, from one module.
+
+    These are cheap structural guards on an arrangement that is easy to undo
+    by accident: a copied pager, or markup that drops the shared classes and
+    silently loses the snap behaviour on one of the two.
+    """
+
+    CSS = PACKAGE / "static" / "css" / "dashboard.css"
+
+    def test_both_tracks_carry_the_shared_classes(self):
+        markup = TEMPLATE.read_text()
+        for hook in ('class="pager-track heatmap-track"', 'class="pager-track climate-track"',
+                     'class="pager-page climate-year"'):
+            assert hook in markup, hook
+        assert "pager-page heatmap-month" in (JS_DIR / "heatmap.js").read_text()
+
+    def test_both_modules_use_the_shared_pager(self):
+        for name in ("heatmap.js", "climate.js"):
+            assert "createPager" in (JS_DIR / name).read_text(), name
+
+    def test_only_the_pager_module_interpolates_the_track_height(self):
+        """A second copy of this is the thing worth preventing."""
+        owners = [p.name for p in JS_DIR.glob("*.js") if "scrollLeft / track.clientWidth" in p.read_text()]
+        assert owners == ["pager.js"], owners
+
+    def test_the_hover_grow_stays_inside_the_gutter(self):
+        """scale(1.04) on a ~117px cell is 2.3px a side; the half-gap is 3px."""
+        css = self.CSS.read_text()
+        scale = re.search(r"\.heatmap-cell:hover\s*\{[^}]*scale\(([\d.]+)\)", css)
+        assert scale, "no hover scale rule"
+        grid = re.search(r"\.heatmap-grid\s*\{([^}]*)\}", css)
+        gap = re.search(r"gap:\s*(\d+)px", grid.group(1))
+        assert gap, "no grid gap"
+        widest = 117.0            # a 900px container, less the card's padding
+        assert (float(scale.group(1)) - 1) / 2 * widest < int(gap.group(1)) / 2, css
+
+
+class TestOneExplainerCard:
+    """The short answer and the working share one card, one handle."""
+
+    def test_the_predictions_hold_a_single_details(self):
+        markup = TEMPLATE.read_text()
+        assert markup.count('<details class="prediction-note">') == 1
+        assert '<details class="prediction-note prediction-deep">' not in markup
+
+    def test_the_deep_dive_is_nested_and_has_no_card_of_its_own(self):
+        markup = TEMPLATE.read_text()
+        body = markup.index('<div class="prediction-note-body">')
+        deep = markup.index('<details class="prediction-deep">')
+        close = markup.index("</details>", deep)
+        assert body < deep < close
+        assert markup.count('class="prediction-note-body"') == 1
+        assert 'class="prediction-deep-body"' in markup
+
+    def test_the_card_handle_rules_do_not_reach_the_nested_one(self):
+        """A descendant selector would give the inner summary the ⓘ too."""
+        css = (PACKAGE / "static" / "css" / "dashboard.css").read_text()
+        assert re.search(r"\.prediction-note > summary::before\s*\{[^}]*content", css)
+        assert not re.search(r"\.prediction-note summary::before", css)

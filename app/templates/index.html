@@ -79,192 +79,192 @@
                 AUC {{ num(nowcast.skill.auc, 3) }}
             </p>
             {%- endif %}
-        </div>
-    </details>
 
-    {#- The deep dive. Everything above is the short answer; this is the
-        working. It is a second <details> rather than more of the first so
-        the casual reader is not made to scroll past a coefficient table. -#}
-    <details class="prediction-note prediction-deep">
-        <summary>{{ t('The technical details') }}</summary>
-        <div class="prediction-note-body">
-
-            <h3>{{ t('☀️ The outlook: a ladder of thresholds') }}</h3>
-            <p>
-                {{ t('Two inputs, tested in order. The first rung that matches wins, so the ladder reads top to bottom. Both inputs are medians over {minutes} minutes rather than the latest sample — the rungs sit close enough together that one noisy reading would otherwise flip the phrase.', minutes=smoothing_minutes) }}
-            </p>
-            <div class="table-scroll">
-                <table class="deep-table rule-ladder">
-                    <thead>
-                        <tr>
-                            <th>{{ t('When') }}</th>
-                            <th>{{ t('It says') }}</th>
-                            <th class="numeric">{{ t('Rain followed') }}</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {%- for tier in rule_ladder %}
-                        <tr data-phrase="{{ tier.phrase }}"{% if forecast == tier.phrase %} class="is-active"{% endif %}>
-                            <td>{{ rule(tier) }}</td>
-                            <td class="tier-phrase">{{ t(tier.phrase) }}</td>
-                            <td class="numeric">
-                                {%- if tier.observed is not none %}{{ num(tier.observed * 100) }} %
-                                {%- else %}<span class="tier-note">{{ t(tier.note) }}</span>{% endif %}
-                            </td>
-                        </tr>
-                        {%- endfor %}
-                    </tbody>
-                    <tfoot>
-                        <tr>
-                            <td colspan="2">{{ t('Any hour at all, for comparison') }}</td>
-                            <td class="numeric">{{ num(calibration.base_rate * 100) }} %</td>
-                        </tr>
-                    </tfoot>
-                </table>
-            </div>
-            <p class="deep-live" id="deep-outlook-live" data-days="{{ percentile_days }}">
-                {#- On an empty database the page context carries no readings
-                    at all, so this asks whether the name exists before it
-                    asks for the value. -#}
-                {%- if pressure_percentile is defined and pressure_percentile is not none %}
-                {{ t('Right now the pressure ranks at {pct}% of its last {days} days.', pct=num(pressure_percentile * 100), days=percentile_days) }}
-                {%- endif %}
-            </p>
-            <p>
-                {{ t('The rightmost column is how often measurable rain actually followed within {hours} hours, over the {days} days these rungs were fitted on. It is the whole claim being made: a phrase is worth showing only if the weather behind it differed from any other hour.', hours=nowcast.horizon_hours if nowcast else 6, days=calibration.days) }}
-            </p>
-
-            <h4>{{ t('Why the barometer is read as a level, not a tendency') }}</h4>
-            <p>
-                {{ t('"Falling barometer means rain" is the first rule anyone reaches for, and on this station it is worse than useless. A fall of more than 1 hPa over six hours scored a Hanssen-Kuipers score of {kss} against rain within six hours; inside the wettest conditions, rain followed a rising barometer {rising}% of the time against {falling}% for a falling one — the wrong way round. The rules this ladder replaced were built entirely on tendency and scored {old}.',
-                      kss=num(calibration.tendency_kss, 2, sign=True),
-                      rising=num(calibration.wet_rising * 100),
-                      falling=num(calibration.wet_falling * 100),
-                      old=num(calibration.superseded_kss, 3, sign=True)) }}
-            </p>
-            <p>
-                {{ t("Where the pressure sits does carry signal, but no fixed hPa threshold survives the change of season: a plain 'below 1020 hPa' scored a critical success index of {low} in one month of the sample and {high} in another. Ranking the reading against the station's own last {days} days is stable across all of them, which is why the column above is a percentile. The tendency is still measured and shown on the pressure card, because it is a fact about the last six hours — it is just not evidence about the next six.",
-                      low=num(calibration.fixed_csi_low, 2),
-                      high=num(calibration.fixed_csi_high, 2),
-                      days=percentile_days) }}
-            </p>
-            <p>
-                {{ t('Taken as a yes/no rain forecast the ladder scores CSI {csi} and KSS {kss}, against {old} for what it replaced.',
-                      csi=num(calibration.csi, 2), kss=num(calibration.kss, 2, sign=True),
-                      old=num(calibration.superseded_kss, 3, sign=True)) }}
-            </p>
-
-            {%- if nowcast %}
-            <h3>{{ t('🤖 The rain chance: a fitted model') }}</h3>
-            <p>
-                {{ t('A logistic regression over {n} features. Each is standardised against its training mean, multiplied by a weight, and added up; a sigmoid turns that sum into a probability. Serving it is a dot product and a sigmoid, so the container carries no numpy and no scikit-learn — the training job in CI does, and all it ships back is a small JSON file of names, means, scales and weights.', n=nowcast.contributions | length) }}
-            </p>
-
-            <dl class="model-card">
-                <div><dt>{{ t('Question') }}</dt><dd>{{ t('{mm} mm of rain within {hours} hours, in the area', mm=num(nowcast.rain_mm, 1), hours=nowcast.horizon_hours) }}</dd></div>
-                <div><dt>{{ t('Fitted') }}</dt><dd>{{ nowcast.trained_at }}{% if nowcast.trained_through %} · {{ t('data through {date}', date=nowcast.trained_through) }}{% endif %}</dd></div>
-                {%- if nowcast.samples %}
-                <div><dt>{{ t('Sample') }}</dt><dd>{{ t('{n} hours', n=num(nowcast.samples, 0, grouping=True)) }}{% if nowcast.base_rate %} · {{ t('{pct}% of them wet', pct=num(nowcast.base_rate * 100)) }}{% endif %}</dd></div>
-                {%- endif %}
-                <div><dt>{{ t('Fires above') }}</dt><dd>{{ num(nowcast.threshold * 100) }} %</dd></div>
-            </dl>
-
-            {%- if nowcast.skill %}
-            <h4>{{ t('How well it scores') }}</h4>
-            <div class="table-scroll">
-                <table class="deep-table skill-table">
-                    <thead>
-                        <tr>
-                            <th></th>
-                            <th class="numeric" title="{{ t('Mean squared error of the probability. Lower is better.') }}">Brier</th>
-                            <th class="numeric" title="{{ t('How often it ranks a wet hour above a dry one. 0.5 is a coin flip.') }}">AUC</th>
-                            <th class="numeric" title="{{ t('Critical success index of the yes/no call. Higher is better.') }}">CSI</th>
-                            <th class="numeric" title="{{ t('Hanssen-Kuipers score: hit rate minus false-alarm rate.') }}">KSS</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <tr class="is-active">
-                            <th scope="row">{{ t('This model') }}</th>
-                            <td class="numeric">{{ num(nowcast.skill.brier, 3) }}</td>
-                            <td class="numeric">{{ num(nowcast.skill.auc, 3) }}</td>
-                            <td class="numeric">{{ num(nowcast.skill.csi, 3) }}</td>
-                            <td class="numeric">{{ num(nowcast.skill.kss, 3) }}</td>
-                        </tr>
-                        {%- if nowcast.baselines and nowcast.baselines.rules %}
-                        <tr>
-                            <th scope="row">{{ t('The ladder above') }}</th>
-                            <td class="numeric">{{ num(nowcast.baselines.rules.brier, 3) }}</td>
-                            <td class="numeric">{{ num(nowcast.baselines.rules.auc, 3) }}</td>
-                            <td class="numeric">{{ num(nowcast.baselines.rules.csi, 3) }}</td>
-                            <td class="numeric">{{ num(nowcast.baselines.rules.kss, 3) }}</td>
-                        </tr>
+            {#- The working, nested inside this same card rather than
+                standing beside it as a second panel: one handle to open,
+                and the casual reader is still not made to scroll past a
+                coefficient table to reach the end of the short answer. -#}
+            <details class="prediction-deep">
+                <summary>{{ t('The technical details') }}</summary>
+                <div class="prediction-deep-body">
+                    <h3>{{ t('☀️ The outlook: a ladder of thresholds') }}</h3>
+                    <p>
+                        {{ t('Two inputs, tested in order. The first rung that matches wins, so the ladder reads top to bottom. Both inputs are medians over {minutes} minutes rather than the latest sample — the rungs sit close enough together that one noisy reading would otherwise flip the phrase.', minutes=smoothing_minutes) }}
+                    </p>
+                    <div class="table-scroll">
+                        <table class="deep-table rule-ladder">
+                            <thead>
+                                <tr>
+                                    <th>{{ t('When') }}</th>
+                                    <th>{{ t('It says') }}</th>
+                                    <th class="numeric">{{ t('Rain followed') }}</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {%- for tier in rule_ladder %}
+                                <tr data-phrase="{{ tier.phrase }}"{% if forecast == tier.phrase %} class="is-active"{% endif %}>
+                                    <td>{{ rule(tier) }}</td>
+                                    <td class="tier-phrase">{{ t(tier.phrase) }}</td>
+                                    <td class="numeric">
+                                        {%- if tier.observed is not none %}{{ num(tier.observed * 100) }} %
+                                        {%- else %}<span class="tier-note">{{ t(tier.note) }}</span>{% endif %}
+                                    </td>
+                                </tr>
+                                {%- endfor %}
+                            </tbody>
+                            <tfoot>
+                                <tr>
+                                    <td colspan="2">{{ t('Any hour at all, for comparison') }}</td>
+                                    <td class="numeric">{{ num(calibration.base_rate * 100) }} %</td>
+                                </tr>
+                            </tfoot>
+                        </table>
+                    </div>
+                    <p class="deep-live" id="deep-outlook-live" data-days="{{ percentile_days }}">
+                        {#- On an empty database the page context carries no readings
+                            at all, so this asks whether the name exists before it
+                            asks for the value. -#}
+                        {%- if pressure_percentile is defined and pressure_percentile is not none %}
+                        {{ t('Right now the pressure ranks at {pct}% of its last {days} days.', pct=num(pressure_percentile * 100), days=percentile_days) }}
                         {%- endif %}
-                        {%- if nowcast.baselines and nowcast.baselines.climatology %}
-                        <tr>
-                            <th scope="row">{{ t('Always saying {pct}%', pct=num(nowcast.base_rate * 100 if nowcast.base_rate else 0)) }}</th>
-                            <td class="numeric">{{ num(nowcast.baselines.climatology.brier, 3) }}</td>
-                            <td class="numeric">—</td>
-                            <td class="numeric">{{ num(nowcast.baselines.climatology.csi, 3) }}</td>
-                            <td class="numeric">{{ num(nowcast.baselines.climatology.kss, 3) }}</td>
-                        </tr>
+                    </p>
+                    <p>
+                        {{ t('The rightmost column is how often measurable rain actually followed within {hours} hours, over the {days} days these rungs were fitted on. It is the whole claim being made: a phrase is worth showing only if the weather behind it differed from any other hour.', hours=nowcast.horizon_hours if nowcast else 6, days=calibration.days) }}
+                    </p>
+
+                    <h4>{{ t('Why the barometer is read as a level, not a tendency') }}</h4>
+                    <p>
+                        {{ t('"Falling barometer means rain" is the first rule anyone reaches for, and on this station it is worse than useless. A fall of more than 1 hPa over six hours scored a Hanssen-Kuipers score of {kss} against rain within six hours; inside the wettest conditions, rain followed a rising barometer {rising}% of the time against {falling}% for a falling one — the wrong way round. The rules this ladder replaced were built entirely on tendency and scored {old}.',
+                              kss=num(calibration.tendency_kss, 2, sign=True),
+                              rising=num(calibration.wet_rising * 100),
+                              falling=num(calibration.wet_falling * 100),
+                              old=num(calibration.superseded_kss, 3, sign=True)) }}
+                    </p>
+                    <p>
+                        {{ t("Where the pressure sits does carry signal, but no fixed hPa threshold survives the change of season: a plain 'below 1020 hPa' scored a critical success index of {low} in one month of the sample and {high} in another. Ranking the reading against the station's own last {days} days is stable across all of them, which is why the column above is a percentile. The tendency is still measured and shown on the pressure card, because it is a fact about the last six hours — it is just not evidence about the next six.",
+                              low=num(calibration.fixed_csi_low, 2),
+                              high=num(calibration.fixed_csi_high, 2),
+                              days=percentile_days) }}
+                    </p>
+                    <p>
+                        {{ t('Taken as a yes/no rain forecast the ladder scores CSI {csi} and KSS {kss}, against {old} for what it replaced.',
+                              csi=num(calibration.csi, 2), kss=num(calibration.kss, 2, sign=True),
+                              old=num(calibration.superseded_kss, 3, sign=True)) }}
+                    </p>
+
+                    {%- if nowcast %}
+                    <h3>{{ t('🤖 The rain chance: a fitted model') }}</h3>
+                    <p>
+                        {{ t('A logistic regression over {n} features. Each is standardised against its training mean, multiplied by a weight, and added up; a sigmoid turns that sum into a probability. Serving it is a dot product and a sigmoid, so the container carries no numpy and no scikit-learn — the training job in CI does, and all it ships back is a small JSON file of names, means, scales and weights.', n=nowcast.contributions | length) }}
+                    </p>
+
+                    <dl class="model-card">
+                        <div><dt>{{ t('Question') }}</dt><dd>{{ t('{mm} mm of rain within {hours} hours, in the area', mm=num(nowcast.rain_mm, 1), hours=nowcast.horizon_hours) }}</dd></div>
+                        <div><dt>{{ t('Fitted') }}</dt><dd>{{ nowcast.trained_at }}{% if nowcast.trained_through %} · {{ t('data through {date}', date=nowcast.trained_through) }}{% endif %}</dd></div>
+                        {%- if nowcast.samples %}
+                        <div><dt>{{ t('Sample') }}</dt><dd>{{ t('{n} hours', n=num(nowcast.samples, 0, grouping=True)) }}{% if nowcast.base_rate %} · {{ t('{pct}% of them wet', pct=num(nowcast.base_rate * 100)) }}{% endif %}</dd></div>
                         {%- endif %}
-                    </tbody>
-                </table>
-            </div>
-            <p>
-                {{ t('Scored walk-forward with weekly refits, never on hours it was fitted on. A retrained model only ships if it clears all three gates: skill over climatology, ranking at least as well as the ladder, and no sharp regression against the model already deployed. Refusing to ship is a normal outcome.') }}
-            </p>
-            {%- endif %}
+                        <div><dt>{{ t('Fires above') }}</dt><dd>{{ num(nowcast.threshold * 100) }} %</dd></div>
+                    </dl>
 
-            <h4>{{ t('Why the percentage means rain in the area') }}</h4>
-            <p>
-                {{ t('The labels it learned from are a {km} km reanalysis — "did it rain around here", not "did it rain on this balcony". That is deliberate, and it was measured: trained and judged on a 2 km series instead, the same features manage AUC {auc} against {auc_good} on the reanalysis. Point rain is a few percent of hours and turns on convective detail a barometer cannot see; the synoptic question is the one these sensors can answer.', km=25, auc=num(0.715, 3), auc_good=num(0.831, 3)) }}
-            </p>
-            {%- if nowcast.cross_check %}
-            <p>
-                {{ t('Held against point rain at the station, the same model scores Brier {brier} with a skill of {bss} — negative, because it is quoting area odds at a question about one roof. That is the honest cost of the choice, and it is why the pill says nearby.',
-                      brier=num(nowcast.cross_check.brier, 3),
-                      bss=num(nowcast.cross_check.bss, 3, sign=True)) }}
-            </p>
-            {%- endif %}
+                    {%- if nowcast.skill %}
+                    <h4>{{ t('How well it scores') }}</h4>
+                    <div class="table-scroll">
+                        <table class="deep-table skill-table">
+                            <thead>
+                                <tr>
+                                    <th></th>
+                                    <th class="numeric" title="{{ t('Mean squared error of the probability. Lower is better.') }}">Brier</th>
+                                    <th class="numeric" title="{{ t('How often it ranks a wet hour above a dry one. 0.5 is a coin flip.') }}">AUC</th>
+                                    <th class="numeric" title="{{ t('Critical success index of the yes/no call. Higher is better.') }}">CSI</th>
+                                    <th class="numeric" title="{{ t('Hanssen-Kuipers score: hit rate minus false-alarm rate.') }}">KSS</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr class="is-active">
+                                    <th scope="row">{{ t('This model') }}</th>
+                                    <td class="numeric">{{ num(nowcast.skill.brier, 3) }}</td>
+                                    <td class="numeric">{{ num(nowcast.skill.auc, 3) }}</td>
+                                    <td class="numeric">{{ num(nowcast.skill.csi, 3) }}</td>
+                                    <td class="numeric">{{ num(nowcast.skill.kss, 3) }}</td>
+                                </tr>
+                                {%- if nowcast.baselines and nowcast.baselines.rules %}
+                                <tr>
+                                    <th scope="row">{{ t('The ladder above') }}</th>
+                                    <td class="numeric">{{ num(nowcast.baselines.rules.brier, 3) }}</td>
+                                    <td class="numeric">{{ num(nowcast.baselines.rules.auc, 3) }}</td>
+                                    <td class="numeric">{{ num(nowcast.baselines.rules.csi, 3) }}</td>
+                                    <td class="numeric">{{ num(nowcast.baselines.rules.kss, 3) }}</td>
+                                </tr>
+                                {%- endif %}
+                                {%- if nowcast.baselines and nowcast.baselines.climatology %}
+                                <tr>
+                                    <th scope="row">{{ t('Always saying {pct}%', pct=num(nowcast.base_rate * 100 if nowcast.base_rate else 0)) }}</th>
+                                    <td class="numeric">{{ num(nowcast.baselines.climatology.brier, 3) }}</td>
+                                    <td class="numeric">—</td>
+                                    <td class="numeric">{{ num(nowcast.baselines.climatology.csi, 3) }}</td>
+                                    <td class="numeric">{{ num(nowcast.baselines.climatology.kss, 3) }}</td>
+                                </tr>
+                                {%- endif %}
+                            </tbody>
+                        </table>
+                    </div>
+                    <p>
+                        {{ t('Scored walk-forward with weekly refits, never on hours it was fitted on. A retrained model only ships if it clears all three gates: skill over climatology, ranking at least as well as the ladder, and no sharp regression against the model already deployed. Refusing to ship is a normal outcome.') }}
+                    </p>
+                    {%- endif %}
 
-            <h4>{{ t('What is driving the number right now') }}</h4>
-            <p>
-                {{ t('Every weight below is in log-odds, which is the unit the model actually adds in. The starting point plus all ten weights is the number the sigmoid squashes, so this table is the prediction rather than a picture of it.') }}
-            </p>
-            <div class="table-scroll">
-                <table class="deep-table feature-table" id="deep-features">
-                    <thead>
-                        <tr>
-                            <th>{{ t('Signal') }}</th>
-                            <th class="numeric">{{ t('Now') }}</th>
-                            <th class="numeric" title="{{ t('Standard deviations from the training mean.') }}">{{ t('vs normal') }}</th>
-                            <th class="numeric">{{ t('Weight') }}</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {%- for row in nowcast.contributions %}
-                        <tr>
-                            <td>{{ t(row.label) }}</td>
-                            <td class="numeric">{{ num(row.value, row.digits, sign=row.sign) }}{% if row.unit %} {{ row.unit }}{% endif %}</td>
-                            <td class="numeric">{{ num(row.standardised, 1, sign=True) }}</td>
-                            <td class="numeric {% if row.weight > 0 %}weight-up{% elif row.weight < 0 %}weight-down{% endif %}">{{ num(row.weight, 2, sign=True) }}</td>
-                        </tr>
-                        {%- endfor %}
-                    </tbody>
-                    <tfoot>
-                        <tr>
-                            <td colspan="3">{{ t('Starting point, before any signal') }}</td>
-                            <td class="numeric" data-cell="intercept">{{ num(nowcast.intercept, 2, sign=True) }}</td>
-                        </tr>
-                        <tr>
-                            <td colspan="3">{{ t('Total, squashed to a probability') }}</td>
-                            <td class="numeric" data-cell="total"><strong>{{ num(nowcast.probability * 100) }} %</strong></td>
-                        </tr>
-                    </tfoot>
-                </table>
-            </div>
-            {%- endif %}
+                    <h4>{{ t('Why the percentage means rain in the area') }}</h4>
+                    <p>
+                        {{ t('The labels it learned from are a {km} km reanalysis — "did it rain around here", not "did it rain on this balcony". That is deliberate, and it was measured: trained and judged on a 2 km series instead, the same features manage AUC {auc} against {auc_good} on the reanalysis. Point rain is a few percent of hours and turns on convective detail a barometer cannot see; the synoptic question is the one these sensors can answer.', km=25, auc=num(0.715, 3), auc_good=num(0.831, 3)) }}
+                    </p>
+                    {%- if nowcast.cross_check %}
+                    <p>
+                        {{ t('Held against point rain at the station, the same model scores Brier {brier} with a skill of {bss} — negative, because it is quoting area odds at a question about one roof. That is the honest cost of the choice, and it is why the pill says nearby.',
+                              brier=num(nowcast.cross_check.brier, 3),
+                              bss=num(nowcast.cross_check.bss, 3, sign=True)) }}
+                    </p>
+                    {%- endif %}
+
+                    <h4>{{ t('What is driving the number right now') }}</h4>
+                    <p>
+                        {{ t('Every weight below is in log-odds, which is the unit the model actually adds in. The starting point plus all ten weights is the number the sigmoid squashes, so this table is the prediction rather than a picture of it.') }}
+                    </p>
+                    <div class="table-scroll">
+                        <table class="deep-table feature-table" id="deep-features">
+                            <thead>
+                                <tr>
+                                    <th>{{ t('Signal') }}</th>
+                                    <th class="numeric">{{ t('Now') }}</th>
+                                    <th class="numeric" title="{{ t('Standard deviations from the training mean.') }}">{{ t('vs normal') }}</th>
+                                    <th class="numeric">{{ t('Weight') }}</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {%- for row in nowcast.contributions %}
+                                <tr>
+                                    <td>{{ t(row.label) }}</td>
+                                    <td class="numeric">{{ num(row.value, row.digits, sign=row.sign) }}{% if row.unit %} {{ row.unit }}{% endif %}</td>
+                                    <td class="numeric">{{ num(row.standardised, 1, sign=True) }}</td>
+                                    <td class="numeric {% if row.weight > 0 %}weight-up{% elif row.weight < 0 %}weight-down{% endif %}">{{ num(row.weight, 2, sign=True) }}</td>
+                                </tr>
+                                {%- endfor %}
+                            </tbody>
+                            <tfoot>
+                                <tr>
+                                    <td colspan="3">{{ t('Starting point, before any signal') }}</td>
+                                    <td class="numeric" data-cell="intercept">{{ num(nowcast.intercept, 2, sign=True) }}</td>
+                                </tr>
+                                <tr>
+                                    <td colspan="3">{{ t('Total, squashed to a probability') }}</td>
+                                    <td class="numeric" data-cell="total"><strong>{{ num(nowcast.probability * 100) }} %</strong></td>
+                                </tr>
+                            </tfoot>
+                        </table>
+                    </div>
+                    {%- endif %}
+                </div>
+            </details>
         </div>
     </details>
 </div>
@@ -401,58 +401,61 @@
 
 <!-- ── Climate ────────────────────────────────────────────────────────── -->
 {% if climate and climate.years %}
-<div class="card chart-card climate">
-    <h3 class="card-title">📊 {{ t('Climate') }}</h3>
-    <canvas id="chart-climate"></canvas>
-    <p class="chart-fallback"></p>
-</div>
-
 {% set default_year = (now.year|string) if (now.year|string) in climate.monthly_by_year else climate.years[-1]|string %}
 {% set yearly_by_year = {} %}
 {% for entry in climate.yearly %}{% set _ = yearly_by_year.update({entry.year: entry}) %}{% endfor %}
 
-<div class="card stats-card">
-    <h4 class="subcard-title">{{ t('Monthly Details') }}</h4>
-    <div class="year-selector" id="climate-year-selector" data-default="{{ default_year }}" role="group" aria-label="{{ t('Year') }}">
-        {% for year in climate.years %}
-        <button type="button" class="period-btn climate-yr-btn" data-year="{{ year }}" aria-pressed="false">{{ year }}</button>
-        {% endfor %}
-    </div>
+<div class="card chart-card climate">
+    <h3 class="card-title">📊 {{ t('Climate') }}</h3>
+    <canvas id="chart-climate"></canvas>
+    <p class="chart-fallback"></p>
 
-    {#- Every year is rendered once; the switcher only toggles visibility, so
-        there is no second implementation of this table in JavaScript. -#}
-    {% for year in climate.years %}
-    <div class="year-panel" data-year="{{ year }}" hidden>
-        {% set summary = yearly_by_year.get(year) %}
-        {% if summary and summary.temp_avg is not none %}
-        <div class="stat-row stat-summary">
-            <span class="stat-label">{{ t('{year} average', year=year) }}</span>
-            <span class="stat-spacer"></span>
-            <span class="stat-val">{{ num(summary.temp_avg, 1) }}°C</span>
-            <span class="stat-range">{{ t('min {min} max {max}', min=num(summary.temp_min, 1), max=num(summary.temp_max, 1)) }}</span>
+    {#- The monthly numbers the chart plots, one year per page. Every year is
+        rendered here once and the pager only scrolls between them, so there
+        is still no second implementation of this table in JavaScript. -#}
+    <div class="climate-years">
+        <div class="pager-nav">
+            <button type="button" id="climate-prev" aria-label="{{ t('Previous year') }}" disabled>&#8249;</button>
+            <span class="pager-label" id="climate-label" aria-live="polite">&nbsp;</span>
+            <button type="button" id="climate-next" aria-label="{{ t('Next year') }}" disabled>&#8250;</button>
         </div>
-        {% endif %}
-        <div class="month-columns">
-            {% set year_months = climate.monthly_by_year[year|string] %}
-            {% for column in [year_months[:6], year_months[6:]] %}
-            <div>
-                {% for month in column %}
-                <div class="stat-row">
-                    <span class="stat-label">{{ months[month.month - 1] }}</span>
+        <div class="pager-track climate-track" id="climate-track" tabindex="0" role="group"
+             data-default="{{ default_year }}"
+             aria-label="{{ t('Monthly averages, one year per page') }}">
+            {% for year in climate.years %}
+            <div class="pager-page climate-year" data-year="{{ year }}">
+                {% set summary = yearly_by_year.get(year) %}
+                {% if summary and summary.temp_avg is not none %}
+                <div class="stat-row stat-summary">
+                    <span class="stat-label">{{ t('{year} average', year=year) }}</span>
                     <span class="stat-spacer"></span>
-                    {% if month.temp_avg is not none %}
-                    <span class="stat-val">{{ num(month.temp_avg, 1) }}°C</span>
-                    <span class="stat-range">{{ t('min {min} max {max}', min=num(month.temp_min, 1), max=num(month.temp_max, 1)) }}</span>
-                    {% else %}
-                    <span class="stat-muted">—</span>
-                    {% endif %}
+                    <span class="stat-val">{{ num(summary.temp_avg, 1) }}°C</span>
+                    <span class="stat-range">{{ t('min {min} max {max}', min=num(summary.temp_min, 1), max=num(summary.temp_max, 1)) }}</span>
                 </div>
-                {% endfor %}
+                {% endif %}
+                <div class="month-columns">
+                    {% set year_months = climate.monthly_by_year[year|string] %}
+                    {% for column in [year_months[:6], year_months[6:]] %}
+                    <div>
+                        {% for month in column %}
+                        <div class="stat-row">
+                            <span class="stat-label">{{ months[month.month - 1] }}</span>
+                            <span class="stat-spacer"></span>
+                            {% if month.temp_avg is not none %}
+                            <span class="stat-val">{{ num(month.temp_avg, 1) }}°C</span>
+                            <span class="stat-range">{{ t('min {min} max {max}', min=num(month.temp_min, 1), max=num(month.temp_max, 1)) }}</span>
+                            {% else %}
+                            <span class="stat-muted">—</span>
+                            {% endif %}
+                        </div>
+                        {% endfor %}
+                    </div>
+                    {% endfor %}
+                </div>
             </div>
             {% endfor %}
         </div>
     </div>
-    {% endfor %}
 </div>
 
 <script id="climate-data" type="application/json">{{ climate.monthly_all | tojson }}</script>
@@ -461,12 +464,12 @@
 <!-- ── Calendar ───────────────────────────────────────────────────────── -->
 <div class="card heatmap-card">
     <h3 class="card-title">📆 {{ t('Temperature Calendar') }}</h3>
-    <div class="heatmap-nav">
+    <div class="pager-nav heatmap-nav">
         <button type="button" id="heatmap-prev" aria-label="{{ t('Previous month') }}" disabled>&#8249;</button>
-        <span class="heatmap-month-label" id="heatmap-label" aria-live="polite">&nbsp;</span>
+        <span class="pager-label heatmap-month-label" id="heatmap-label" aria-live="polite">&nbsp;</span>
         <button type="button" id="heatmap-next" aria-label="{{ t('Next month') }}" disabled>&#8250;</button>
     </div>
-    <div class="heatmap-track" id="heatmap-track" tabindex="0" role="group"
+    <div class="pager-track heatmap-track" id="heatmap-track" tabindex="0" role="group"
          aria-label="{{ t('Temperature calendar, one month per page') }}"></div>
     <div class="heatmap-legend">
         <span>{{ t('Cold') }}</span>
