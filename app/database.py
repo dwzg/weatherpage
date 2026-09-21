@@ -245,14 +245,17 @@ _ROLLUP_INSERT = (
     f"VALUES ({', '.join('?' * len(_ROLLUP_COLUMNS))})"
 )
 
-#: The day a timestamp belongs to, and the bounds of that day. The format is
-#: fixed-width, so a day is a prefix and its bounds are string literals — no
-#: date arithmetic and, unlike substr(), usable by the timestamp index.
 def _day_of(timestamp: str) -> str:
+    """The day a timestamp falls on. The format is fixed-width, so a prefix."""
     return timestamp[:10]
 
 
 def _day_bounds(first_day: str, last_day: str) -> tuple[str, str]:
+    """Timestamps bounding a span of days, inclusive at both ends.
+
+    String literals rather than date arithmetic, and — unlike a ``substr()``
+    of the timestamp — bounds the timestamp index can be used for.
+    """
     return f"{first_day} 00:00:00", f"{last_day} 23:59:59"
 
 
@@ -267,9 +270,12 @@ class _DaySummary:
     highest: dict[str, tuple[float, str]] = field(default_factory=dict)
 
     def absorb(self, row: Any) -> None:
-        """Fold in one reading. Rows arrive oldest first, and the comparisons
-        are strict, so an extreme that recurs keeps the time it was first
-        reached — the same tie-break the readings table answered with."""
+        """Fold in one reading.
+
+        Rows arrive oldest first and the comparisons are strict, so an extreme
+        that recurs keeps the time it was first reached — the same tie-break
+        the readings table answered records with.
+        """
         self.readings += 1
         for metric in METRICS:
             value = row[metric]
@@ -360,11 +366,23 @@ def _rollup_scope(period: str, reference: datetime | None = None) -> tuple[str, 
     return None
 
 
-async def _table_exists(db: aiosqlite.Connection, name: str) -> bool:
-    cursor = await db.execute(
-        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (name,)
+async def _is_empty(db: aiosqlite.Connection, table: str) -> bool:
+    """Whether ``table`` holds no rows. The name is a literal from this module."""
+    cursor = await db.execute(f"SELECT 1 FROM {table} LIMIT 1")
+    return await cursor.fetchone() is None
+
+
+async def _rollup_needs_building(db: aiosqlite.Connection) -> bool:
+    """Whether the rollup has to be built from scratch.
+
+    True for a database from before the rollup existed — and also for one
+    whose build was interrupted. ``executescript`` commits, so the empty
+    table outlives the transaction that was meant to fill it, and asking
+    whether the table exists would call that done.
+    """
+    return await _is_empty(db, "daily_rollup") and not await _is_empty(
+        db, "weather_readings"
     )
-    return await cursor.fetchone() is not None
 
 
 async def _has_column(db: aiosqlite.Connection, table: str, column: str) -> bool:
@@ -422,10 +440,9 @@ async def _migrate(db: aiosqlite.Connection) -> None:
     hour into one row. ``CREATE INDEX IF NOT EXISTS`` would silently accept
     that index, so it is dropped by definition rather than by name.
 
-    A database from before the rollup existed has its summaries built here,
+    A database whose rollup is missing or unbuilt has it summarised here,
     once, over whatever archive it already holds.
     """
-    rollup_existed = await _table_exists(db, "daily_rollup")
     await db.executescript(_SCHEMA)
     await db.executescript(_ROLLUP_SCHEMA)
     await _add_utc_offset(db)
@@ -445,7 +462,8 @@ async def _migrate(db: aiosqlite.Connection) -> None:
         await db.execute(_UNIQUE_INDEX)
 
     # Last, so it summarises the readings that survived the steps above.
-    if not rollup_existed and (days := await _refresh_rollup(db)):
+    if await _rollup_needs_building(db):
+        days = await _refresh_rollup(db)
         log.warning("migration: summarised %d day(s) into the daily rollup", days)
     await db.commit()
 

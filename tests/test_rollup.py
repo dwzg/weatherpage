@@ -241,3 +241,20 @@ class TestBuiltOnMigration:
             assert (await database.get_stats("all"))["count"] == 600
         finally:
             await database.disconnect()
+
+    async def test_an_interrupted_build_is_finished_on_the_next_start(self, db):
+        """The empty table outlives the transaction meant to fill it.
+
+        ``executescript`` commits, so a crash between creating daily_rollup
+        and populating it leaves a table that exists and says nothing. Asking
+        only whether it exists would call that done, and the dashboard would
+        report no records at all for as long as the container lived.
+        """
+        await db.insert_reading(20.0, 50.0, 1013.0, f"{DAY} 12:00:00")
+        async with db.acquire() as conn:
+            await conn.execute("DELETE FROM daily_rollup")
+            await conn.commit()
+            await db._migrate(conn)
+
+        await assert_consistent(db)
+        assert (await db.get_stats("all"))["count"] == 1
