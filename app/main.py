@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -14,7 +15,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import __version__, database, i18n, services, weather
+from . import __version__, backup, database, i18n, services, weather
 from .api import router as api_router
 from .config import STALE_AFTER_MINUTES, get_settings
 
@@ -107,9 +108,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
              __version__, settings.data_dir, settings.timezone.key,
              "on" if settings.requires_api_key else "off")
     await database.connect()
+    # Started after the pool, since it borrows a connection from it, and
+    # cancelled before the pool closes.
+    snapshots = asyncio.create_task(backup.scheduler())
     try:
         yield
     finally:
+        snapshots.cancel()
+        with suppress(asyncio.CancelledError):
+            await snapshots
         await database.disconnect()
         log.info("shut down cleanly")
 

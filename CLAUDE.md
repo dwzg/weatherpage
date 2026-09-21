@@ -34,11 +34,12 @@ Dynamic weather dashboard ("Balcony Weather Station") served by a FastAPI app in
 | `ml/train.py` | The retraining job. Runs in CI only; the one thing in this project that fetches anything. |
 | `app/database.py` | All SQLite access: connection pool, migrations, queries, the daily rollup. |
 | `app/cache.py` | Memoisation for the aggregates, dropped on every write. |
+| `app/backup.py` | Daily `VACUUM INTO` snapshots of the archive, and their retention. |
 | `app/models.py` | Pydantic request/response schemas, including the sensor plausibility ranges. |
 | `app/services.py` | Assembles the dashboard payload shared by the API and the page render. |
 | `app/i18n.py` | English and German: `Accept-Language` negotiation, the whole string catalogue, locale-aware number formatting. |
 | `app/api.py` | The `/api/weather` router and the API-key dependency. |
-| `app/main.py` | App factory, lifespan, the `/` and `/healthz` routes, static mount. |
+| `app/main.py` | App factory, lifespan, security headers, compression, the `/` and `/healthz` routes, static mounts. |
 | `app/templates/index.html` | Markup only — no inline CSS or JS. |
 | `app/static/css/dashboard.css` | All styles. |
 | `app/static/js/*.js` | ES modules: `i18n` (the catalogue the render embedded), `format` (shared helpers), `pager` (the scroll-snap pager both the calendar and the climate year use), `charts`, `heatmap`, `climate`, `poll`, `main` (entry point). |
@@ -268,6 +269,18 @@ docker run -p 8080:8080 -v weather_data:/data weatherpage
 ```
 
 The image runs as root because the deployment bind-mounts a host directory to `/data`; the Dockerfile notes what to change to run unprivileged.
+
+## Backups
+
+The readings are the only thing here that cannot be rebuilt: code is in git, the model can be refitted, the image can be rebuilt from a tag, but a reading that was deleted is gone. There are two copies, on purpose, because they fail differently.
+
+- **Daily, in the container** (`app/backup.py`). A `VACUUM INTO` snapshot at 03:30 local into `<DATA_DIR>/backups/weather-YYYY-MM-DD.db`, keeping the last `KEEP_BACKUPS` (7). `VACUUM INTO` rather than a file copy: it is SQLite's supported way to snapshot a live database, it is safe against a concurrent writer, it resolves the WAL, and the copy is defragmented — 500 days came out at 18.8 MB against 23.7 MB, in 82 ms. It refuses to overwrite, so a restart does not rewrite a snapshot it already has, and every failure is logged and swallowed: a broken backup must never be why the dashboard stops serving. The scheduler is an asyncio task in the lifespan, started after the pool (it borrows a connection) and cancelled before it closes.
+
+  This covers a mistaken `DELETE /api/weather/cleanup`, a corrupted page, a bad migration. It does **not** cover losing the volume, because the snapshots are on it.
+
+- **Nightly, off-host** (`.github/workflows/backup.yml`). Pages the whole archive out of `/api/weather/export` and keeps it as a workflow artifact for 90 days. It reads `/export`, never `/history` — the same trap `ml/train.py` fell into, and a "backup" of bucket averages would look fine until someone needed it. `tests/test_backup.py::TestTheOffHostBackupUsesTheRawArchive` fails if a `/history` URL appears there. It follows the `(timestamp, utc_offset)` cursor to the end, and fails loudly on an empty export rather than storing a zero-byte file and reporting success.
+
+To restore: stop the container, put the snapshot in place of `/data/weather.db` (removing any `-wal`/`-shm` beside it), start it again. The migration is idempotent and will rebuild anything missing. From the off-host NDJSON instead, replay it into `POST /api/weather` — the ingest upserts on `(timestamp, utc_offset)`, so a replay over a partially recovered database converges rather than duplicating.
 
 ## Deployment
 

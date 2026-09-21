@@ -1,0 +1,97 @@
+name: Back up the archive off-host
+
+# The app takes its own daily snapshot (app/backup.py), but those live in the
+# same volume as the database they copy — which covers a bad cleanup or a
+# corrupted page, and does nothing at all for losing the volume.
+#
+# This is the other half: it pages the whole archive out of the machine and
+# keeps it here, where a disk failure, a mistaken `docker volume rm` or a
+# host that never comes back cannot reach it. Readings cannot be re-measured,
+# so the one copy the project had was one too few.
+on:
+  schedule:
+    - cron: "41 2 * * *"   # nightly, 02:41 UTC
+  workflow_dispatch:
+
+concurrency:
+  group: backup
+  cancel-in-progress: false
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Page the archive out of the app
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          # /api/weather/export is behind the API key: it is the one endpoint
+          # that returns the readings themselves rather than a chart-sized
+          # summary, and this asks it for all of them.
+          API_KEY: ${{ secrets.API_KEY }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${APP_URL:-}" ]; then
+            echo "APP_URL is not set; nothing to back up." >&2
+            exit 1
+          fi
+
+          # The export pages with a (timestamp, utc_offset) cursor — a
+          # timestamp alone is not unique across the repeated autumn hour.
+          # Follow it to the end rather than assuming one page is the lot.
+          cursor=""
+          page=0
+          : > readings.ndjson
+
+          while : ; do
+            page=$((page + 1))
+            url="$APP_URL/api/weather/export?limit=50000$cursor"
+
+            curl -sS --fail-with-body \
+                 --retry 4 --retry-delay 5 --retry-connrefused \
+                 -H "X-API-Key: $API_KEY" \
+                 "$url" -o page.json
+
+            # One reading per line: appending pages then costs nothing, and a
+            # truncated download is visible as a broken last line rather than
+            # as silently valid JSON.
+            jq -c '.readings[]' page.json >> readings.ndjson
+
+            next_ts=$(jq -r '.next.after // empty' page.json)
+            next_off=$(jq -r '.next.after_offset // empty' page.json)
+            if [ -z "$next_ts" ]; then
+              break
+            fi
+            cursor="&after=$(jq -rn --arg v "$next_ts" '$v|@uri')&after_offset=$next_off"
+
+            if [ "$page" -ge 200 ]; then
+              echo "Stopped after $page pages — the cursor is not advancing." >&2
+              exit 1
+            fi
+          done
+
+          readings=$(wc -l < readings.ndjson)
+          echo "Exported $readings reading(s) over $page page(s)."
+
+          # An empty archive means something is wrong upstream, not that
+          # there is nothing to keep. Fail loudly rather than storing a
+          # zero-byte "backup" and reporting success.
+          if [ "$readings" -eq 0 ]; then
+            echo "The export returned no readings at all." >&2
+            exit 1
+          fi
+
+          gzip -9 readings.ndjson
+          ls -la readings.ndjson.gz
+          echo "STAMP=$(date -u +%Y-%m-%d)" >> "$GITHUB_ENV"
+
+      - name: Keep it
+        uses: actions/upload-artifact@v4
+        with:
+          name: weather-archive-${{ env.STAMP }}
+          path: readings.ndjson.gz
+          # Long enough that a problem noticed months later is still
+          # recoverable; 90 days is the maximum GitHub allows.
+          retention-days: 90
+          compression-level: 0   # already gzipped
