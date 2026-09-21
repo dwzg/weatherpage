@@ -454,3 +454,39 @@ class TestOneExplainerCard:
         css = (PACKAGE / "static" / "css" / "dashboard.css").read_text()
         assert re.search(r"\.prediction-note > summary::before\s*\{[^}]*content", css)
         assert not re.search(r"\.prediction-note summary::before", css)
+
+
+class TestClimateFollowsTheYear:
+    """The chart and the year label show the same year.
+
+    Before, the chart plotted the climatology pooled over every year while a
+    table under it showed one year at a time, so the same month had two
+    different numbers on one card depending on where you looked.
+    """
+
+    def test_the_render_embeds_every_year_not_the_pooled_average(self):
+        markup = TEMPLATE.read_text()
+        assert "climate.monthly_by_year | tojson" in markup
+        assert "monthly_all" not in markup
+
+    def test_the_month_table_is_gone_from_the_page(self):
+        markup = TEMPLATE.read_text()
+        assert "month-columns" not in markup
+        assert "months[month.month - 1]" not in markup
+
+    def test_the_year_page_still_carries_the_yearly_summary(self):
+        markup = TEMPLATE.read_text()
+        assert "{year} average" in markup
+        assert "min {min} max {max}" in markup
+
+    def test_the_chart_redraws_as_the_page_turns(self):
+        source = (JS_DIR / "climate.js").read_text()
+        assert "onChange" in source and "showYear" in source
+        # Swapped in place: destroying and recreating resizes the canvas.
+        assert "chart.data.datasets =" in source
+
+    def test_the_axis_is_shared_across_years(self):
+        """Refitting per year would draw a mild year and a harsh one alike."""
+        source = (JS_DIR / "climate.js").read_text()
+        assert "sharedAxis" in source
+        assert "suggestedMin" in source and "suggestedMax" in source

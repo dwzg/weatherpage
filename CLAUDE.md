@@ -173,7 +173,7 @@ The rules in `app/weather.py` were fitted offline against observed hourly precip
 
 - No build step, no framework, no bundler. The page loads `static/js/main.js` as an ES module; Chart.js 4 and its date-fns adapter come from jsDelivr, so **charts need network access** — without it the page still renders values, records and the calendar, and shows a note where the charts would be.
 - **Asset URLs are root-relative (`/static/...`), deliberately.** `url_for()` builds an absolute URL from the request, which behind the HTTPS reverse proxy comes out as `http://` and is blocked as mixed content, leaving the page with no CSS and no JS.
-- The page is server-rendered, then `poll.js` updates the same elements every 60 s. Anything the server renders *and* the poller rewrites must have one source of truth: the forecast emoji is computed server-side and sent in `/status`, and every year's monthly table is rendered server-side with the pager only scrolling between them.
+- The page is server-rendered, then `poll.js` updates the same elements every 60 s. Anything the server renders *and* the poller rewrites must have one source of truth: the forecast emoji is computed server-side and sent in `/status`, and the climate card's year pages are rendered server-side with the pager only scrolling between them.
 - Charts use a **time scale**; `toTimeData()` inserts a `NaN` point when consecutive points are more than three intervals apart, so outages show as breaks of proportional width. The threshold comes from the response's `interval_seconds`, so a bucketed series doesn't read as one long outage.
 - Axis ticks are labelled by `tickFormatter`, which picks decimals from the tick step — pressure spans ~2 hPa a day and would otherwise repeat the same whole number.
 - Chart **dates** are formatted with `Intl.DateTimeFormat` through `i18n.dateFormat()`, not with the date-fns adapter's patterns: the adapter bundle ships English only. The adapter is still loaded — the time scale needs it to generate ticks — but `ticks.callback` and the tooltip `title` callback override every label it would produce. The clock stays 24-hour in both languages.
@@ -181,6 +181,7 @@ The rules in `app/weather.py` were fitted offline against observed hourly precip
 - **Grid overflow gotcha:** grid items default to `min-width: auto`, so a card whose content has a wide minimum pushes the grid past the viewport. `.card` sets `min-width: 0`. The same failure one level down is why every table in the explainer sits in a `.table-scroll` wrapper: a four-column table narrower than a phone scrolls inside its own box instead of dragging the page sideways.
 - Card spacing: `.stats-card` has no bottom margin because inside `.stats-grid` the grid `gap` does the spacing; `.container > .stats-card` adds its own.
 - **The calendar and the climate year are one pager, not two.** `static/js/pager.js` owns the scroll-snap paging — arrows, swipe, arrow keys, and the height interpolation that keeps a track from being as tall as its tallest page — and the markup carries `.pager-nav` / `.pager-track` / `.pager-page` beside whatever the section calls itself. The height interpolation in particular is fiddly enough that a second copy would drift.
+- **The climate card plots one year, and the pager turns it.** The chart used to show `monthly_all` — the climatology, pooled over every year — with a per-year table underneath, so hovering a point and reading the row below gave two different numbers for the same month. Now the render embeds `monthly_by_year` in `#climate-data` and `climate.js` swaps the datasets in place as the page turns, so the chart and the label always agree. Each page carries only the yearly average and min/max, which is the one thing hovering a month cannot answer. Two consequences worth keeping: the y-axis is pinned across all years from the whole archive (`sharedAxis()`), or Chart.js would refit it per year and turning the page would compare nothing; and the months are now only readable by hover or tap, which is the trade that was made when the table went.
 - **The calendar's hover grow is bounded by the gutter it grows into.** `scale(1.04)` on a cell that is at most ~117px wide is 2.3px a side against a 3px half-gap, and `.heatmap-grid` carries 4px of padding because the track clips on both axes (`overflow-y: hidden`, and `overflow-x` cannot scroll left of zero). It was `scale(1.08)`, which put a hovered day on top of both its neighbours and past the card's edge. If you change either number, measure the result rather than eyeballing it.
 
 ## Languages
@@ -222,14 +223,14 @@ DATA_DIR=/tmp/weather_data uvicorn app.main:app --reload --port 8080
 
 Templates and static files are resolved from the package directory, so the working directory no longer matters.
 
-An empty database renders the "waiting for first reading" placeholder, so seed some rows before working on the UI. Several sections only appear with enough history: the climate chart and Monthly Details need complete days, and the calendar needs daily summaries.
+An empty database renders the "waiting for first reading" placeholder, so seed some rows before working on the UI. Several sections only appear with enough history: the climate card needs complete days, and the calendar needs daily summaries.
 
 ## Testing
 
 `pytest` and `ruff` run on every pull request (`.github/workflows/ci.yml`), alongside a Docker build and a container smoke test.
 
 ```bash
-pytest -q          # 340 tests
+pytest -q          # 345 tests
 ruff check .
 ```
 

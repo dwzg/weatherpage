@@ -368,8 +368,8 @@ GERMAN: dict[str, str] = {
     # ── Calendar ───────────────────────────────────────────────────────────
     "Previous year": "Vorheriges Jahr",
     "Next year": "Nächstes Jahr",
-    "Monthly averages, one year per page":
-        "Monatsmittel, ein Jahr pro Seite",
+    "Yearly averages, one year per page":
+        "Jahresmittel, ein Jahr pro Seite",
     "Temperature Calendar": "Temperaturkalender",
     "Previous month": "Vorheriger Monat",
     "Next month": "Nächster Monat",

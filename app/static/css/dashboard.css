@@ -468,14 +468,11 @@ header .subtitle { color: var(--text-secondary); font-size: 0.9rem; margin-top: 
     letter-spacing: 0.05em;
 }
 
-/* Jan–Jun and Jul–Dec side by side. */
-.month-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 0 24px; }
-
-/* The monthly table used to be a card of its own with a row of year buttons.
-   It is now a page of the climate card, so the chart and the numbers it plots
-   are one thing, and the years are turned like the calendar's months. */
-.climate-years { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--border); }
+/* The months used to be a table under the chart, in a card of its own with a
+   row of year buttons. They are read off the chart now; each page of the
+   climate card carries only what a month cannot answer — the whole year. */
 .climate-year { padding: 0 2px; }
+.climate-year .stat-summary { margin-bottom: 0; border-bottom: none; padding-bottom: 0; }
 
 /* ── Calendar heatmap ─────────────────────────────────────────────────── */
 
@@ -634,7 +631,6 @@ footer { text-align: center; padding: 16px; color: var(--text-secondary); font-s
 @media (max-width: 480px) {
     .heatmap-cell .cell-temp { display: none; }
     .heatmap-cell .cell-day { font-size: 0.72rem; opacity: 1; }
-    .month-columns { grid-template-columns: 1fr; }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -407,58 +407,46 @@
 
 <div class="card chart-card climate">
     <h3 class="card-title">📊 {{ t('Climate') }}</h3>
+
+    {#- The year is turned here and the chart below follows it, so the nav
+        reads as the chart's own title rather than a control for something
+        further down. -#}
+    <div class="pager-nav">
+        <button type="button" id="climate-prev" aria-label="{{ t('Previous year') }}" disabled>&#8249;</button>
+        <span class="pager-label" id="climate-label" aria-live="polite">&nbsp;</span>
+        <button type="button" id="climate-next" aria-label="{{ t('Next year') }}" disabled>&#8250;</button>
+    </div>
+
     <canvas id="chart-climate"></canvas>
     <p class="chart-fallback"></p>
 
-    {#- The monthly numbers the chart plots, one year per page. Every year is
-        rendered here once and the pager only scrolls between them, so there
-        is still no second implementation of this table in JavaScript. -#}
-    <div class="climate-years">
-        <div class="pager-nav">
-            <button type="button" id="climate-prev" aria-label="{{ t('Previous year') }}" disabled>&#8249;</button>
-            <span class="pager-label" id="climate-label" aria-live="polite">&nbsp;</span>
-            <button type="button" id="climate-next" aria-label="{{ t('Next year') }}" disabled>&#8250;</button>
-        </div>
-        <div class="pager-track climate-track" id="climate-track" tabindex="0" role="group"
-             data-default="{{ default_year }}"
-             aria-label="{{ t('Monthly averages, one year per page') }}">
-            {% for year in climate.years %}
-            <div class="pager-page climate-year" data-year="{{ year }}">
-                {% set summary = yearly_by_year.get(year) %}
-                {% if summary and summary.temp_avg is not none %}
-                <div class="stat-row stat-summary">
-                    <span class="stat-label">{{ t('{year} average', year=year) }}</span>
-                    <span class="stat-spacer"></span>
-                    <span class="stat-val">{{ num(summary.temp_avg, 1) }}°C</span>
-                    <span class="stat-range">{{ t('min {min} max {max}', min=num(summary.temp_min, 1), max=num(summary.temp_max, 1)) }}</span>
-                </div>
-                {% endif %}
-                <div class="month-columns">
-                    {% set year_months = climate.monthly_by_year[year|string] %}
-                    {% for column in [year_months[:6], year_months[6:]] %}
-                    <div>
-                        {% for month in column %}
-                        <div class="stat-row">
-                            <span class="stat-label">{{ months[month.month - 1] }}</span>
-                            <span class="stat-spacer"></span>
-                            {% if month.temp_avg is not none %}
-                            <span class="stat-val">{{ num(month.temp_avg, 1) }}°C</span>
-                            <span class="stat-range">{{ t('min {min} max {max}', min=num(month.temp_min, 1), max=num(month.temp_max, 1)) }}</span>
-                            {% else %}
-                            <span class="stat-muted">—</span>
-                            {% endif %}
-                        </div>
-                        {% endfor %}
-                    </div>
-                    {% endfor %}
-                </div>
+    {#- One page per year, holding that year's summary. The months themselves
+        are read off the chart above; this is the part hovering a point cannot
+        tell you, because the chart plots months and this is the whole year. -#}
+    <div class="pager-track climate-track" id="climate-track" tabindex="0" role="group"
+         data-default="{{ default_year }}"
+         aria-label="{{ t('Yearly averages, one year per page') }}">
+        {% for year in climate.years %}
+        <div class="pager-page climate-year" data-year="{{ year }}">
+            {% set summary = yearly_by_year.get(year) %}
+            {% if summary and summary.temp_avg is not none %}
+            <div class="stat-row stat-summary">
+                <span class="stat-label">{{ t('{year} average', year=year) }}</span>
+                <span class="stat-spacer"></span>
+                <span class="stat-val">{{ num(summary.temp_avg, 1) }}°C</span>
+                <span class="stat-range">{{ t('min {min} max {max}', min=num(summary.temp_min, 1), max=num(summary.temp_max, 1)) }}</span>
             </div>
-            {% endfor %}
+            {% else %}
+            <div class="stat-row"><span class="stat-muted">—</span></div>
+            {% endif %}
         </div>
+        {% endfor %}
     </div>
 </div>
 
-<script id="climate-data" type="application/json">{{ climate.monthly_all | tojson }}</script>
+{#- Every year's twelve months, for the chart to switch between without
+    going back to the server. -#}
+<script id="climate-data" type="application/json">{{ climate.monthly_by_year | tojson }}</script>
 {% endif %}
 
 <!-- ── Calendar ───────────────────────────────────────────────────────── -->
