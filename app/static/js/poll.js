@@ -142,10 +142,14 @@ function updateNowcast(nowcast) {
         row.appendChild(el);
     }
     el.textContent = '';
-    el.append(`🤖 ${t('Rain nearby')} ${t(nowcast.label)} · `);
+    el.append(`🤖 ${t('Rain nearby')} ${t(nowcast.label)} `);
+    // Same shape as the server render: the chance is one unwrappable unit.
+    const chance = document.createElement('span');
+    chance.className = 'nowcast-chance';
     const value = document.createElement('strong');
     value.textContent = `${Math.round(nowcast.probability * 100)}%`;
-    el.append(value, ` ${t('in {hours} h', { hours: nowcast.horizon_hours })}`);
+    chance.append('· ', value, ` ${t('in {hours} h', { hours: nowcast.horizon_hours })}`);
+    el.append(chance);
 }
 
 export function startPolling() {
