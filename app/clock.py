@@ -1,15 +1,17 @@
 """Time handling — the one place that knows the timestamp convention.
 
 Readings are stored as **naive local-time strings** in ``YYYY-MM-DD HH:MM:SS``
-form, exactly as Home Assistant sends them. Nothing is stored in UTC and no
-row carries an offset, so every range query is a lexicographic string
-comparison. That works only because the format is fixed-width and
+form, exactly as Home Assistant sends them. Nothing is stored in UTC, so
+every range query is a lexicographic string comparison. That works only because the format is fixed-width and
 zero-padded: keep any new query on this path rather than formatting
 timestamps ad hoc.
 
-Known limitation: during the autumn DST fallback the local hour repeats, so
-two distinct instants share a timestamp and sort as equal. Fixing that means
-migrating the stored format, which is out of scope here.
+During the autumn DST fallback the local hour repeats, so two distinct
+instants share a timestamp. The stored string cannot tell them apart, so each
+reading also carries the UTC offset its instant was taken at
+(:func:`resolve_offset`). That keeps the string fixed-width and
+lexicographically comparable — the whole reason for the format — while still
+distinguishing the two passes through the repeated hour and ordering them.
 """
 
 from __future__ import annotations
@@ -65,6 +67,68 @@ def normalise_ts(timestamp: str) -> str:
     """
     parsed = datetime.fromisoformat(timestamp.strip())
     return fmt_ts(parsed)
+
+
+def offset_minutes(dt: datetime) -> int:
+    """An aware datetime's offset from UTC, in minutes east."""
+    utcoffset = dt.utcoffset()
+    return 0 if utcoffset is None else int(utcoffset.total_seconds() // 60)
+
+
+def resolve_offset(timestamp: str, arrival: datetime | None = None) -> int:
+    """Minutes east of UTC for the instant ``timestamp`` refers to.
+
+    The stored string is a local wall clock, which is ambiguous for one hour
+    each autumn: 02:30 happens twice, once at +02:00 and again at +01:00.
+    Everywhere else the two folds agree and there is nothing to decide.
+
+    Three things are consulted, in order:
+
+    1. An explicit offset on the incoming value, when it is one the zone
+       actually uses at that wall time. This is the only real information
+       there is, so it wins — and it is the way a backfill can aim at a
+       particular pass through the repeated hour.
+    2. ``arrival``, the instant the reading reached us, which live ingestion
+       passes and nothing else can know. A reading arrives minutes after it
+       was taken, so once the second pass has begun a bare 02:30 means the
+       second 02:30 — the first one is already stored.
+    3. Otherwise the first pass, matching Python's own ``fold=0`` default.
+
+    Leaving ``arrival`` out therefore makes this a pure function of the
+    timestamp, which is what the migration reading old rows needs. It is also
+    why :mod:`backfill` cannot restore the first pass of a repeated hour after
+    the fact: walking wall-clock time only ever visits 02:30 once, and the
+    replay has no arrival time to go on. Putting the offset in the timestamp
+    is the way around that.
+
+    Raises ``ValueError`` if the value is not a timestamp at all.
+    """
+    parsed = datetime.fromisoformat(timestamp.strip())
+    tz = get_settings().timezone
+    naive = parsed.replace(tzinfo=None)
+
+    # PEP 495: for a repeated hour fold=0 is the earlier instant and so the
+    # larger offset; for the spring gap the order is the other way round and
+    # the local time never happened, in which case fold=0 is as good an answer
+    # as any.
+    first = naive.replace(tzinfo=tz, fold=0)
+    second = naive.replace(tzinfo=tz, fold=1)
+    first_offset, second_offset = offset_minutes(first), offset_minutes(second)
+
+    if parsed.tzinfo is not None:
+        given = offset_minutes(parsed)
+        if given in (first_offset, second_offset):
+            return given
+
+    if first_offset <= second_offset:
+        return first_offset
+
+    # Compared as instants: two aware datetimes in the same zone compare
+    # equal when only their fold differs (PEP 495), which is exactly the pair
+    # being told apart here.
+    if arrival is not None and arrival.timestamp() >= second.timestamp():
+        return second_offset
+    return first_offset
 
 
 def start_of_day(dt: datetime) -> datetime:

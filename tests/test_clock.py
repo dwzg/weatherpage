@@ -1,6 +1,6 @@
 """Tests for the timestamp conventions."""
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -67,3 +67,47 @@ class TestMonthsAgo:
         """The old code used months*30 days, which slid off the boundary."""
         ref = datetime(2026, 3, 31, 12, 0)
         assert clock.months_ago(1, ref) == datetime(2026, 2, 1)
+
+
+class TestResolveOffset:
+    """The offset is what tells the two passes of a repeated hour apart."""
+
+    # Europe/Berlin falls back at 03:00 on 2026-10-25: 02:00-02:59 runs twice,
+    # first at +02:00 and again at +01:00.
+    AMBIGUOUS = "2026-10-25 02:30:00"
+    FIRST_PASS = datetime(2026, 10, 25, 0, 30, tzinfo=UTC)
+    SECOND_PASS = datetime(2026, 10, 25, 1, 30, tzinfo=UTC)
+
+    @pytest.mark.parametrize(
+        ("timestamp", "expected"),
+        [
+            ("2026-06-20 12:00:00", 120),  # summer time
+            ("2026-01-20 12:00:00", 60),   # winter time
+            ("2026-03-29 02:30:00", 60),   # never happened; read as pre-transition
+        ],
+    )
+    def test_unambiguous_times_need_no_arrival(self, timestamp, expected):
+        assert clock.resolve_offset(timestamp) == expected
+
+    def test_arrival_picks_the_pass(self):
+        assert clock.resolve_offset(self.AMBIGUOUS, self.FIRST_PASS) == 120
+        assert clock.resolve_offset(self.AMBIGUOUS, self.SECOND_PASS) == 60
+
+    def test_without_an_arrival_it_is_the_first_pass(self):
+        assert clock.resolve_offset(self.AMBIGUOUS) == 120
+
+    @pytest.mark.parametrize("suffix, expected", [("+02:00", 120), ("+01:00", 60)])
+    def test_an_explicit_offset_wins_over_the_arrival(self, suffix, expected):
+        # The arrival says second pass; the timestamp says otherwise and knows.
+        assert clock.resolve_offset(
+            f"2026-10-25T02:30:00{suffix}", self.SECOND_PASS
+        ) == expected
+
+    def test_an_offset_the_zone_never_uses_is_ignored(self):
+        # fmt_ts keeps the wall clock rather than converting, so a Z-suffixed
+        # value is read as local time — and gets local time's offset.
+        assert clock.resolve_offset("2026-06-20T12:00:00Z") == 120
+
+    def test_rejects_something_that_is_not_a_timestamp(self):
+        with pytest.raises(ValueError):
+            clock.resolve_offset("unavailable")

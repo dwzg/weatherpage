@@ -46,6 +46,7 @@ async def post_reading(reading: ReadingIn) -> ReadingAccepted:
         humidity=reading.humidity,
         pressure=reading.pressure,
         timestamp=reading.timestamp,
+        utc_offset=reading.utc_offset,
     )
     return ReadingAccepted(timestamp=reading.timestamp)
 

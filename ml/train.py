@@ -191,14 +191,19 @@ async def replay(readings: list[dict], rain: dict[datetime, float]) -> list[dict
                 batch = []
                 while cursor < len(readings) and readings[cursor]["dt"] <= moment:
                     row = readings[cursor]
+                    # The history endpoint reports the wall clock only, so the
+                    # offset is resolved from it — the same first-pass reading
+                    # of a repeated autumn hour the migration takes.
                     batch.append((row["temperature"], row["humidity"], row["pressure"],
-                                  row["timestamp"]))
+                                  row["timestamp"],
+                                  clock.resolve_offset(row["timestamp"])))
                     cursor += 1
                 if batch:
                     async with database.acquire() as db:
                         await db.executemany(
                             "INSERT OR REPLACE INTO weather_readings "
-                            "(temperature, humidity, pressure, timestamp) VALUES (?, ?, ?, ?)",
+                            "(temperature, humidity, pressure, timestamp, utc_offset) "
+                            "VALUES (?, ?, ?, ?, ?)",
                             batch,
                         )
                         await db.commit()

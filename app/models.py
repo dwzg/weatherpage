@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from . import clock
 
@@ -38,6 +38,30 @@ class ReadingIn(BaseModel):
     humidity: Annotated[float, Field(ge=HUMIDITY_RANGE[0], le=HUMIDITY_RANGE[1])]
     pressure: Annotated[float, Field(ge=PRESSURE_RANGE[0], le=PRESSURE_RANGE[1])]
     timestamp: str
+    #: Minutes east of UTC for the instant this reading was taken. Normally
+    #: derived below and not sent: it exists because the stored timestamp is a
+    #: local wall clock, which names two instants during the autumn DST
+    #: fallback. A caller that knows which one it means — a backfill replaying
+    #: that hour — can say so, either here or as an offset on ``timestamp``.
+    utc_offset: Annotated[int | None, Field(ge=-1440, le=1440)] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _resolve_offset(cls, data: Any) -> Any:
+        """Read the offset off the raw timestamp, before it is normalised away.
+
+        ``normalise_ts`` keeps the wall clock and drops any offset suffix, so
+        this has to happen on the way in. A timestamp that will not parse is
+        left alone for the field validator to reject with a useful message.
+        """
+        if not isinstance(data, dict) or data.get("utc_offset") is not None:
+            return data
+        try:
+            offset = clock.resolve_offset(str(data.get("timestamp", "")),
+                                          arrival=clock.now())
+        except (TypeError, ValueError):
+            return data
+        return {**data, "utc_offset": offset}
 
     @field_validator("temperature", "humidity", "pressure", mode="before")
     @classmethod
