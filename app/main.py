@@ -32,6 +32,43 @@ STATIC_DIR = PACKAGE_DIR / "static"
 
 templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
 
+#: A year, the longest max-age HTTP defines a meaning for.
+ASSET_MAX_AGE_SECONDS = 31_536_000
+
+
+class VersionedStaticFiles(StaticFiles):
+    """Static files whose URL already names the build they came from.
+
+    Versioning by path was done so that a deploy could not serve a stale
+    module; the other half of that bargain is never asking about a file
+    whose URL says exactly which bytes it is. Without a Cache-Control the
+    browser heuristically caches and then revalidates, so every asset cost
+    a conditional round trip on every single page load — for a file that
+    cannot change, because a changed file has a different path.
+
+    ``immutable`` says so explicitly: don't revalidate, not even on reload.
+    Only the versioned mount gets this. The plain ``/static`` mount serves
+    the same files at a path that does *not* name a build, and must keep
+    revalidating.
+
+    Nor does the promise hold when nothing set GIT_SHA or ASSET_VERSION: the
+    path is then ``/static/2.0.0/…``, which stands still across releases, and
+    a year of immutable would pin a browser to whatever it saw first. That is
+    the original bug, so outside a built image this simply does not claim it.
+    """
+
+    def __init__(self, *args, immutable: bool, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.immutable = immutable
+
+    def file_response(self, *args, **kwargs):
+        response = super().file_response(*args, **kwargs)
+        if self.immutable:
+            response.headers["Cache-Control"] = (
+                f"public, max-age={ASSET_MAX_AGE_SECONDS}, immutable"
+            )
+        return response
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -82,7 +119,10 @@ def create_app() -> FastAPI:
     # is no-store, so it always hands out the current prefix.
     application.mount(
         f"/static/{get_settings().asset_version}",
-        StaticFiles(directory=str(STATIC_DIR)),
+        VersionedStaticFiles(
+            directory=str(STATIC_DIR),
+            immutable=get_settings().asset_version_names_a_build,
+        ),
         name="static-versioned",
     )
     application.mount(

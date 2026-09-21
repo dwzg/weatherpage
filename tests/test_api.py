@@ -17,6 +17,32 @@ def at(minutes_ago: int, **overrides) -> dict:
     return {**READING, "timestamp": moment.strftime("%Y-%m-%dT%H:%M:00"), **overrides}
 
 
+@pytest.fixture
+async def built_client(_isolated_settings, monkeypatch):
+    """A client for an app built the way a deployed image is: with a GIT_SHA.
+
+    Asset caching is the one behaviour that differs between a built image and
+    a checkout, so it cannot be tested through the ordinary fixture.
+    """
+    import httpx
+
+    from app.config import get_settings
+
+    monkeypatch.setenv("GIT_SHA", "0123456789abcdef0123456789abcdef01234567")
+    get_settings.cache_clear()
+
+    from app.main import create_app
+
+    application = create_app()
+    transport = httpx.ASGITransport(app=application)
+    async with (
+        httpx.AsyncClient(transport=transport, base_url="http://test") as c,
+        application.router.lifespan_context(application),
+    ):
+        yield c
+    get_settings.cache_clear()
+
+
 class TestIngestion:
     async def test_accepts_a_reading(self, client):
         response = await client.post("/api/weather", json=READING)
@@ -240,6 +266,49 @@ class TestDashboard:
         version = get_settings().asset_version
         for path in ("css/dashboard.css", "js/main.js", "js/pager.js"):
             assert (await client.get(f"/static/{version}/{path}")).status_code == 200, path
+
+    async def test_versioned_assets_are_cached_forever(self, built_client):
+        """The path names the build, so the bytes behind it cannot change."""
+        from app.config import get_settings
+
+        version = get_settings().asset_version
+        response = await built_client.get(f"/static/{version}/js/main.js")
+        assert response.headers["cache-control"] == (
+            "public, max-age=31536000, immutable"
+        )
+
+    async def test_the_unversioned_mount_still_revalidates(self, built_client):
+        """It serves the same file at a path that does not name a build, so
+        promising the browser it never changes would be a lie."""
+        response = await built_client.get("/static/js/main.js")
+        assert response.status_code == 200
+        assert "immutable" not in response.headers.get("cache-control", "")
+
+    async def test_a_revalidated_asset_keeps_its_caching(self, built_client):
+        """A 304 that dropped Cache-Control would re-arm the round trip it
+        is meant to remove."""
+        from app.config import get_settings
+
+        version = get_settings().asset_version
+        first = await built_client.get(f"/static/{version}/js/main.js")
+        again = await built_client.get(
+            f"/static/{version}/js/main.js",
+            headers={"If-None-Match": first.headers["etag"]},
+        )
+        assert again.status_code == 304
+        assert "immutable" in again.headers.get("cache-control", "")
+
+    async def test_an_unbuilt_checkout_does_not_promise_a_year(self, client):
+        """Without GIT_SHA the version is __version__, which does not move
+        between releases — exactly the state that made browsers serve
+        pre-release assets. Caching it forever would restage that bug."""
+        from app.config import get_settings
+
+        settings = get_settings()
+        assert not settings.asset_version_names_a_build
+        response = await client.get(f"/static/{settings.asset_version}/js/main.js")
+        assert response.status_code == 200
+        assert "immutable" not in response.headers.get("cache-control", "")
 
     async def test_every_module_the_page_loads_is_versioned(self, client):
         """Resolve the import graph the way the browser does.

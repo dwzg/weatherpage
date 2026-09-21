@@ -34,6 +34,14 @@ class Settings:
     #: The commit this image was built from, baked in by the Dockerfile.
     #: "unknown" outside a built image, which is the honest answer locally.
     git_sha: str
+    #: Whether :attr:`asset_version` actually identifies a build. True when
+    #: GIT_SHA or ASSET_VERSION was set; false when it fell back to
+    #: ``__version__``, which sits still across releases — the very thing
+    #: that made browsers serve pre-release assets in the first place.
+    #: Only a version that moves may be cached immutably: promising a year
+    #: for /static/2.0.0/… would pin a development browser to whatever CSS
+    #: it saw first.
+    asset_version_names_a_build: bool
 
     @property
     def db_path(self) -> Path:
@@ -50,14 +58,16 @@ def get_settings() -> Settings:
     """Return the process-wide settings, built on first use."""
     from . import __version__
 
+    explicit_version = os.environ.get("ASSET_VERSION")
+    git_sha = os.environ.get("GIT_SHA")
+
     return Settings(
         data_dir=Path(os.environ.get("DATA_DIR", "/data")),
         timezone=ZoneInfo(os.environ.get("TIMEZONE", "Europe/Berlin")),
         api_key=os.environ.get("API_KEY") or None,
         asset_version=(
-            os.environ.get("ASSET_VERSION")
-            or (git_sha[:12] if (git_sha := os.environ.get("GIT_SHA")) else None)
-            or __version__
+            explicit_version or (git_sha[:12] if git_sha else None) or __version__
         ),
-        git_sha=os.environ.get("GIT_SHA") or "unknown",
+        git_sha=git_sha or "unknown",
+        asset_version_names_a_build=bool(explicit_version or git_sha),
     )
