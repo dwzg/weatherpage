@@ -54,6 +54,23 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
     application.include_router(api_router)
+
+    # Assets are versioned by the path, not by a ?v= query, because the page
+    # loads ES modules. A query string only versions the URL the browser is
+    # given — main.js — while the `./heatmap.js` it imports resolves relative
+    # to that URL and comes out unversioned, so the browser keeps serving
+    # whatever it cached the first time. A page whose markup is new and whose
+    # modules are months old renders wrong rather than stale, which is exactly
+    # what happened. Relative imports inherit the directory, so versioning the
+    # directory versions the whole graph, with no build step.
+    #
+    # The plain mount stays for anything holding an old link; the page itself
+    # is no-store, so it always hands out the current prefix.
+    application.mount(
+        f"/static/{get_settings().asset_version}",
+        StaticFiles(directory=str(STATIC_DIR)),
+        name="static-versioned",
+    )
     application.mount(
         "/static", StaticFiles(directory=str(STATIC_DIR)), name="static"
     )
