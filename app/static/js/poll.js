@@ -1,6 +1,8 @@
 /* Live updates: refresh the current-conditions cards once a minute. */
 
-import { METRICS, fetchJSON, signed, formatNumber, t } from './format.js';
+import {
+    METRICS, fetchJSON, signed, formatNumber, formatDateTime, formatRelative, t,
+} from './format.js';
 import { cachedSeries, refresh24h, renderSparklines } from './charts.js';
 
 const POLL_INTERVAL_MS = 60_000;
@@ -171,7 +173,20 @@ function applyStatus(status) {
         status.stale ? t('⚠️ No new readings — the sensor feed may be down') : '',
         'banner banner-warn');
 
-    setText('label-updated', t('Last updated: {timestamp}', { timestamp: current.timestamp }));
+    updateTimestamp(current.timestamp, status.age_seconds);
+}
+
+/* "Last updated 4 minutes ago", with the exact timestamp kept in the title
+   and in datetime= for anyone who wants it. Same shape the render produced,
+   from the same formatters — see i18n.js. */
+function updateTimestamp(timestamp, ageSeconds) {
+    const el = document.getElementById('label-updated');
+    if (!el) return;
+    const relative = formatRelative(ageSeconds);
+    const exact = formatDateTime(timestamp);
+    el.textContent = t('Last updated {ago}', { ago: relative ?? exact });
+    el.setAttribute('datetime', timestamp.replace(' ', 'T'));
+    el.title = exact;
 }
 
 /* The learned rain chance, beside the rule-based phrase. The element is only

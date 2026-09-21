@@ -1,6 +1,8 @@
 /* Temperature calendar: one month per page in a scroll-snapping track. */
 
-import { DAY_NAMES, MONTH_NAMES, formatDateKey, fetchJSON, t, formatNumber } from './format.js';
+import {
+    DAY_NAMES, MONTH_NAMES, formatDateKey, fetchJSON, t, formatNumber, formatDate,
+} from './format.js';
 import { createPager } from './pager.js';
 
 /* Fixed temperature→colour scale. Fixed rather than relative to the data so
@@ -79,7 +81,7 @@ function renderMonthPanel(year, month, dayMap, todayKey) {
         if (info) {
             cell.style.backgroundColor = tempToColor(info.temp_avg);
             cell.title = [
-                key,
+                formatDate(key),
                 `${t('Min')}: ${formatNumber(info.temp_min, 1)}°C`,
                 `${t('Max')}: ${formatNumber(info.temp_max, 1)}°C`,
                 `${t('Avg')}: ${formatNumber(info.temp_avg, 1)}°C`,
@@ -94,7 +96,7 @@ function renderMonthPanel(year, month, dayMap, todayKey) {
             stats.max = stats.max === null ? info.temp_max : Math.max(stats.max, info.temp_max);
         } else {
             cell.classList.add('heatmap-nodata');
-            cell.title = `${key}\n${t('No data')}`;
+            cell.title = `${formatDate(key)}\n${t('No data')}`;
         }
 
         if (key === todayKey) cell.classList.add('is-today');

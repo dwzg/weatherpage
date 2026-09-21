@@ -6,7 +6,10 @@
 import { t, formatNumber, signed } from './i18n.js';
 
 export { t, formatNumber, signed };
-export { LANG, LOCALE, MONTH_NAMES, MONTH_ABBR, DAY_NAMES, dateFormat } from './i18n.js';
+export {
+    LANG, LOCALE, MONTH_NAMES, MONTH_ABBR, DAY_NAMES, dateFormat,
+    formatDate, formatDateTime, formatRelative,
+} from './i18n.js';
 
 export const COLORS = {
     temp: { line: '#e53e3e', bg: 'rgba(229,62,62,0.08)', band: 'rgba(229,62,62,0.13)' },

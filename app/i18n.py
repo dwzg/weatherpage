@@ -390,7 +390,6 @@ GERMAN: dict[str, str] = {
     "Dew point {value}°C": "Taupunkt {value} °C",
     "vs {hours}h ago: {delta}°C": "vs. vor {hours} h: {delta} °C",
     "vs {hours}h ago: {delta}%": "vs. vor {hours} h: {delta} %",
-    "Last updated: {timestamp}": "Zuletzt aktualisiert: {timestamp}",
 
     # ── Charts ─────────────────────────────────────────────────────────────
     "Chart period": "Diagrammzeitraum",
@@ -460,6 +459,14 @@ GERMAN: dict[str, str] = {
     "No data": "Keine Daten",
     "{count} day with data": "{count} Tag mit Daten",
     "{count} days with data": "{count} Tage mit Daten",
+
+    # ── How long ago the last reading arrived ──────────────────────────────
+    "just now": "gerade eben",
+    "{n} minute ago": "vor {n} Minute",
+    "{n} minutes ago": "vor {n} Minuten",
+    "{n} hour ago": "vor {n} Stunde",
+    "{n} hours ago": "vor {n} Stunden",
+    "Last updated {ago}": "Zuletzt aktualisiert {ago}",
     "No readings this month": "Keine Messwerte in diesem Monat",
     "Not enough data yet": "Noch nicht genug Daten",
 
@@ -563,6 +570,15 @@ def rule_describer(lang: str) -> Callable[..., str]:
     return rule
 
 
+def date_formatter(lang: str) -> Callable[[str], str]:
+    """A ``date(timestamp)`` bound to one language, for the template context."""
+
+    def date(timestamp: str) -> str:
+        return format_date(timestamp, lang)
+
+    return date
+
+
 def number_formatter(lang: str) -> Callable[..., str]:
     """A ``num(value, digits)`` bound to one language, for the template context."""
 
@@ -591,6 +607,88 @@ def format_number(value: float | int | None, digits: int = 0,
     return text.replace(",", "\0").replace(".", decimal).replace("\0", thousands)
 
 
+#: How each language writes a date. ``{d}`` is the day without a leading
+#: zero and ``{dd}`` with one — English writes "1 Sep", German "01.09." —
+#: ``{m}`` the zero-padded month, ``{mon}`` the short month name, ``{y}``
+#: the year.
+DATE_FORMATS = {"en": "{d} {mon} {y}", "de": "{dd}.{m}.{y}"}
+
+#: Date and clock together. The clock stays 24-hour in both languages, which
+#: is what this page has always shown.
+DATETIME_FORMATS = {"en": "{date}, {time}", "de": "{date}, {time}"}
+
+
+def format_date(timestamp: str, lang: str = DEFAULT_LANGUAGE) -> str:
+    """A stored timestamp's date, written the way the language writes it.
+
+    Takes the stored ``YYYY-MM-DD HH:MM:SS`` (or just its date half) and
+    reformats the string — no parsing into a datetime, because these are
+    naive local wall clocks and turning them into instants is exactly the
+    mistake the rest of the codebase avoids.
+
+    Done by hand for the same reason :func:`format_number` is: ``locale`` is
+    process-global and would make the answer depend on what the container
+    happens to have installed.
+    """
+    if not timestamp or len(timestamp) < 10:
+        return timestamp or ""
+    year, month, day = timestamp[:4], timestamp[5:7], timestamp[8:10]
+    months = MONTHS_SHORT.get(lang, MONTHS_SHORT[DEFAULT_LANGUAGE])
+    try:
+        short = months[int(month) - 1]
+    except (ValueError, IndexError):
+        return timestamp
+    template = DATE_FORMATS.get(lang, DATE_FORMATS[DEFAULT_LANGUAGE])
+    return template.format(
+        d=day.lstrip("0") or "0", dd=day, m=month, mon=short, y=year
+    )
+
+
+def format_datetime(timestamp: str, lang: str = DEFAULT_LANGUAGE) -> str:
+    """A stored timestamp as a date and a 24-hour clock."""
+    if len(timestamp) < 16:
+        return format_date(timestamp, lang)
+    template = DATETIME_FORMATS.get(lang, DATETIME_FORMATS[DEFAULT_LANGUAGE])
+    return template.format(date=format_date(timestamp, lang), time=timestamp[11:16])
+
+
+#: Thresholds for :func:`format_relative`, coarsest last. Each is the number
+#: of seconds a unit holds, the singular message id and the plural one.
+_RELATIVE_UNITS = (
+    (60, "{n} minute ago", "{n} minutes ago"),
+    (3600, "{n} hour ago", "{n} hours ago"),
+)
+
+#: Under a minute old is "just now" — a reading that arrived seconds ago is
+#: not usefully described as "0 minutes ago".
+RELATIVE_JUST_NOW_SECONDS = 60
+
+#: Past a day, a relative age stops being informative and the date is what
+#: the reader actually wants.
+RELATIVE_MAX_SECONDS = 86_400
+
+
+def format_relative(seconds: float, lang: str = DEFAULT_LANGUAGE) -> str | None:
+    """How long ago, in words, or ``None`` when a date would serve better.
+
+    ``None`` means "too old to phrase this way" — the caller then shows the
+    timestamp itself. A negative age (a clock a little ahead, or a reading
+    posted with a future timestamp) reads as just now rather than as a
+    nonsense like "-1 minutes ago".
+    """
+    t = translator(lang)
+    if seconds < RELATIVE_JUST_NOW_SECONDS:
+        return t("just now")
+    if seconds >= RELATIVE_MAX_SECONDS:
+        return None
+
+    for size, singular, plural in reversed(_RELATIVE_UNITS):
+        if seconds >= size:
+            count = int(seconds // size)
+            return t(singular if count == 1 else plural, n=count)
+    return t("just now")
+
+
 def page_payload(lang: str) -> dict:
     """What the browser needs to speak the same language as the render.
 
@@ -604,6 +702,13 @@ def page_payload(lang: str) -> dict:
         "decimal": SEPARATORS.get(lang, SEPARATORS[DEFAULT_LANGUAGE])[0],
         "thousands": SEPARATORS.get(lang, SEPARATORS[DEFAULT_LANGUAGE])[1],
         "strings": CATALOGUES.get(lang, {}),
+        # The date templates go over for the same reason the separators do:
+        # the poller rewrites the timestamp the render produced, and a date
+        # that changes shape after sixty seconds reads as a bug.
+        "date_format": DATE_FORMATS.get(lang, DATE_FORMATS[DEFAULT_LANGUAGE]),
+        "datetime_format": DATETIME_FORMATS.get(
+            lang, DATETIME_FORMATS[DEFAULT_LANGUAGE]
+        ),
         "months_long": list(MONTHS_LONG.get(lang, MONTHS_LONG[DEFAULT_LANGUAGE])),
         "months_short": list(MONTHS_SHORT.get(lang, MONTHS_SHORT[DEFAULT_LANGUAGE])),
         "days_short": list(DAYS_SHORT.get(lang, DAYS_SHORT[DEFAULT_LANGUAGE])),

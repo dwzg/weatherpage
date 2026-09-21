@@ -109,8 +109,26 @@ async def build_status() -> dict | None:
         "frost_warning": weather.is_frost_risk(temperature),
         "yesterday": yesterday,
         "stale": is_stale(current["timestamp"]),
+        "age_seconds": age_seconds(current["timestamp"]),
         "comparison_hours": COMPARISON_HOURS,
     }
+
+
+def age_seconds(timestamp: str, reference: datetime | None = None) -> int | None:
+    """How old the newest reading is, in seconds, or ``None`` if unparseable.
+
+    Computed here rather than in the browser because the stored timestamp is
+    a naive local wall clock: a reader in another timezone would have their
+    browser read it as their own local time and make a reading from a minute
+    ago look an hour old. The server is the one that knows which clock the
+    string belongs to.
+    """
+    ref = (reference if reference is not None else clock.now()).replace(tzinfo=None)
+    try:
+        latest = datetime.strptime(timestamp, clock.TS_FORMAT)
+    except ValueError:
+        return None
+    return int((ref - latest).total_seconds())
 
 
 def is_stale(timestamp: str, reference: datetime | None = None) -> bool:

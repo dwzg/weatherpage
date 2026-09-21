@@ -72,6 +72,70 @@ export function formatNumber(value, digits = 0, { sign = false, grouping = false
 /** Format a number with an explicit sign, e.g. "+1,4" / "-0,3". */
 export const signed = (value, digits) => formatNumber(value, digits, { sign: true });
 
+const DATE_FORMAT = DATA.date_format || '{d} {mon} {y}';
+const DATETIME_FORMAT = DATA.datetime_format || '{date}, {time}';
+
+const fill = (template, fields) =>
+    template.replace(/\{(\w+)\}/g, (match, name) =>
+        (name in fields ? String(fields[name]) : match));
+
+/**
+ * A stored "YYYY-MM-DD HH:MM:SS" as a date, written the way this language
+ * writes it. The twin of i18n.format_date.
+ *
+ * Deliberately string arithmetic rather than Intl on a parsed Date: the
+ * stored timestamp is a naive local wall clock, and handing it to Date()
+ * would have the browser read it in *its* timezone. Reformatting the string
+ * cannot be wrong that way. It also keeps the poller's output identical in
+ * shape to what the server rendered, which is the rule the numbers follow.
+ */
+export function formatDate(timestamp) {
+    if (!timestamp || timestamp.length < 10) return timestamp || '';
+    const month = Number(timestamp.slice(5, 7));
+    const mon = MONTH_ABBR[month - 1];
+    if (!mon) return timestamp;
+    return fill(DATE_FORMAT, {
+        d: String(Number(timestamp.slice(8, 10))),   // "1 Sep 2026"
+        dd: timestamp.slice(8, 10),                  // "01.09.2026"
+        m: timestamp.slice(5, 7),
+        mon,
+        y: timestamp.slice(0, 4),
+    });
+}
+
+/** The same, with the 24-hour clock. The twin of i18n.format_datetime. */
+export function formatDateTime(timestamp) {
+    if (!timestamp || timestamp.length < 16) return formatDate(timestamp);
+    return fill(DATETIME_FORMAT, {
+        date: formatDate(timestamp),
+        time: timestamp.slice(11, 16),
+    });
+}
+
+const JUST_NOW_SECONDS = 60;
+const MAX_RELATIVE_SECONDS = 86400;
+
+/**
+ * How long ago, in words, or null when a date would serve better.
+ * The twin of i18n.format_relative — same thresholds, same wording.
+ *
+ * The age comes from the server (status.age_seconds), not from subtracting
+ * the stored timestamp here: it is a local wall clock, and a reader in
+ * another timezone would otherwise see a reading from a minute ago reported
+ * as an hour old.
+ */
+export function formatRelative(seconds) {
+    if (seconds === null || seconds === undefined) return null;
+    if (seconds < JUST_NOW_SECONDS) return t('just now');
+    if (seconds >= MAX_RELATIVE_SECONDS) return null;
+    if (seconds >= 3600) {
+        const hours = Math.floor(seconds / 3600);
+        return t(hours === 1 ? '{n} hour ago' : '{n} hours ago', { n: hours });
+    }
+    const minutes = Math.floor(seconds / 60);
+    return t(minutes === 1 ? '{n} minute ago' : '{n} minutes ago', { n: minutes });
+}
+
 const dateFormatters = new Map();
 
 /** A cached Intl.DateTimeFormat for the page's locale. */

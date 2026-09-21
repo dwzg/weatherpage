@@ -361,7 +361,18 @@
     </div>
 </div>
 
-<p class="updated" id="label-updated">{{ t('Last updated: {timestamp}', timestamp=current.timestamp) }}</p>
+{#- Relative, because "four minutes ago" answers the question a reader
+    actually has; the exact timestamp stays in the title and in datetime=
+    for anyone who wants it. The age is computed on the server: the stored
+    string is a naive local wall clock, so a browser in another timezone
+    would read it as its own and be an hour out. -#}
+<p class="updated">
+    <time id="label-updated" datetime="{{ current.timestamp | replace(' ', 'T') }}"
+          title="{{ full_timestamp }}">
+        {%- if relative_age %}{{ t('Last updated {ago}', ago=relative_age) }}
+        {%- else %}{{ t('Last updated {ago}', ago=full_timestamp) }}{% endif -%}
+    </time>
+</p>
 
 <!-- ── History charts ─────────────────────────────────────────────────── -->
 <div class="card period-selector" role="group" aria-label="{{ t('Chart period') }}">
@@ -391,7 +402,7 @@
     <span class="stat-spacer"></span>
     <span class="stat-val {{ kind }}">{{ num(extreme.value, digits) }}{{ unit }}</span>
     <span class="stat-time">
-        {%- if time_slice == 'time' %}{{ t('at {time}', time=extreme.timestamp[11:16]) }}{% else %}{{ extreme.timestamp[:10] }}{% endif -%}
+        {%- if time_slice == 'time' %}{{ t('at {time}', time=extreme.timestamp[11:16]) }}{% else %}{{ date(extreme.timestamp) }}{% endif -%}
     </span>
 </div>
 {% endmacro %}
@@ -425,7 +436,7 @@
             <span class="stat-label">{{ t(row[0]) }}</span>
             <span class="stat-spacer"></span>
             <span class="stat-val {{ row[5] }}">{{ num(row[1], row[3]) }}{{ row[4] }}</span>
-            <span class="stat-time">{{ row[2] }}</span>
+            <span class="stat-time">{{ date(row[2]) }}</span>
         </div>
         {% endfor %}
         {% endif %}
@@ -512,7 +523,7 @@
 </div>
 {% endif %}
 
-<footer>{{ t('Balcony Weather Station') }} · {{ now.strftime('%Y-%m-%d') }}</footer>
+<footer>{{ t('Balcony Weather Station') }} · {{ date(now.strftime('%Y-%m-%d')) }}</footer>
 
 </div><!-- .container -->
 </body>

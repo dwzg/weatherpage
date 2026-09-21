@@ -113,6 +113,89 @@ class TestTranslator:
         assert i18n.translator("de")("{year} average", year=2026) == "Mittel 2026"
 
 
+class TestDateFormatting:
+    """Dates are reformatted from the stored string, never parsed.
+
+    A stored timestamp is a naive local wall clock. Turning it into a
+    datetime to print it would invite exactly the timezone confusion the
+    rest of the codebase is careful to avoid.
+    """
+
+    @pytest.mark.parametrize("lang,expected", [
+        ("en", "21 Sep 2026"),
+        ("de", "21.09.2026"),
+    ])
+    def test_a_date_is_written_the_way_the_language_writes_it(self, lang, expected):
+        assert i18n.format_date("2026-09-21 21:50:00", lang) == expected
+
+    def test_the_date_half_alone_is_enough(self):
+        assert i18n.format_date("2026-09-21", "de") == "21.09.2026"
+
+    def test_a_leading_zero_is_dropped_in_english_only(self):
+        assert i18n.format_date("2026-09-01", "en") == "1 Sep 2026"
+        assert i18n.format_date("2026-09-01", "de") == "01.09.2026"
+
+    @pytest.mark.parametrize("lang,expected", [
+        ("en", "21 Sep 2026, 21:50"),
+        ("de", "21.09.2026, 21:50"),
+    ])
+    def test_the_clock_stays_24_hour_in_both(self, lang, expected):
+        assert i18n.format_datetime("2026-09-21 21:50:00", lang) == expected
+
+    @pytest.mark.parametrize("value", ["", "not a date", "2026"])
+    def test_something_unparseable_comes_back_untouched(self, value):
+        assert i18n.format_date(value, "de") == value
+
+
+class TestRelativeTime:
+    @pytest.mark.parametrize("seconds,en,de", [
+        (0, "just now", "gerade eben"),
+        (59, "just now", "gerade eben"),
+        (60, "1 minute ago", "vor 1 Minute"),
+        (119, "1 minute ago", "vor 1 Minute"),
+        (120, "2 minutes ago", "vor 2 Minuten"),
+        (3599, "59 minutes ago", "vor 59 Minuten"),
+        (3600, "1 hour ago", "vor 1 Stunde"),
+        (7200, "2 hours ago", "vor 2 Stunden"),
+        (86_399, "23 hours ago", "vor 23 Stunden"),
+    ])
+    def test_it_counts_and_pluralises(self, seconds, en, de):
+        assert i18n.format_relative(seconds, "en") == en
+        assert i18n.format_relative(seconds, "de") == de
+
+    def test_a_day_or_more_declines_to_answer(self):
+        """Past a day the caller shows the date instead — "29 hours ago" is
+        not what anyone wants to read."""
+        assert i18n.format_relative(86_400, "en") is None
+        assert i18n.format_relative(500_000, "en") is None
+
+    def test_a_clock_slightly_ahead_reads_as_now(self):
+        """A reading posted with a future timestamp, or a host clock a second
+        fast, must not produce "-1 minutes ago"."""
+        assert i18n.format_relative(-30, "en") == "just now"
+
+
+class TestTheAgeComesFromTheServer:
+    """The browser must not compute it from the stored timestamp.
+
+    It is a naive local wall clock, so a reader in another timezone would
+    have their browser read it as their own local time — making a reading
+    from a minute ago look an hour old.
+    """
+
+    async def test_status_carries_the_age(self, client):
+        await client.post("/api/weather", json={
+            "temperature": "20", "humidity": "55", "pressure": "1013",
+            "timestamp": clock.fmt_ts(clock.now() - timedelta(minutes=3)),
+        })
+        body = (await client.get("/api/weather/status")).json()
+        assert 170 <= body["age_seconds"] <= 190
+
+    def test_the_poller_reads_it_rather_than_subtracting(self):
+        source = (JS_DIR / "poll.js").read_text()
+        assert "age_seconds" in source
+
+
 class TestCatalogueCoverage:
     """Every string the page asks for must have a German translation."""
 

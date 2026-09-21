@@ -227,6 +227,19 @@ def create_app() -> FastAPI:
                 "calibration": weather.CALIBRATION,
                 "percentile_days": database.PERCENTILE_DAYS,
                 "smoothing_minutes": database.SMOOTHING_WINDOW_MINUTES,
+                "date": i18n.date_formatter(lang),
+                # The "last updated" line, in the two forms the template
+                # needs: the words, and the timestamp behind them.
+                "relative_age": (
+                    i18n.format_relative(context["age_seconds"], lang)
+                    if context.get("age_seconds") is not None
+                    else None
+                ),
+                "full_timestamp": (
+                    i18n.format_datetime(context["current"]["timestamp"], lang)
+                    if context.get("current")
+                    else ""
+                ),
                 "months": i18n.MONTHS_SHORT[lang],
                 "i18n_payload": i18n.page_payload(lang),
                 "asset_version": get_settings().asset_version,
