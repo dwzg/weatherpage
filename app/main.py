@@ -11,7 +11,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -33,6 +33,13 @@ STATIC_DIR = PACKAGE_DIR / "static"
 
 templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
 
+#: The page background in each theme, from dashboard.css. Sent as
+#: theme-color so the browser chrome and an installed window match the page
+#: rather than framing it in grey. Duplicated from the stylesheet because a
+#: <meta> cannot read a CSS variable; the tests assert the two agree.
+LIGHT_BACKGROUND = "#f0f4f8"
+DARK_BACKGROUND = "#1a202c"
+
 #: A year, the longest max-age HTTP defines a meaning for.
 ASSET_MAX_AGE_SECONDS = 31_536_000
 
@@ -49,6 +56,12 @@ ASSET_MAX_AGE_SECONDS = 31_536_000
 #: nothing, frames nothing and is not meant to be framed.
 CONTENT_SECURITY_POLICY = "; ".join((
     "default-src 'self'",
+    # The one relaxation, and a narrow one: the favicon showing the current
+    # temperature is drawn on a canvas and handed over as a data: URL, since
+    # sixty possible degrees would otherwise be sixty files fetched over the
+    # network for something the page already knows. data: is inert for
+    # images — it cannot execute — unlike in script-src, which stays 'self'.
+    "img-src 'self' data:",
     "base-uri 'none'",
     "form-action 'none'",
     "frame-ancestors 'none'",
@@ -180,6 +193,48 @@ def create_app() -> FastAPI:
         "/static", StaticFiles(directory=str(STATIC_DIR)), name="static"
     )
 
+    @application.get("/manifest.webmanifest", include_in_schema=False)
+    async def manifest(request: Request) -> JSONResponse:
+        """Enough for the page to be added to a phone's home screen.
+
+        A balcony weather page is a page you check, not one you search for,
+        so it is worth being one tap away. Served from a route rather than
+        as a static file so the name is in the reader's language, like
+        everything else here.
+        """
+        lang = i18n.negotiate(
+            request.headers.get("accept-language"),
+            request.query_params.get("lang"),
+        )
+        t = i18n.translator(lang)
+        version = get_settings().asset_version
+        response = JSONResponse({
+            "name": t("Balcony Weather Station"),
+            "short_name": t("Balcony Weather"),
+            "description": t(
+                "Live temperature, humidity and pressure from a balcony "
+                "weather station."
+            ),
+            "lang": lang,
+            "start_url": "/",
+            "scope": "/",
+            "display": "standalone",
+            # The light theme's own values, so the window chrome matches the
+            # page instead of framing it in browser grey.
+            "background_color": LIGHT_BACKGROUND,
+            "theme_color": LIGHT_BACKGROUND,
+            "icons": [
+                {"src": f"/static/{version}/icons/icon-192.png",
+                 "sizes": "192x192", "type": "image/png"},
+                {"src": f"/static/{version}/icons/icon-512.png",
+                 "sizes": "512x512", "type": "image/png"},
+                {"src": f"/static/{version}/icons/favicon.svg",
+                 "sizes": "any", "type": "image/svg+xml"},
+            ],
+        })
+        response.headers["Vary"] = "Accept-Language"
+        return response
+
     @application.get("/healthz", include_in_schema=False)
     async def healthz() -> dict:
         """Liveness probe for the container runtime, and which build is serving.
@@ -250,6 +305,8 @@ def create_app() -> FastAPI:
                 "months": i18n.MONTHS_SHORT[lang],
                 "i18n_payload": i18n.page_payload(lang),
                 "asset_version": get_settings().asset_version,
+                "light_background": LIGHT_BACKGROUND,
+                "dark_background": DARK_BACKGROUND,
                 "stale_after_minutes": STALE_AFTER_MINUTES,
             },
         )

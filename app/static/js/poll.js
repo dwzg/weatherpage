@@ -4,6 +4,7 @@ import {
     METRICS, fetchJSON, signed, formatNumber, formatDateTime, formatRelative, t,
 } from './format.js';
 import { cachedSeries, refresh24h, renderSparklines } from './charts.js';
+import { tempToColor } from './heatmap.js';
 
 const POLL_INTERVAL_MS = 60_000;
 
@@ -174,6 +175,61 @@ function applyStatus(status) {
         'banner banner-warn');
 
     updateTimestamp(current.timestamp, status.age_seconds);
+    updateTab(current.temperature);
+}
+
+/* The current temperature in the tab, so a pinned or backgrounded tab
+   answers the question without being opened — which is most of what anyone
+   wants from this page.
+
+   The favicon is drawn rather than fetched: sixty-odd degrees would be sixty
+   files, and the page would then be asking the network for something it
+   already knows. Drawn at 64px because a tab icon is 16 or 32 CSS pixels and
+   every phone and most laptops render it at 2x. */
+const FAVICON_SIZE = 64;
+let faviconCanvas = null;
+
+function paintFavicon(temperature) {
+    const link = document.querySelector('link[rel="icon"]');
+    if (!link || typeof document.createElement !== 'function') return;
+
+    if (!faviconCanvas) {
+        faviconCanvas = document.createElement('canvas');
+        faviconCanvas.width = faviconCanvas.height = FAVICON_SIZE;
+    }
+    const ctx = faviconCanvas.getContext('2d');
+    if (!ctx) return;
+
+    // Same scale the calendar colours days by, so a glance at the tab and a
+    // glance at the calendar mean the same thing.
+    ctx.clearRect(0, 0, FAVICON_SIZE, FAVICON_SIZE);
+    ctx.fillStyle = tempToColor(temperature);
+    ctx.beginPath();
+    if (typeof ctx.roundRect === 'function') {
+        ctx.roundRect(0, 0, FAVICON_SIZE, FAVICON_SIZE, 12);
+    } else {
+        ctx.rect(0, 0, FAVICON_SIZE, FAVICON_SIZE);  // older Safari
+    }
+    ctx.fill();
+
+    const text = `${Math.round(temperature)}°`;
+    ctx.fillStyle = '#ffffff';
+    ctx.font = `bold ${text.length > 3 ? 30 : 38}px system-ui, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, FAVICON_SIZE / 2, FAVICON_SIZE / 2 + 2);
+
+    try {
+        link.href = faviconCanvas.toDataURL('image/png');
+    } catch {
+        /* A tainted or unavailable canvas is not worth a broken page. */
+    }
+}
+
+function updateTab(temperature) {
+    const title = document.title.replace(/^-?\d+°\s·\s/, '');
+    document.title = `${Math.round(temperature)}° · ${title}`;
+    paintFavicon(temperature);
 }
 
 /* "Last updated 4 minutes ago", with the exact timestamp kept in the title

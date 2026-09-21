@@ -10,7 +10,15 @@
         out as http:// and gets blocked as mixed content, leaving the page with
         no stylesheet and no scripts. -#}
     <title>{{ t('Balcony Weather Station') }}</title>
+    {#- Matches the page background in each theme, so the browser chrome and
+        an installed window continue the page rather than framing it in grey. -#}
+    <meta name="theme-color" content="{{ light_background }}" media="(prefers-color-scheme: light)">
+    <meta name="theme-color" content="{{ dark_background }}" media="(prefers-color-scheme: dark)">
     <link rel="icon" type="image/svg+xml" href="/static/{{ asset_version }}/icons/favicon.svg">
+    {#- A page you check rather than search for is worth one tap away. Safari
+        wants a PNG of its own and will not read the manifest's icons. -#}
+    <link rel="apple-touch-icon" href="/static/{{ asset_version }}/icons/apple-touch-icon.png">
+    <link rel="manifest" href="/manifest.webmanifest">
     <link rel="stylesheet" href="/static/{{ asset_version }}/css/dashboard.css">
     {#- The language the server picked, and the strings that go with it. The
         poller rewrites elements the render produced, so both must read the

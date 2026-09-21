@@ -451,6 +451,64 @@ class TestExport:
         assert second["readings"][0]["utc_offset"] == 60
 
 
+class TestInstallable:
+    """Enough for a phone to keep this on a home screen."""
+
+    async def test_the_manifest_describes_the_app(self, client):
+        body = (await client.get("/manifest.webmanifest")).json()
+        assert body["name"] == "Balcony Weather Station"
+        assert body["start_url"] == "/"
+        assert body["display"] == "standalone"
+
+    async def test_the_manifest_speaks_the_readers_language(self, client):
+        body = (await client.get(
+            "/manifest.webmanifest", headers={"Accept-Language": "de-DE,de;q=0.9"}
+        )).json()
+        assert body["lang"] == "de"
+        assert body["name"] == "Balkon-Wetterstation"
+
+    async def test_it_varies_by_language(self, client):
+        response = await client.get("/manifest.webmanifest")
+        assert "Accept-Language" in [
+            key.strip() for key in response.headers["vary"].split(",")
+        ]
+
+    async def test_every_icon_it_names_is_served(self, client):
+        body = (await client.get("/manifest.webmanifest")).json()
+        assert body["icons"], "the manifest needs icons to be installable"
+        for icon in body["icons"]:
+            assert (await client.get(icon["src"])).status_code == 200, icon["src"]
+
+    async def test_the_page_links_the_manifest_and_a_touch_icon(self, client):
+        markup = (await client.get("/")).text
+        assert 'rel="manifest"' in markup
+        assert 'rel="apple-touch-icon"' in markup
+
+    async def test_the_touch_icon_exists(self, client):
+        from app.config import get_settings
+
+        response = await client.get(
+            f"/static/{get_settings().asset_version}/icons/apple-touch-icon.png"
+        )
+        assert response.status_code == 200
+        assert response.content[:8] == b"\x89PNG\r\n\x1a\n"
+
+    async def test_theme_color_matches_the_stylesheet(self, client):
+        """Two copies of a colour, in a template and a stylesheet, is exactly
+        the sort of pair that drifts — a <meta> cannot read a CSS variable,
+        so this checks them against each other instead."""
+        from app.main import DARK_BACKGROUND, LIGHT_BACKGROUND
+
+        css = (Path(__file__).resolve().parent.parent / "app" / "static"
+               / "css" / "dashboard.css").read_text()
+        declared = re.findall(r"--bg:\s*(#[0-9a-fA-F]{6})", css)
+        assert declared[:2] == [LIGHT_BACKGROUND, DARK_BACKGROUND], declared
+
+        markup = (await client.get("/")).text
+        assert f'content="{LIGHT_BACKGROUND}"' in markup
+        assert f'content="{DARK_BACKGROUND}"' in markup
+
+
 class TestSecurityHeaders:
     """Sent on everything, and strict enough to be worth sending."""
 
