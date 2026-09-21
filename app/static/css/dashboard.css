@@ -584,6 +584,30 @@ header .subtitle { color: var(--text-secondary); font-size: 0.9rem; margin-top: 
 
 .heatmap-cell.is-today { box-shadow: inset 0 0 0 2px var(--text); }
 
+/* A day whose numbers can be asked for says so on the way past. */
+.heatmap-cell.is-pickable { cursor: pointer; }
+
+/* Inset, like is-today, so it cannot spill into the gutter the hover grow
+   is already measured against. */
+.heatmap-cell.is-picked { box-shadow: inset 0 0 0 3px var(--text); }
+
+.heatmap-cell:focus-visible {
+    outline: 2px solid var(--text);
+    outline-offset: 2px;
+    z-index: 2;
+}
+
+/* Where a tapped day's numbers land. It holds its height whether or not a
+   day is picked, so choosing one does not shove the month summary and the
+   legend down the page. */
+.heatmap-detail {
+    min-height: 1.25rem;
+    margin-top: 0.6rem;
+    text-align: center;
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+}
+
 .heatmap-month-summary {
     display: flex;
     flex-wrap: wrap;

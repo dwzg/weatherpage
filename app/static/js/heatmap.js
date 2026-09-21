@@ -67,6 +67,14 @@ function renderMonthPanel(year, month, dayMap, todayKey) {
     const daysInMonth = new Date(year, month + 1, 0).getDate();
     for (let i = 0; i < lead; i++) grid.appendChild(makeCell('heatmap-cell heatmap-empty'));
 
+    /* Tapping a day has to lead somewhere. The numbers used to live only in
+       a title attribute, which on a phone — the likeliest way anyone reads a
+       balcony weather page — is unreachable: touch has no hover, so the
+       calendar was 600 coloured squares and no way to ask what any of them
+       meant. This line is where a tap puts them. */
+    const detail = makeCell('heatmap-detail');
+    detail.setAttribute('aria-live', 'polite');
+
     const stats = { count: 0, sum: 0, min: null, max: null };
 
     for (let day = 1; day <= daysInMonth; day++) {
@@ -80,12 +88,21 @@ function renderMonthPanel(year, month, dayMap, todayKey) {
 
         if (info) {
             cell.style.backgroundColor = tempToColor(info.temp_avg);
-            cell.title = [
-                formatDate(key),
+            const parts = [
                 `${t('Min')}: ${formatNumber(info.temp_min, 1)}°C`,
                 `${t('Max')}: ${formatNumber(info.temp_max, 1)}°C`,
                 `${t('Avg')}: ${formatNumber(info.temp_avg, 1)}°C`,
-            ].join('\n');
+            ];
+            cell.title = [formatDate(key), ...parts].join('\n');
+            /* The same sentence a hover gives, for a screen reader reading
+               the grid and for the line below when the day is picked. */
+            cell.setAttribute('aria-label', `${formatDate(key)}, ${parts.join(', ')}`);
+            cell.dataset.detail = `${formatDate(key)} · ${parts.join(' · ')}`;
+            cell.classList.add('is-pickable');
+            const select = () => selectDay(panel, cell);
+            cell.addEventListener('click', select);
+            cell.addEventListener('focus', select);
+
             const tempLabel = makeCell('cell-temp');
             tempLabel.textContent = `${Math.round(info.temp_avg)}°`;
             cell.appendChild(tempLabel);
@@ -132,9 +149,47 @@ function renderMonthPanel(year, month, dayMap, todayKey) {
     } else {
         summary.textContent = t('No readings this month');
     }
+    panel.appendChild(detail);
     panel.appendChild(summary);
 
     return panel;
+}
+
+/** Show one day's numbers under its own month, and mark it as the picked one. */
+function selectDay(panel, cell) {
+    const detail = panel.querySelector('.heatmap-detail');
+    if (!detail) return;
+    for (const other of panel.querySelectorAll('.heatmap-cell.is-picked')) {
+        other.classList.remove('is-picked');
+    }
+    cell.classList.add('is-picked');
+    detail.textContent = cell.dataset.detail || '';
+}
+
+/* Only the month on screen is in the tab order.
+ *
+ * Two years of calendar is some 750 day cells; making all of them tab stops
+ * would bury everything below the card behind 750 presses. Moving the stops
+ * with the pager keeps it to a month, which is the month a reader can
+ * actually see. Arrow keys are left to the pager — they turn the month, as
+ * they always have — so focus is moved off a page that scrolls away rather
+ * than being left on a cell nobody can see.
+ */
+function updateTabStops(index) {
+    const track = document.getElementById('heatmap-track');
+    if (!track) return;
+    const active = track.children[index];
+    for (const page of track.children) {
+        const inView = page === active;
+        for (const cell of page.querySelectorAll('.heatmap-cell.is-pickable')) {
+            cell.tabIndex = inView ? 0 : -1;
+        }
+    }
+    if (active && document.activeElement instanceof HTMLElement
+        && !active.contains(document.activeElement)
+        && track.contains(document.activeElement)) {
+        track.focus();
+    }
 }
 
 /** The month a page shows, in the nav label above the track. */
@@ -142,6 +197,7 @@ function showMonth(index) {
     const month = state.months[index];
     const label = document.getElementById('heatmap-label');
     if (month && label) label.textContent = `${MONTH_NAMES[month.month]} ${month.year}`;
+    updateTabStops(index);
 }
 
 export async function buildHeatmap() {
