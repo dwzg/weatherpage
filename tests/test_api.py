@@ -451,6 +451,41 @@ class TestExport:
         assert second["readings"][0]["utc_offset"] == 60
 
 
+class TestSecurityHeaders:
+    """Sent on everything, and strict enough to be worth sending."""
+
+    @pytest.mark.parametrize("path", [
+        "/",
+        "/api/weather/status",
+        "/healthz",
+    ])
+    async def test_every_response_carries_them(self, client, path):
+        await client.post("/api/weather", json=READING)
+        headers = (await client.get(path)).headers
+        assert headers["x-content-type-options"] == "nosniff"
+        assert headers["referrer-policy"] == "no-referrer"
+        assert "default-src 'self'" in headers["content-security-policy"]
+
+    async def test_static_assets_carry_them_too(self, client):
+        from app.config import get_settings
+
+        headers = (
+            await client.get(f"/static/{get_settings().asset_version}/js/main.js")
+        ).headers
+        assert headers["x-content-type-options"] == "nosniff"
+
+    async def test_the_policy_allows_no_inline_execution(self, client):
+        """The template has no inline CSS or JS, and the charting library is
+        served from here, so nothing needs an escape hatch. If one is added,
+        it should be a deliberate act with this test in the diff."""
+        policy = (await client.get("/")).headers["content-security-policy"]
+        assert "unsafe-inline" not in policy
+        assert "unsafe-eval" not in policy
+        for directive in ("base-uri 'none'", "form-action 'none'",
+                          "frame-ancestors 'none'", "object-src 'none'"):
+            assert directive in policy, directive
+
+
 class TestThePageIsSelfContained:
     """Nothing the browser loads may come from anywhere but this app.
 

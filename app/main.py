@@ -35,6 +35,36 @@ templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
 #: A year, the longest max-age HTTP defines a meaning for.
 ASSET_MAX_AGE_SECONDS = 31_536_000
 
+#: Sent on every response.
+#:
+#: The policy can be this strict because the page genuinely loads nothing
+#: from anywhere else: the stylesheet, the ES modules and the charting
+#: library are all served from here (see static/vendor/README.md). There is
+#: no 'unsafe-inline' because the template has no inline CSS or JS — the two
+#: inline <script> blocks are ``type="application/json"`` data, which the
+#: browser never executes and CSP therefore does not govern.
+#:
+#: ``'none'`` for the rest says what this page is: it has no forms, embeds
+#: nothing, frames nothing and is not meant to be framed.
+CONTENT_SECURITY_POLICY = "; ".join((
+    "default-src 'self'",
+    "base-uri 'none'",
+    "form-action 'none'",
+    "frame-ancestors 'none'",
+    "object-src 'none'",
+))
+
+SECURITY_HEADERS = {
+    "Content-Security-Policy": CONTENT_SECURITY_POLICY,
+    # The API returns JSON and the static mount serves CSS and JS. A browser
+    # that sniffs its way to a different conclusion about any of them is
+    # guessing, and the guess is the attack.
+    "X-Content-Type-Options": "nosniff",
+    # There is nothing to tell anyone. The page links nowhere off-site, so a
+    # referrer could only leak which station someone is reading.
+    "Referrer-Policy": "no-referrer",
+}
+
 
 class VersionedStaticFiles(StaticFiles):
     """Static files whose URL already names the build they came from.
@@ -104,6 +134,20 @@ def create_app() -> FastAPI:
     # not compress this twice — it forwards a response that already carries
     # Content-Encoding.
     application.add_middleware(GZipMiddleware, minimum_size=1000)
+
+    @application.middleware("http")
+    async def security_headers(request: Request, call_next):
+        """Attach :data:`SECURITY_HEADERS` to everything this app serves.
+
+        Applied here rather than in the reverse proxy for the same reason
+        compression is: that configuration lives in another repository, and
+        a header the app depends on should travel with the app.
+        """
+        response = await call_next(request)
+        for header, value in SECURITY_HEADERS.items():
+            response.headers.setdefault(header, value)
+        return response
+
     application.include_router(api_router)
 
     # Assets are versioned by the path, not by a ?v= query, because the page
