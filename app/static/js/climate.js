@@ -100,11 +100,30 @@ function buildChart(months) {
     });
 }
 
+/* What this chart says, for a screen reader, which finds a bare canvas and
+   reads nothing. The year is in it because the pager changes which year is
+   drawn without changing anything else on the page. */
+function label(year, months) {
+    const canvas = document.getElementById('chart-climate');
+    // Nothing was drawn, so there is nothing to describe; main.js hides the
+    // empty canvas and the fallback sentence speaks for it instead.
+    if (!canvas || !chartsAvailable()) return;
+    const values = months.flatMap((m) => [m.temp_min, m.temp_max])
+        .filter((v) => v !== null && v !== undefined);
+    canvas.setAttribute('role', 'img');
+    canvas.setAttribute('aria-label', values.length
+        ? t('Monthly average, minimum and maximum temperature for {year}: {min} to {max} °C',
+            { year, min: formatNumber(Math.min(...values), 1),
+              max: formatNumber(Math.max(...values), 1) })
+        : t('Monthly temperatures for {year}, no readings', { year }));
+}
+
 /** Redraw in place: destroying and recreating would resize the canvas. */
-function showYear(months) {
+function showYear(year, months) {
     if (!chart) return;
     chart.data.datasets = datasets(months);
     chart.update();
+    label(year, months);
 }
 
 export function initClimate() {
@@ -118,19 +137,20 @@ export function initClimate() {
         return;
     }
 
-    const label = document.getElementById('climate-label');
+    const labelEl = document.getElementById('climate-label');
     const years = [...track.children].map((page) => page.dataset.year);
 
     const turn = (index) => {
         const year = years[index];
         if (!year) return;
-        if (label) label.textContent = year;
-        if (byYear[year]) showYear(byYear[year]);
+        if (labelEl) labelEl.textContent = year;
+        if (byYear[year]) showYear(year, byYear[year]);
     };
 
     const opening = years.indexOf(track.dataset.default);
     const start = opening >= 0 ? opening : years.length - 1;
     buildChart(byYear[years[start]] || []);
+    label(years[start], byYear[years[start]] || []);
 
     const pager = createPager({
         track,

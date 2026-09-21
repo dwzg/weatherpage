@@ -15,6 +15,10 @@ function noteMissingCharts() {
     document.querySelectorAll('.chart-fallback').forEach((el) => {
         el.textContent = t('The charting library did not load, so the graphs are missing.');
     });
+    /* An empty canvas nothing ever labelled would be announced as an unnamed
+       image; the sentence above is the honest alternative to it. */
+    document.querySelectorAll('.chart-card canvas, .heatmap-card canvas')
+        .forEach((canvas) => canvas.setAttribute('aria-hidden', 'true'));
 }
 
 async function init() {

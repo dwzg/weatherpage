@@ -196,8 +196,40 @@ export async function loadPeriod(period) {
     destroyCharts();
     for (const metric of METRICS) {
         const canvas = document.getElementById(metric.canvas);
-        if (canvas) charts[metric.canvas] = new Chart(canvas, makeChartConfig(metric, series, period));
+        if (!canvas) continue;
+        charts[metric.canvas] = new Chart(canvas, makeChartConfig(metric, series, period));
+        label(canvas, describeChart(metric, series, period));
     }
+}
+
+/* A canvas is a picture to everything that is not a pair of eyes: a screen
+   reader finds an element with no role and no text and says nothing at all.
+   These charts carry the shape of the data, which a summary cannot replace,
+   but its range and period it can — and the alternative on offer was
+   silence. Written here rather than in the template because only the drawing
+   code knows which period is showing and what it spans. */
+function label(canvas, text) {
+    if (!canvas) return;
+    canvas.setAttribute('role', 'img');
+    canvas.setAttribute('aria-label', text);
+}
+
+/** "Temperature over 7 Days: 3.1 to 21.4 °C", for a screen reader. */
+function describeChart(metric, series, period) {
+    const values = series.readings
+        .map((r) => (r[`${metric.key}_min`] ?? r[metric.key]))
+        .concat(series.readings.map((r) => r[`${metric.key}_max`] ?? r[metric.key]))
+        .filter((v) => v !== null && v !== undefined && !Number.isNaN(v));
+    if (!values.length) return t('{metric} chart, no readings', { metric: metric.label });
+
+    const button = document.querySelector(`.period-btn[data-period="${period}"]`);
+    return t('{metric} over {period}: {min} to {max} {unit}', {
+        metric: metric.label,
+        period: button ? button.textContent.trim() : period,
+        min: formatNumber(Math.min(...values), metric.digits),
+        max: formatNumber(Math.max(...values), metric.digits),
+        unit: metric.unit,
+    });
 }
 
 /** The series already fetched for a period, or undefined.
@@ -220,6 +252,10 @@ export function refresh24h(series) {
         const config = makeChartConfig(metric, series, '24h');
         chart.data.datasets = config.data.datasets;
         chart.update();
+        // The range moves with every new reading, so the description has to
+        // move with it or it starts describing this morning.
+        label(document.getElementById(metric.canvas),
+              describeChart(metric, series, '24h'));
     }
 }
 

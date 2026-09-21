@@ -403,6 +403,18 @@ GERMAN: dict[str, str] = {
     "Average": "Mittel",
     "The charting library did not load, so the graphs are missing.":
         "Die Diagrammbibliothek wurde nicht geladen, daher fehlen die Grafiken.",
+
+    # Read aloud in place of the chart, never shown. A screen reader finds a
+    # bare <canvas> and says nothing at all, so these carry what a summary
+    # can carry: which measurement, over what, and how far it ranged.
+    "{metric} over {period}: {min} to {max} {unit}":
+        "{metric} über {period}: {min} bis {max} {unit}",
+    "{metric} chart, no readings": "{metric}-Diagramm, keine Messwerte",
+    "Monthly average, minimum and maximum temperature for {year}: {min} to {max} °C":
+        "Monatliche Durchschnitts-, Tiefst- und Höchsttemperatur für {year}: "
+        "{min} bis {max} °C",
+    "Monthly temperatures for {year}, no readings":
+        "Monatstemperaturen für {year}, keine Messwerte",
     "Averaged into {interval} intervals · shaded band shows the range within each":
         "Gemittelt über {interval} · das schattierte Band zeigt die Spanne je Intervall",
     "{n}-day": "{n}-Tages-Intervalle",
