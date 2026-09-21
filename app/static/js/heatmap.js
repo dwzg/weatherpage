@@ -1,6 +1,6 @@
 /* Temperature calendar: one month per page in a scroll-snapping track. */
 
-import { DAY_NAMES, MONTH_NAMES, formatDateKey, fetchJSON } from './format.js';
+import { DAY_NAMES, MONTH_NAMES, formatDateKey, fetchJSON, t, formatNumber } from './format.js';
 
 /* Fixed temperature→colour scale. Fixed rather than relative to the data so
    that the same colour always means the same temperature, across months and
@@ -19,12 +19,12 @@ const BANDS = [
 ];
 
 export function tempToColor(temp) {
-    const t = Math.max(SCALE_MIN, Math.min(SCALE_MAX, temp));
+    const clamped = Math.max(SCALE_MIN, Math.min(SCALE_MAX, temp));
     let low = SCALE_MIN;
     for (const band of BANDS) {
-        if (t < band.upTo || band.upTo === SCALE_MAX) {
+        if (clamped < band.upTo || band.upTo === SCALE_MAX) {
             const span = band.upTo - low || 1;
-            const ratio = Math.min((t - low) / span, 1);
+            const ratio = Math.min((clamped - low) / span, 1);
             const hue = band.hue[0] + (band.hue[1] - band.hue[0]) * ratio;
             return `hsl(${Math.round(hue)},${band.sat}%,${band.light}%)`;
         }
@@ -77,7 +77,12 @@ function renderMonthPanel(year, month, dayMap, todayKey) {
 
         if (info) {
             cell.style.backgroundColor = tempToColor(info.temp_avg);
-            cell.title = `${key}\nMin: ${info.temp_min}°C  Max: ${info.temp_max}°C  Avg: ${info.temp_avg}°C`;
+            cell.title = [
+                key,
+                `${t('Min')}: ${formatNumber(info.temp_min, 1)}°C`,
+                `${t('Max')}: ${formatNumber(info.temp_max, 1)}°C`,
+                `${t('Avg')}: ${formatNumber(info.temp_avg, 1)}°C`,
+            ].join('\n');
             const tempLabel = makeCell('cell-temp');
             tempLabel.textContent = `${Math.round(info.temp_avg)}°`;
             cell.appendChild(tempLabel);
@@ -88,7 +93,7 @@ function renderMonthPanel(year, month, dayMap, todayKey) {
             stats.max = stats.max === null ? info.temp_max : Math.max(stats.max, info.temp_max);
         } else {
             cell.classList.add('heatmap-nodata');
-            cell.title = `${key}\nNo data`;
+            cell.title = `${key}\n${t('No data')}`;
         }
 
         if (key === todayKey) cell.classList.add('is-today');
@@ -104,9 +109,9 @@ function renderMonthPanel(year, month, dayMap, todayKey) {
     const summary = makeCell('heatmap-month-summary');
     if (stats.count) {
         const parts = [
-            ['Avg', (stats.sum / stats.count).toFixed(1), 'avg'],
-            ['Low', stats.min.toFixed(1), 'lo'],
-            ['High', stats.max.toFixed(1), 'hi'],
+            [t('Avg'), formatNumber(stats.sum / stats.count, 1), 'avg'],
+            [t('Low'), formatNumber(stats.min, 1), 'lo'],
+            [t('High'), formatNumber(stats.max, 1), 'hi'],
         ];
         for (const [label, value, cls] of parts) {
             const span = document.createElement('span');
@@ -118,10 +123,11 @@ function renderMonthPanel(year, month, dayMap, todayKey) {
             summary.appendChild(span);
         }
         const days = document.createElement('span');
-        days.textContent = `${stats.count} day${stats.count === 1 ? '' : 's'} with data`;
+        days.textContent = t(stats.count === 1 ? '{count} day with data' : '{count} days with data',
+            { count: stats.count });
         summary.appendChild(days);
     } else {
-        summary.textContent = 'No readings this month';
+        summary.textContent = t('No readings this month');
     }
     panel.appendChild(summary);
 
@@ -225,7 +231,7 @@ export async function buildHeatmap() {
     if (!daily || !daily.length) {
         track.innerHTML = '';
         const note = makeCell('heatmap-note');
-        note.textContent = 'Not enough data yet';
+        note.textContent = t('Not enough data yet');
         track.appendChild(note);
         return;
     }

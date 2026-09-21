@@ -13,7 +13,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import __version__, database, services
+from . import __version__, database, i18n, services
 from .api import router as api_router
 from .config import STALE_AFTER_MINUTES, get_settings
 
@@ -30,11 +30,6 @@ TEMPLATE_DIR = PACKAGE_DIR / "templates"
 STATIC_DIR = PACKAGE_DIR / "static"
 
 templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
-
-MONTH_ABBREVIATIONS = (
-    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-)
 
 
 @asynccontextmanager
@@ -81,20 +76,37 @@ def create_app() -> FastAPI:
 
     @application.get("/", response_class=HTMLResponse, include_in_schema=False)
     async def dashboard(request: Request) -> HTMLResponse:
-        """Server-render the dashboard; the page then polls for updates."""
+        """Server-render the dashboard; the page then polls for updates.
+
+        The language comes from the browser's ``Accept-Language``, which is
+        what a German-language OS sets, with ``?lang=en`` / ``?lang=de`` as an
+        explicit override. The same choice is handed to the browser in
+        ``i18n`` so the poller rewrites the elements in the language they
+        were rendered in.
+        """
+        lang = i18n.negotiate(
+            request.headers.get("accept-language"),
+            request.query_params.get("lang"),
+        )
         context = await services.build_page_context()
         response = templates.TemplateResponse(
             request=request,
             name="index.html",
             context={
                 **context,
-                "months": MONTH_ABBREVIATIONS,
+                "lang": lang,
+                "t": i18n.translator(lang),
+                "num": i18n.number_formatter(lang),
+                "months": i18n.MONTHS_SHORT[lang],
+                "i18n_payload": i18n.page_payload(lang),
                 "asset_version": get_settings().asset_version,
                 "stale_after_minutes": STALE_AFTER_MINUTES,
             },
         )
         # The page embeds live readings; never let a proxy hold on to it.
         response.headers["Cache-Control"] = "no-store"
+        # Belt and braces next to no-store: the markup varies by language.
+        response.headers["Vary"] = "Accept-Language"
         return response
 
     return application

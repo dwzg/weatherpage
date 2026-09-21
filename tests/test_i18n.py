@@ -1,0 +1,285 @@
+"""Tests for the English/German page.
+
+Two of these are worth more than the rest: :class:`TestCatalogueCoverage`
+scans the template and the ES modules for the strings they actually ask for
+and fails if one has no German, and :class:`TestGermanPage` renders the whole
+page and fails if English leaks through. Between them, a string added without
+a translation cannot reach the site quietly.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+from datetime import timedelta
+from pathlib import Path
+
+import pytest
+
+from app import clock, i18n, nowcast, weather
+
+PACKAGE = Path(i18n.__file__).parent
+TEMPLATE = PACKAGE / "templates" / "index.html"
+JS_DIR = PACKAGE / "static" / "js"
+
+#: ``t('…')`` / ``t("…")`` with a literal argument. Calls with a variable —
+#: ``t(forecast)``, ``t(row[0])`` — are covered by the tests below that walk
+#: the phrases those variables can hold.
+T_CALL = re.compile(r"""(?<![\w.])t\(\s*(['"])((?:\\.|(?!\1).)*)\1""")
+
+
+def literals(path: Path) -> set[str]:
+    return {m.group(2) for m in T_CALL.finditer(path.read_text())}
+
+
+class TestNegotiation:
+    @pytest.mark.parametrize("header,expected", [
+        (None, "en"),
+        ("", "en"),
+        ("en-US,en;q=0.9", "en"),
+        ("de-DE,de;q=0.9,en;q=0.8", "de"),
+        ("de", "de"),
+        ("de-AT", "de"),
+        ("de-CH,de;q=0.9", "de"),
+        ("fr-FR,fr;q=0.9", "en"),
+        ("*", "en"),
+    ])
+    def test_picks_the_language_the_browser_asked_for(self, header, expected):
+        assert i18n.negotiate(header) == expected
+
+    def test_quality_beats_position(self):
+        """A browser listing French first and German second still gets German."""
+        assert i18n.negotiate("fr;q=1.0,en;q=0.5,de;q=0.9") == "de"
+
+    def test_equal_quality_keeps_the_browser_s_order(self):
+        assert i18n.negotiate("de,en") == "de"
+        assert i18n.negotiate("en,de") == "en"
+
+    def test_an_explicitly_refused_language_is_not_chosen(self):
+        assert i18n.negotiate("de;q=0, en;q=0.5") == "en"
+
+    def test_malformed_quality_does_not_raise(self):
+        assert i18n.negotiate("de;q=banana,en") == "en"
+
+    def test_override_wins(self):
+        assert i18n.negotiate("de-DE,de;q=0.9", "en") == "en"
+        assert i18n.negotiate("en-GB", "de") == "de"
+
+    def test_an_unsupported_override_falls_back_to_the_header(self):
+        assert i18n.negotiate("de-DE", "fr") == "de"
+
+
+class TestNumbers:
+    @pytest.mark.parametrize("lang,expected", [("en", "22.5"), ("de", "22,5")])
+    def test_decimal_separator_follows_the_language(self, lang, expected):
+        assert i18n.format_number(22.5, 1, lang) == expected
+
+    @pytest.mark.parametrize("lang,expected", [("en", "25,783"), ("de", "25.783")])
+    def test_thousands_separator_follows_the_language(self, lang, expected):
+        assert i18n.format_number(25783, 0, lang, grouping=True) == expected
+
+    def test_both_separators_at_once(self):
+        """The naive two-pass swap would turn 25.783,5 into 25,783,5."""
+        assert i18n.format_number(25783.5, 1, "de", grouping=True) == "25.783,5"
+
+    @pytest.mark.parametrize("value,expected", [(1.4, "+1,4"), (-0.3, "-0,3"), (0, "+0,0")])
+    def test_signed_values(self, value, expected):
+        assert i18n.format_number(value, 1, "de", sign=True) == expected
+
+    def test_none_is_empty(self):
+        assert i18n.format_number(None, 1, "de") == ""
+
+    def test_an_unknown_language_formats_like_english(self):
+        assert i18n.format_number(22.5, 1, "fr") == "22.5"
+
+
+class TestTranslator:
+    def test_english_returns_the_source_string(self):
+        t = i18n.translator("en")
+        assert t("Rain likely") == "Rain likely"
+
+    def test_german_translates(self):
+        assert i18n.translator("de")("Rain likely") == "Regen wahrscheinlich"
+
+    def test_an_unknown_string_returns_itself(self):
+        """A string added to the page before the catalogue stays readable."""
+        assert i18n.translator("de")("Brand new label") == "Brand new label"
+
+    def test_placeholders_are_filled(self):
+        t = i18n.translator("de")
+        assert t("in {hours} h", hours=6) == "in 6 Std."
+
+    def test_german_may_reorder_placeholders(self):
+        assert i18n.translator("de")("{year} average", year=2026) == "Mittel 2026"
+
+
+class TestCatalogueCoverage:
+    """Every string the page asks for must have a German translation."""
+
+    def test_the_template_is_fully_translated(self):
+        missing = sorted(literals(TEMPLATE) - set(i18n.GERMAN))
+        assert not missing, f"no German for: {missing}"
+
+    @pytest.mark.parametrize("name", sorted(p.name for p in JS_DIR.glob("*.js")))
+    def test_the_modules_are_fully_translated(self, name):
+        missing = sorted(literals(JS_DIR / name) - set(i18n.GERMAN))
+        assert not missing, f"no German in {name} for: {missing}"
+
+    def test_every_forecast_phrase_is_translated(self):
+        """These reach t() as a variable, so the scan above cannot see them."""
+        phrases = set(re.findall(r'return "([^"]+)"', weather.__file__ and
+                                 Path(weather.__file__).read_text()))
+        phrases.add(weather.NO_DATA)
+        missing = sorted(phrases - set(i18n.GERMAN))
+        assert not missing, f"no German for forecast phrase: {missing}"
+
+    def test_every_nowcast_label_is_translated(self):
+        labels = {nowcast.describe(p / 100, 0.3) for p in range(0, 101, 5)}
+        missing = sorted(labels - set(i18n.GERMAN))
+        assert not missing, f"no German for nowcast label: {missing}"
+
+    def test_the_record_row_labels_are_translated(self):
+        """Passed as macro arguments, so also invisible to the scan."""
+        labels = set(re.findall(r"extreme_row\(\s*\"([^\"]+)\"", TEMPLATE.read_text()))
+        labels |= set(re.findall(r"\(\s*'([A-Z][^']*\(avg\))'", TEMPLATE.read_text()))
+        assert labels, "expected to find the record labels in the template"
+        missing = sorted(labels - set(i18n.GERMAN))
+        assert not missing, f"no German for record label: {missing}"
+
+    def test_the_catalogue_has_no_empty_translations(self):
+        assert not [k for k, v in i18n.GERMAN.items() if not v.strip()]
+
+    def test_placeholders_survive_translation(self):
+        """A dropped {name} would render the sentence with a hole in it."""
+        placeholders = re.compile(r"\{(\w+)\}")
+        for source, translated in i18n.GERMAN.items():
+            assert set(placeholders.findall(source)) == set(placeholders.findall(translated)), source
+
+
+class TestPagePayload:
+    def test_english_ships_an_empty_catalogue(self):
+        """English is the message id, so there is nothing to send."""
+        assert i18n.page_payload("en")["strings"] == {}
+
+    def test_german_ships_the_catalogue(self):
+        payload = i18n.page_payload("de")
+        assert payload["strings"]["Rain likely"] == "Regen wahrscheinlich"
+        assert payload["decimal"] == ","
+        assert payload["thousands"] == "."
+        assert payload["months_long"][0] == "Januar"
+        assert payload["days_short"][0] == "Mo"
+
+    def test_the_payload_is_json_serialisable(self):
+        json.dumps(i18n.page_payload("de"))
+
+
+async def seed(client, hours: int = 3) -> None:
+    now = clock.now().replace(second=0, microsecond=0, tzinfo=None)
+    now -= timedelta(minutes=now.minute % 5)
+    for i in range(hours * 12):
+        moment = now - timedelta(minutes=5 * i)
+        await client.post("/api/weather", json={
+            "temperature": "21.5", "humidity": "62", "pressure": "1013.4",
+            "timestamp": moment.strftime(clock.TS_FORMAT),
+        })
+
+
+GERMAN_HEADERS = {"Accept-Language": "de-DE,de;q=0.9,en;q=0.8"}
+
+CATALOGUE_BLOB = re.compile(
+    r'<script id="i18n-data" type="application/json">.*?</script>', re.S)
+
+
+def visible(text: str) -> str:
+    """The page without the embedded catalogue.
+
+    That blob is keyed by the English source strings, so it contains every
+    English phrase by construction — checking it for English leaks would
+    always fail.
+    """
+    return CATALOGUE_BLOB.sub("", text)
+
+#: Strings that only appear on an untranslated page. If one of these turns up
+#: in the German render, something is going out in the wrong language.
+ENGLISH_GIVEAWAYS = (
+    "Balcony Weather", "Live from the balcony", "Temperature", "Humidity",
+    "Pressure", "Feels like", "Dew point", "Last updated", "24 Hours",
+    "All Time", "Today's Records", "All-Time Records", "Hottest", "Coldest",
+    "Most humid", "Readings", "Temperature Calendar", "Previous month",
+    "Cold", "How these two predictions work", "The outlook", "Why both",
+)
+
+
+class TestGermanPage:
+    async def test_a_german_browser_gets_german(self, client):
+        await seed(client)
+        text = (await client.get("/", headers=GERMAN_HEADERS)).text
+        assert 'lang="de"' in text
+        assert "Balkon-Wetter" in text
+        assert "Luftfeuchtigkeit" in text
+        assert "Temperaturkalender" in text
+
+    async def test_no_english_leaks_into_the_german_page(self, client):
+        await seed(client)
+        text = visible((await client.get("/", headers=GERMAN_HEADERS)).text)
+        leaked = [s for s in ENGLISH_GIVEAWAYS if s in text]
+        assert not leaked, f"untranslated on the German page: {leaked}"
+
+    async def test_numbers_use_a_decimal_comma(self, client):
+        await seed(client)
+        text = visible((await client.get("/", headers=GERMAN_HEADERS)).text)
+        assert "21,5" in text
+        assert "21.5" not in text
+
+    async def test_an_english_browser_still_gets_english(self, client):
+        await seed(client)
+        text = (await client.get("/", headers={"Accept-Language": "en-GB,en;q=0.9"})).text
+        assert 'lang="en"' in text
+        assert "Balcony Weather" in text
+        assert "21.5" in text
+
+    async def test_the_default_is_english(self, client):
+        await seed(client)
+        assert 'lang="en"' in (await client.get("/")).text
+
+    async def test_the_query_override_wins(self, client):
+        await seed(client)
+        text = (await client.get("/?lang=de", headers={"Accept-Language": "en"})).text
+        assert 'lang="de"' in text
+        text = (await client.get("/?lang=en", headers=GERMAN_HEADERS)).text
+        assert 'lang="en"' in text
+
+    async def test_the_page_says_it_varies_by_language(self, client):
+        assert (await client.get("/")).headers["vary"] == "Accept-Language"
+
+    async def test_the_empty_state_is_translated(self, client):
+        text = visible((await client.get("/", headers=GERMAN_HEADERS)).text)
+        assert "Warte auf den ersten Messwert" in text
+        assert "Waiting for first weather reading" not in text
+
+    async def test_the_browser_gets_the_catalogue_the_render_used(self, client):
+        """The poller rewrites what the render produced, so it needs the same
+        strings — otherwise the page turns half-English after sixty seconds."""
+        await seed(client)
+        text = (await client.get("/", headers=GERMAN_HEADERS)).text
+        blob = re.search(
+            r'<script id="i18n-data" type="application/json">(.*?)</script>', text, re.S)
+        assert blob, "the page did not embed its catalogue"
+        payload = json.loads(blob.group(1).replace("&#34;", '"').replace("&amp;", "&"))
+        assert payload["lang"] == "de"
+        assert payload["strings"]["Rain likely"] == "Regen wahrscheinlich"
+
+
+class TestApiStaysEnglish:
+    """The JSON API is an interface, not a page; its phrases are identifiers.
+
+    ``weather.forecast_emoji()`` matches on them, ``ml/train.py`` replays
+    against them and the tests compare them. Translating them at the API would
+    make all three language-dependent, so the browser translates instead.
+    """
+
+    async def test_status_reports_the_canonical_phrase(self, client):
+        await seed(client)
+        body = (await client.get("/api/weather/status", headers=GERMAN_HEADERS)).json()
+        assert body["forecast"] in set(i18n.GERMAN) | {None}
+        assert body["forecast"] not in i18n.GERMAN.values()
