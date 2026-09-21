@@ -58,6 +58,13 @@ POOL_SIZE = 4
 #: bucketed to stay near this, instead of shipping every 5-minute row.
 TARGET_CHART_POINTS = 1500
 
+#: How many raw readings one export page carries, and the ceiling a caller
+#: may ask for. Nothing to do with TARGET_CHART_POINTS above: that is a
+#: drawing budget, this is a transfer size. A year of 5-minute readings is
+#: about 105k rows, so a full export is a handful of requests.
+EXPORT_PAGE_SIZE = 10_000
+EXPORT_MAX_PAGE_SIZE = 50_000
+
 #: The window the pressure trend is measured over, in hours.
 TREND_WINDOW_HOURS = 6
 
@@ -511,6 +518,42 @@ async def insert_reading(
         await db.commit()
     invalidate_cache()
     return cursor.lastrowid
+
+
+async def export_readings(
+    after: tuple[str, int] | None = None,
+    until: str | None = None,
+    limit: int = EXPORT_PAGE_SIZE,
+) -> list[dict]:
+    """Raw readings, oldest first, one page at a time.
+
+    This exists because :func:`get_history_series` must not be used for it.
+    That one downsamples above :data:`TARGET_CHART_POINTS` — correct for a
+    chart, wrong for anything that needs the readings themselves. The
+    retraining job read it for months and got 3-hourly bucket averages, from
+    which none of the features (30-minute medians, 6 and 12 hour deltas) can
+    be built, so it produced zero samples and exited green.
+
+    ``after`` is an exclusive cursor of ``(timestamp, utc_offset)`` rather
+    than a plain timestamp, because a timestamp is not unique: both passes
+    through the repeated autumn hour share one. The predicate mirrors
+    :data:`ORDER_OLDEST_FIRST`, where the larger offset is the earlier
+    instant within that hour.
+    """
+    where, params = ["1 = 1"], []
+    if until is not None:
+        where.append("timestamp <= ?")
+        params.append(clock.normalise_ts(until))
+    if after is not None:
+        timestamp, offset = clock.normalise_ts(after[0]), int(after[1])
+        where.append("(timestamp > ? OR (timestamp = ? AND utc_offset < ?))")
+        params += [timestamp, timestamp, offset]
+
+    return await _fetch_all(
+        f"SELECT timestamp, utc_offset, {', '.join(METRICS)} FROM weather_readings "
+        f"WHERE {' AND '.join(where)} {ORDER_OLDEST_FIRST} LIMIT ?",
+        (*params, limit),
+    )
 
 
 async def remove_readings_in_range(from_ts: str, to_ts: str) -> int:

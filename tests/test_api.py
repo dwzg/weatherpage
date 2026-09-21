@@ -2,6 +2,7 @@
 
 import re
 from datetime import timedelta
+from pathlib import Path
 
 import pytest
 
@@ -254,3 +255,157 @@ class TestDashboard:
 
         # The whole graph, not just the entry point.
         assert len(seen) >= 7, sorted(seen)
+
+
+class TestExport:
+    """The raw archive, for the retraining job.
+
+    The job used to read ``/history``, which downsamples above
+    TARGET_CHART_POINTS. On a 92-day archive that turned ~26,500 readings
+    into 734 three-hourly averages, from which none of the nowcast's
+    features can be built — so every run produced zero samples and exited
+    green. These guard the endpoint that replaced it.
+    """
+
+    async def seed(self, client, count: int, start_minutes: int = 0):
+        for i in range(count):
+            await client.post("/api/weather", json=at(start_minutes + i * 5))
+
+    async def test_requires_the_api_key_when_one_is_set(self, client, monkeypatch):
+        from app.config import get_settings
+
+        monkeypatch.setenv("API_KEY", "shh")
+        get_settings.cache_clear()
+        try:
+            assert (await client.get("/api/weather/export")).status_code == 401
+            response = await client.get(
+                "/api/weather/export", headers={"X-API-Key": "shh"})
+            assert response.status_code == 200
+        finally:
+            get_settings.cache_clear()
+
+    async def test_returns_every_reading_raw(self, client):
+        await self.seed(client, 40)
+        body = (await client.get("/api/weather/export")).json()
+        assert len(body["readings"]) == 40
+        assert body["next"] is None
+
+    async def test_readings_are_not_downsampled(self, client):
+        """The bug this endpoint exists for: /history buckets, /export must not."""
+        await self.seed(client, 60)
+        export = (await client.get("/api/weather/export")).json()["readings"]
+        assert len(export) == 60
+        # Every point is a real stored reading, not an average with a band.
+        for reading in export:
+            assert set(reading) == {"timestamp", "utc_offset",
+                                    "temperature", "humidity", "pressure"}
+            assert "temperature_min" not in reading
+
+    async def test_pages_through_with_the_cursor(self, client):
+        await self.seed(client, 25)
+        seen, cursor, pages = [], {}, 0
+        while True:
+            params = {"limit": 10, **cursor}
+            body = (await client.get("/api/weather/export", params=params)).json()
+            seen += body["readings"]
+            pages += 1
+            if not body["next"]:
+                break
+            cursor = body["next"]
+            assert pages < 10, "cursor did not advance"
+        assert len(seen) == 25
+        assert len({r["timestamp"] for r in seen}) == 25
+        assert [r["timestamp"] for r in seen] == sorted(r["timestamp"] for r in seen)
+
+    async def test_the_cursor_is_exclusive(self, client):
+        await self.seed(client, 5)
+        first = (await client.get("/api/weather/export", params={"limit": 2})).json()
+        second = (await client.get("/api/weather/export",
+                                   params={"limit": 2, **first["next"]})).json()
+        assert not ({r["timestamp"] for r in first["readings"]}
+                    & {r["timestamp"] for r in second["readings"]})
+
+    async def test_an_upper_bound_is_inclusive(self, client):
+        await self.seed(client, 10)
+        everything = (await client.get("/api/weather/export")).json()["readings"]
+        cut = everything[4]["timestamp"]
+        bounded = (await client.get("/api/weather/export", params={"to": cut})).json()
+        assert [r["timestamp"] for r in bounded["readings"]] == \
+            [r["timestamp"] for r in everything[:5]]
+
+    async def test_half_a_cursor_is_a_bad_request(self, client):
+        assert (await client.get(
+            "/api/weather/export", params={"after": "2026-06-20 21:00:00"}
+        )).status_code == 400
+
+    async def test_an_unparseable_cursor_is_a_bad_request(self, client):
+        assert (await client.get(
+            "/api/weather/export", params={"after": "nope", "after_offset": 0}
+        )).status_code == 400
+
+    async def test_the_page_size_is_capped(self, client):
+        from app import database
+
+        over = database.EXPORT_MAX_PAGE_SIZE + 1
+        assert (await client.get(
+            "/api/weather/export", params={"limit": over})).status_code == 422
+
+    async def test_both_passes_of_a_repeated_hour_survive_the_cursor(self, client):
+        """A timestamp is not unique, so a timestamp-only cursor would skip one."""
+        for offset in ("+02:00", "+01:00"):
+            await client.post("/api/weather", json={
+                **READING, "timestamp": f"2026-10-25T02:30:00{offset}"})
+
+        first = (await client.get("/api/weather/export", params={"limit": 1})).json()
+        assert first["readings"][0]["utc_offset"] == 120, "earlier instant first"
+        second = (await client.get("/api/weather/export",
+                                   params={"limit": 1, **first["next"]})).json()
+        assert second["readings"][0]["utc_offset"] == 60
+
+
+class TestTrainerReadsTheRawArchive:
+    """ml/train.py must not go back to the endpoint that downsamples."""
+
+    SOURCE = Path(__file__).resolve().parent.parent / "ml" / "train.py"
+
+    def urls(self) -> set[str]:
+        """String literals the trainer actually uses, docstrings excluded.
+
+        The comments explain at length why /history is the wrong endpoint, so
+        a plain substring search over the file would match the warning rather
+        than a call.
+        """
+        import ast
+
+        tree = ast.parse(self.SOURCE.read_text())
+        docstrings = {
+            id(node.body[0].value)
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.Module, ast.ClassDef,
+                                 ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.body
+            and isinstance(node.body[0], ast.Expr)
+            and isinstance(node.body[0].value, ast.Constant)
+            and isinstance(node.body[0].value.value, str)
+        }
+        return {
+            node.value for node in ast.walk(tree)
+            if isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and id(node) not in docstrings
+        }
+
+    def test_it_fetches_the_export_endpoint(self):
+        assert any("/api/weather/export" in u for u in self.urls())
+
+    def test_it_does_not_fetch_the_history_endpoint(self):
+        """/history buckets above TARGET_CHART_POINTS; the replay needs raw rows."""
+        assert not [u for u in self.urls() if "/api/weather/history" in u]
+
+    def test_it_sends_the_api_key(self):
+        assert "X-API-Key" in self.SOURCE.read_text()
+
+    def test_the_retrain_workflow_passes_the_key(self):
+        workflow = (self.SOURCE.parent.parent
+                    / ".github" / "workflows" / "retrain.yml").read_text()
+        assert "API_KEY: ${{ secrets.API_KEY }}" in workflow
