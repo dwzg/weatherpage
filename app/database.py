@@ -1,9 +1,11 @@
 """All SQLite access.
 
-Schema is a single ``weather_readings`` table; everything else is an
-aggregate query over it. Connections come from a small pool opened at
-startup (see :func:`connect` / :func:`disconnect`) rather than being created
-per call, so a page render does not pay a dozen connection setups.
+Readings live in ``weather_readings``; ``daily_rollup`` holds one summary
+row per day, maintained on every write, and the aggregates that span the
+whole archive are built from those rather than from the readings. Connections
+come from a small pool opened at startup (see :func:`connect` /
+:func:`disconnect`) rather than being created per call, so a page render does
+not pay a dozen connection setups.
 
 Timestamps follow the convention documented in :mod:`app.clock`: naive
 local-time strings compared lexicographically. Build every bound with
