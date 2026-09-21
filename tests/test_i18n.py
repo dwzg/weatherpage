@@ -292,7 +292,13 @@ class TestGermanPage:
         assert 'lang="en"' in text
 
     async def test_the_page_says_it_varies_by_language(self, client):
-        assert (await client.get("/")).headers["vary"] == "Accept-Language"
+        """Membership, not equality: compression correctly adds its own key.
+
+        A cache must vary on Accept-Encoding as well, so GZipMiddleware
+        appends it. What matters here is that Accept-Language is in the list.
+        """
+        vary = (await client.get("/")).headers["vary"]
+        assert "Accept-Language" in [key.strip() for key in vary.split(",")]
 
     async def test_the_empty_state_is_translated(self, client):
         text = visible((await client.get("/", headers=GERMAN_HEADERS)).text)

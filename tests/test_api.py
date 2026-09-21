@@ -175,6 +175,25 @@ class TestDashboard:
     async def test_page_is_not_cached(self, client):
         assert (await client.get("/")).headers["cache-control"] == "no-store"
 
+    async def test_the_page_is_compressed(self, client):
+        """The German page is 52 KB of mostly repeated prose; send it small.
+
+        httpx asks for gzip and decodes it transparently, so this reads the
+        header rather than the body length.
+        """
+        for minutes in range(0, 120, 5):
+            await client.post("/api/weather", json=at(minutes))
+        response = await client.get("/", headers={"Accept-Language": "de"})
+        assert response.headers.get("content-encoding") == "gzip"
+
+    async def test_the_chart_series_is_compressed(self, client):
+        """The largest response the dashboard asks for, and the most
+        compressible: a few thousand rows of near-identical numbers."""
+        for minutes in range(0, 60 * 24, 5):
+            await client.post("/api/weather", json=at(minutes))
+        response = await client.get("/api/weather/history?period=24h")
+        assert response.headers.get("content-encoding") == "gzip"
+
     async def test_renders_current_conditions(self, client):
         for minutes in range(0, 120, 5):
             await client.post("/api/weather", json=at(minutes, temperature="21.5"))

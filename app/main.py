@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -53,6 +54,19 @@ def create_app() -> FastAPI:
         version=__version__,
         lifespan=lifespan,
     )
+    # Everything this app serves is text, and none of it was compressed. The
+    # page is 31 KB in English and 52 KB in German — the extra 20 KB being the
+    # string catalogue, which is shipped whole on purpose (see
+    # i18n.page_payload) and is exactly the kind of repetitive JSON that
+    # compresses to nothing. The 30-day chart series is 336 KB.
+    #
+    # Added here rather than left to the reverse proxy: whether nginx
+    # compresses depends on its gzip_types, which lives in another
+    # repository, and a page that is only small when someone else is
+    # configured correctly is not small. A proxy that also compresses will
+    # not compress this twice — it forwards a response that already carries
+    # Content-Encoding.
+    application.add_middleware(GZipMiddleware, minimum_size=1000)
     application.include_router(api_router)
 
     # Assets are versioned by the path, not by a ?v= query, because the page
