@@ -20,7 +20,7 @@ import itertools
 import logging
 from collections.abc import AsyncIterator, Iterable, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -201,6 +201,170 @@ _UNIQUE_INDEX = (
 )
 
 
+# ── The daily rollup ───────────────────────────────────────────────────────
+#
+# Every aggregate that spans the whole archive used to scan every reading.
+# The cache hid that between writes, but the work grew with the archive and a
+# write every five minutes threw the answers away again. A day of readings is
+# immutable once it is past, so each day is summarised once into
+# ``daily_rollup`` and the whole-archive aggregates read the summaries: a few
+# hundred rows a year instead of a hundred thousand.
+#
+# Only whole-day questions can be answered this way, which is why the short
+# chart periods still read the readings themselves — see _rollup_scope.
+
+#: Per metric, per day. ``sum`` rather than ``avg`` so that rolling days up
+#: into a month stays exact: a mean of daily means is not the mean.
+_ROLLUP_FIELDS = ("sum", "min", "min_at", "max", "max_at")
+
+_ROLLUP_COLUMNS: tuple[str, ...] = (
+    "day",
+    "readings",
+    *(f"{metric}_{field}" for metric in METRICS for field in _ROLLUP_FIELDS),
+)
+
+_ROLLUP_SCHEMA = """
+CREATE TABLE IF NOT EXISTS daily_rollup (
+    day TEXT PRIMARY KEY,
+    readings INTEGER NOT NULL,
+    {columns}
+);
+""".format(
+    columns=",\n    ".join(
+        f"{metric}_sum REAL NOT NULL, "
+        f"{metric}_min REAL NOT NULL, {metric}_min_at TEXT NOT NULL, "
+        f"{metric}_max REAL NOT NULL, {metric}_max_at TEXT NOT NULL"
+        for metric in METRICS
+    )
+)
+
+_ROLLUP_INSERT = (
+    f"INSERT INTO daily_rollup ({', '.join(_ROLLUP_COLUMNS)}) "
+    f"VALUES ({', '.join('?' * len(_ROLLUP_COLUMNS))})"
+)
+
+#: The day a timestamp belongs to, and the bounds of that day. The format is
+#: fixed-width, so a day is a prefix and its bounds are string literals — no
+#: date arithmetic and, unlike substr(), usable by the timestamp index.
+def _day_of(timestamp: str) -> str:
+    return timestamp[:10]
+
+
+def _day_bounds(first_day: str, last_day: str) -> tuple[str, str]:
+    return f"{first_day} 00:00:00", f"{last_day} 23:59:59"
+
+
+@dataclass
+class _DaySummary:
+    """One day of readings, folded down to the row the rollup stores."""
+
+    day: str
+    readings: int = 0
+    totals: dict[str, float] = field(default_factory=dict)
+    lowest: dict[str, tuple[float, str]] = field(default_factory=dict)
+    highest: dict[str, tuple[float, str]] = field(default_factory=dict)
+
+    def absorb(self, row: Any) -> None:
+        """Fold in one reading. Rows arrive oldest first, and the comparisons
+        are strict, so an extreme that recurs keeps the time it was first
+        reached — the same tie-break the readings table answered with."""
+        self.readings += 1
+        for metric in METRICS:
+            value = row[metric]
+            self.totals[metric] = self.totals.get(metric, 0.0) + value
+            low = self.lowest.get(metric)
+            if low is None or value < low[0]:
+                self.lowest[metric] = (value, row["timestamp"])
+            high = self.highest.get(metric)
+            if high is None or value > high[0]:
+                self.highest[metric] = (value, row["timestamp"])
+
+    def as_row(self) -> tuple:
+        values: list[Any] = [self.day, self.readings]
+        for metric in METRICS:
+            values.append(self.totals[metric])
+            values.extend(self.lowest[metric])
+            values.extend(self.highest[metric])
+        return tuple(values)
+
+
+async def _summarise_days(
+    db: aiosqlite.Connection, where: str = "", params: Sequence[Any] = ()
+) -> list[tuple]:
+    """Summarise the readings matching ``where``, one row per day.
+
+    The readings are streamed in chronological order and folded a day at a
+    time rather than loaded: this runs over the whole table when the rollup
+    is first built, and an archive does not need to fit in memory for that.
+    """
+    cursor = await db.execute(
+        f"SELECT timestamp, {', '.join(METRICS)} FROM weather_readings "
+        f"{where} {ORDER_OLDEST_FIRST}",
+        params,
+    )
+    summaries: list[tuple] = []
+    current: _DaySummary | None = None
+    async for row in cursor:
+        day = _day_of(row["timestamp"])
+        if current is None or current.day != day:
+            if current is not None:
+                summaries.append(current.as_row())
+            current = _DaySummary(day)
+        current.absorb(row)
+    if current is not None:
+        summaries.append(current.as_row())
+    return summaries
+
+
+async def _refresh_rollup(
+    db: aiosqlite.Connection, first_day: str | None = None, last_day: str | None = None
+) -> int:
+    """Recompute the rollup for a span of days, or for the whole archive.
+
+    Recomputed from the readings rather than adjusted in place: a day is at
+    most a few hundred rows, and an incremental update that drifts from the
+    table it summarises is a bug that shows up months later as a wrong
+    record. Call it inside the write lock, before the commit, so a reading
+    and its summary land together. Returns the number of days written.
+    """
+    if first_day is None or last_day is None:
+        await db.execute("DELETE FROM daily_rollup")
+        rows = await _summarise_days(db)
+    else:
+        await db.execute(
+            "DELETE FROM daily_rollup WHERE day >= ? AND day <= ?", (first_day, last_day)
+        )
+        start, end = _day_bounds(first_day, last_day)
+        rows = await _summarise_days(
+            db, "WHERE timestamp >= ? AND timestamp <= ?", (start, end)
+        )
+    await db.executemany(_ROLLUP_INSERT, rows)
+    return len(rows)
+
+
+def _rollup_scope(period: str, reference: datetime | None = None) -> tuple[str, list] | None:
+    """A ``WHERE`` over ``daily_rollup`` covering ``period``, or ``None``.
+
+    A per-day summary can only answer a question whose bounds fall on day
+    boundaries. "all" and "today" do; "24h" and the rest cut a day in half,
+    and are short enough that the index makes scanning the readings cheap
+    anyway. ``None`` means "ask the readings table".
+    """
+    if period == "all":
+        return "", []
+    if period == "today":
+        ref = reference if reference is not None else clock.now()
+        return "WHERE day = ?", [clock.fmt_date(ref)]
+    return None
+
+
+async def _table_exists(db: aiosqlite.Connection, name: str) -> bool:
+    cursor = await db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (name,)
+    )
+    return await cursor.fetchone() is not None
+
+
 async def _has_column(db: aiosqlite.Connection, table: str, column: str) -> bool:
     cursor = await db.execute(f"PRAGMA table_info({table})")
     return any(row["name"] == column for row in await cursor.fetchall())
@@ -255,8 +419,13 @@ async def _migrate(db: aiosqlite.Connection) -> None:
     over ``timestamp`` alone, which would keep collapsing the repeated autumn
     hour into one row. ``CREATE INDEX IF NOT EXISTS`` would silently accept
     that index, so it is dropped by definition rather than by name.
+
+    A database from before the rollup existed has its summaries built here,
+    once, over whatever archive it already holds.
     """
+    rollup_existed = await _table_exists(db, "daily_rollup")
     await db.executescript(_SCHEMA)
+    await db.executescript(_ROLLUP_SCHEMA)
     await _add_utc_offset(db)
 
     existing = await _index_definition(db, "idx_timestamp_unique")
@@ -272,6 +441,10 @@ async def _migrate(db: aiosqlite.Connection) -> None:
             cursor.rowcount,
         )
         await db.execute(_UNIQUE_INDEX)
+
+    # Last, so it summarises the readings that survived the steps above.
+    if not rollup_existed and (days := await _refresh_rollup(db)):
+        log.warning("migration: summarised %d day(s) into the daily rollup", days)
     await db.commit()
 
 
@@ -314,6 +487,7 @@ async def insert_reading(
             """,
             (temperature, humidity, pressure, ts, utc_offset),
         )
+        await _refresh_rollup(db, _day_of(ts), _day_of(ts))
         await db.commit()
     invalidate_cache()
     return cursor.lastrowid
@@ -328,6 +502,7 @@ async def remove_readings_in_range(from_ts: str, to_ts: str) -> int:
             (start, end),
         )
         deleted = cursor.rowcount
+        await _refresh_rollup(db, _day_of(start), _day_of(end))
         await db.commit()
     invalidate_cache()
     log.info("cleanup: removed %d reading(s) between %s and %s", deleted, start, end)
@@ -353,6 +528,9 @@ async def remove_off_grid_readings() -> int:
             (READING_INTERVAL_MINUTES,),
         )
         total += cursor.rowcount
+        # Which days were touched is not known here, so the whole rollup is
+        # rebuilt. This runs from a maintenance endpoint, not on every write.
+        await _refresh_rollup(db)
         await db.commit()
     invalidate_cache()
     log.info("cleanup: removed %d off-grid or duplicate reading(s)", total)
@@ -493,15 +671,36 @@ def _round_or_none(value: float | None, digits: int = 1) -> float | None:
 
 @cached
 async def get_stats(period: str = "24h") -> dict:
-    """Min/max/avg for each metric over ``period``."""
-    where, params = _cutoff_clause(period)
-    aggregates = ", ".join(
-        f"MIN({m}) AS {m}_min, MAX({m}) AS {m}_max, AVG({m}) AS {m}_avg"
-        for m in METRICS
-    )
-    row = await _fetch_one(
-        f"SELECT {aggregates}, COUNT(*) AS count FROM weather_readings {where}", params
-    )
+    """Min/max/avg for each metric over ``period``.
+
+    A whole-day period is answered from the rollup, so "all" costs a row per
+    day rather than a row per reading; the rest scan the readings behind the
+    timestamp index. The two agree exactly — a mean is the summed values over
+    the summed count either way.
+    """
+    scope = _rollup_scope(period)
+    if scope is not None:
+        rollup_where, rollup_params = scope
+        aggregates = ", ".join(
+            f"MIN({m}_min) AS {m}_min, MAX({m}_max) AS {m}_max, "
+            f"SUM({m}_sum) / SUM(readings) AS {m}_avg"
+            for m in METRICS
+        )
+        row = await _fetch_one(
+            f"SELECT {aggregates}, SUM(readings) AS count FROM daily_rollup "
+            f"{rollup_where}",
+            rollup_params,
+        )
+    else:
+        where, params = _cutoff_clause(period)
+        aggregates = ", ".join(
+            f"MIN({m}) AS {m}_min, MAX({m}) AS {m}_max, AVG({m}) AS {m}_avg"
+            for m in METRICS
+        )
+        row = await _fetch_one(
+            f"SELECT {aggregates}, COUNT(*) AS count FROM weather_readings {where}",
+            params,
+        )
     if not row or not row["count"]:
         return {"count": 0}
 
@@ -513,25 +712,48 @@ async def get_stats(period: str = "24h") -> dict:
     return stats
 
 
+#: The two extremes of a metric, and the direction each sorts in.
+_EXTREME_KINDS = (("min", "ASC"), ("max", "DESC"))
+
+
+def _extreme_columns(table: str, metric: str, kind: str) -> tuple[str, str]:
+    """The value and time columns holding ``metric``'s ``kind`` in ``table``."""
+    if table == "daily_rollup":
+        return f"{metric}_{kind}", f"{metric}_{kind}_at"
+    return metric, "timestamp"
+
+
 @cached
 async def get_extremes_with_times(period: str = "today") -> dict | None:
     """Min and max of every metric with the time each occurred.
 
     One round trip: each extreme is a ``LIMIT 1`` sub-select unioned together.
-    Returns ``None`` when the period holds no readings.
+    A whole-day period reads the rollup, which already holds each day's
+    extremes and when they happened, so the all-time records cost six lookups
+    over a row per day. Returns ``None`` when the period holds no readings.
     """
-    where, params = _cutoff_clause(period)
+    scope = _rollup_scope(period)
+    if scope is not None:
+        where, params = scope
+        table, tiebreak = "daily_rollup", ""
+    else:
+        where, params = _cutoff_clause(period)
+        # Within one local timestamp the larger offset is the earlier instant.
+        table, tiebreak = "weather_readings", ", utc_offset DESC"
+
     selects, query_params = [], []
-    for metric in METRICS:
-        for kind, order in (("min", "ASC"), ("max", "DESC")):
-            # Each branch needs its own parentheses: SQLite rejects a bare
-            # ORDER BY/LIMIT inside a compound SELECT.
-            selects.append(
-                f"SELECT * FROM (SELECT '{metric}' AS metric, '{kind}' AS kind, "
-                f"{metric} AS value, timestamp FROM weather_readings {where} "
-                f"ORDER BY {metric} {order}, timestamp ASC, utc_offset DESC LIMIT 1)"
-            )
-            query_params.extend(params)
+    for metric, (kind, order) in itertools.product(METRICS, _EXTREME_KINDS):
+        value_col, time_col = _extreme_columns(table, metric, kind)
+        # Each branch needs its own parentheses: SQLite rejects a bare
+        # ORDER BY/LIMIT inside a compound SELECT. The tie-break is the
+        # earliest time the extreme was reached, which is also what the
+        # rollup recorded for each day.
+        selects.append(
+            f"SELECT * FROM (SELECT '{metric}' AS metric, '{kind}' AS kind, "
+            f"{value_col} AS value, {time_col} AS timestamp FROM {table} {where} "
+            f"ORDER BY {value_col} {order}, {time_col} ASC{tiebreak} LIMIT 1)"
+        )
+        query_params.extend(params)
 
     rows = await _fetch_all(" UNION ALL ".join(selects), query_params)
     if not rows:
@@ -816,29 +1038,28 @@ async def get_reading_ago(hours: int = 24, tolerance_hours: float = 2.0) -> dict
 @cached
 async def get_daily_summaries(months: int = 3) -> list[dict]:
     """Per-day min/max/avg temperature and humidity over the last ``months``."""
-    cutoff = clock.fmt_ts(clock.months_ago(months))
+    cutoff = clock.fmt_date(clock.months_ago(months))
     return await _fetch_all(
         """
         SELECT
-            substr(timestamp, 1, 10) AS day,
-            ROUND(MIN(temperature), 1) AS temp_min,
-            ROUND(MAX(temperature), 1) AS temp_max,
-            ROUND(AVG(temperature), 1) AS temp_avg,
-            ROUND(MIN(humidity), 1) AS hum_min,
-            ROUND(MAX(humidity), 1) AS hum_max,
-            ROUND(AVG(humidity), 1) AS hum_avg
-        FROM weather_readings
-        WHERE timestamp >= ?
-        GROUP BY day
+            day,
+            ROUND(temperature_min, 1) AS temp_min,
+            ROUND(temperature_max, 1) AS temp_max,
+            ROUND(temperature_sum / readings, 1) AS temp_avg,
+            ROUND(humidity_min, 1) AS hum_min,
+            ROUND(humidity_max, 1) AS hum_max,
+            ROUND(humidity_sum / readings, 1) AS hum_avg
+        FROM daily_rollup
+        WHERE day >= ?
         ORDER BY day ASC
         """,
         (cutoff,),
     )
 
 
-def _midnight_today() -> str:
+def _today() -> str:
     """Upper bound excluding today, so a partial day cannot claim a record."""
-    return clock.fmt_ts(clock.start_of_day(clock.now()))
+    return clock.fmt_date(clock.now())
 
 
 @cached
@@ -851,12 +1072,11 @@ async def get_daily_extremes() -> dict | None:
     row = await _fetch_one(
         """
         WITH daily AS (
-            SELECT substr(timestamp, 1, 10) AS day,
-                   AVG(temperature) AS temp_avg,
-                   AVG(humidity) AS hum_avg
-            FROM weather_readings
-            WHERE timestamp < ?
-            GROUP BY day
+            SELECT day,
+                   temperature_sum / readings AS temp_avg,
+                   humidity_sum / readings AS hum_avg
+            FROM daily_rollup
+            WHERE day < ?
         )
         SELECT
             (SELECT day      FROM daily ORDER BY temp_avg DESC LIMIT 1) AS hottest_avg_day,
@@ -868,22 +1088,26 @@ async def get_daily_extremes() -> dict | None:
             (SELECT day      FROM daily ORDER BY hum_avg  ASC  LIMIT 1) AS least_humid_avg_day,
             (SELECT hum_avg  FROM daily ORDER BY hum_avg  ASC  LIMIT 1) AS least_humid_avg
         """,
-        (_midnight_today(),),
+        (_today(),),
     )
     # The outer SELECT always yields a row; an empty table just fills it
     # with NULLs, so test the payload rather than the row.
     return row if row and row["hottest_avg_day"] else None
 
 
-# Timestamps are fixed-width ``YYYY-MM-DD HH:MM:SS`` by construction, so the
-# year/month/day keys below are taken with substr() rather than strftime() or
-# date(). Same results, measurably less work per row on a large archive.
+# Day keys are fixed-width ``YYYY-MM-DD`` by construction, so the year and
+# month below are taken with substr() rather than strftime() or date(). Same
+# results, measurably less work per row.
+#
+# The means are summed values over summed readings rather than an average of
+# the daily averages, which would weight a day with an outage in it the same
+# as a complete one.
 _CLIMATE_AGGREGATES = """
-    ROUND(AVG(temperature), 1) AS temp_avg,
-    ROUND(MIN(temperature), 1) AS temp_min,
-    ROUND(MAX(temperature), 1) AS temp_max,
-    ROUND(AVG(humidity), 1) AS hum_avg,
-    COUNT(*) AS readings
+    ROUND(SUM(temperature_sum) / SUM(readings), 1) AS temp_avg,
+    ROUND(MIN(temperature_min), 1) AS temp_min,
+    ROUND(MAX(temperature_max), 1) AS temp_max,
+    ROUND(SUM(humidity_sum) / SUM(readings), 1) AS hum_avg,
+    SUM(readings) AS readings
 """
 
 _EMPTY_MONTH = {
@@ -902,27 +1126,27 @@ async def get_climate_stats() -> dict:
 
     Complete days only, for the same reason as :func:`get_daily_extremes`.
     """
-    cutoff = (_midnight_today(),)
+    cutoff = (_today(),)
 
     monthly_rows = await _fetch_all(
         f"""
-        SELECT CAST(substr(timestamp, 6, 2) AS INTEGER) AS month, {_CLIMATE_AGGREGATES}
-        FROM weather_readings WHERE timestamp < ? GROUP BY month ORDER BY month
+        SELECT CAST(substr(day, 6, 2) AS INTEGER) AS month, {_CLIMATE_AGGREGATES}
+        FROM daily_rollup WHERE day < ? GROUP BY month ORDER BY month
         """,
         cutoff,
     )
     per_year_rows = await _fetch_all(
         f"""
-        SELECT CAST(substr(timestamp, 1, 4) AS INTEGER) AS year,
-               CAST(substr(timestamp, 6, 2) AS INTEGER) AS month, {_CLIMATE_AGGREGATES}
-        FROM weather_readings WHERE timestamp < ? GROUP BY year, month ORDER BY year, month
+        SELECT CAST(substr(day, 1, 4) AS INTEGER) AS year,
+               CAST(substr(day, 6, 2) AS INTEGER) AS month, {_CLIMATE_AGGREGATES}
+        FROM daily_rollup WHERE day < ? GROUP BY year, month ORDER BY year, month
         """,
         cutoff,
     )
     yearly = await _fetch_all(
         f"""
-        SELECT CAST(substr(timestamp, 1, 4) AS INTEGER) AS year, {_CLIMATE_AGGREGATES}
-        FROM weather_readings WHERE timestamp < ? GROUP BY year ORDER BY year
+        SELECT CAST(substr(day, 1, 4) AS INTEGER) AS year, {_CLIMATE_AGGREGATES}
+        FROM daily_rollup WHERE day < ? GROUP BY year ORDER BY year
         """,
         cutoff,
     )
