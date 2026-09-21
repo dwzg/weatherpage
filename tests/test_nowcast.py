@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from app import clock, nowcast, services
+from app import clock, nowcast, services, weather
 
 MODEL = {
     "features": ["pct30", "rh"],
@@ -354,3 +354,154 @@ class TestRenderedBreakdown:
         body = re.search(r'id="deep-features".*?<tbody>(.*?)</tbody>', text, re.S)
         assert body, "the contribution table did not render"
         assert body.group(1).count("<tr>") == len(services.NOWCAST_MODEL.features)
+
+
+SKY_MODEL = {
+    "features": ["pct30", "rh"],
+    "mean": [0.5, 60.0],
+    "scale": [0.25, 15.0],
+    "coef": [-0.9, 1.4],
+    "intercept": -0.3,
+    "threshold": 0.4,
+    "metadata": {
+        "trained_at": "2026-09-21",
+        "samples": 8010,
+        "base_rate": 0.425,
+        "overcast_percent": 80,
+        "skill": {"bss": 0.214, "auc": 0.773},
+        "baselines": {"rules": {"auc": 0.665}},
+    },
+}
+
+
+class TestSkyModel:
+    """The second fitted model, and the outlook it composes.
+
+    It is optional in a way the rain model is not: until ml/train.py ships
+    one, everything here must degrade to the threshold ladder rather than to
+    a broken page.
+    """
+
+    def test_it_loads_through_the_same_loader(self, tmp_path):
+        model = nowcast.load(write(tmp_path, SKY_MODEL))
+        assert model is not None
+        assert model.features == ("pct30", "rh")
+
+    def test_a_missing_file_is_not_fatal(self, tmp_path):
+        assert nowcast.load(tmp_path / "absent.json") is None
+
+    def test_no_model_means_no_sky(self):
+        assert services.run_sky({"pct30": 0.5, "rh": 60.0}, model=None) is None
+
+    def test_a_missing_feature_means_no_sky(self, tmp_path):
+        model = nowcast.load(write(tmp_path, SKY_MODEL))
+        assert services.run_sky({"pct30": 0.5}, model=model) is None
+
+    def test_payload_carries_what_the_explainer_shows(self, tmp_path):
+        model = nowcast.load(write(tmp_path, SKY_MODEL))
+        payload = services.run_sky({"pct30": 0.1, "rh": 95.0}, model=model)
+        assert set(payload) >= {"probability", "band", "label", "overcast_percent",
+                                "horizon_hours", "samples", "skill", "baselines"}
+        assert 0.0 <= payload["probability"] <= 1.0
+        assert payload["band"] in {"overcast", "mixed", "clear"}
+
+    def test_the_word_and_the_band_cannot_disagree(self, tmp_path):
+        """The label beside the percentage is derived from the same band the
+        banner phrase is, so one cannot say cloudy while the other says clear."""
+        model = nowcast.load(write(tmp_path, SKY_MODEL))
+        for features in ({"pct30": 0.9, "rh": 20.0}, {"pct30": 0.1, "rh": 99.0}):
+            payload = services.run_sky(features, model=model)
+            assert payload["label"] == nowcast.describe_sky(payload["probability"])
+
+    def test_the_shipped_sky_model_is_readable_if_it_exists(self):
+        """It is absent until CI first ships one, which is a normal state."""
+        if nowcast.SKY_MODEL_PATH.exists():
+            model = nowcast.load(nowcast.SKY_MODEL_PATH)
+            assert model is not None, "a shipped sky model must be loadable"
+            assert set(model.features) <= {
+                "pct30", "pct7", "rh", "rh_max6", "drh3", "drh6",
+                "spread", "dp6", "dp12", "temp",
+            }
+
+
+class TestOutlookSelection:
+    """Which of the two ladders produced the phrase, and when."""
+
+    async def test_without_a_sky_model_the_status_falls_back(self, client, db):
+        """This is today's state: no sky_model.json has shipped yet."""
+        await stock(db)
+        body = (await client.get("/api/weather/status")).json()
+        assert "sky" in body
+        if body["sky"] is None:
+            assert body["outlook_is_learned"] is False
+
+    async def test_the_flag_matches_what_the_payload_carries(self, client, db):
+        await stock(db)
+        body = (await client.get("/api/weather/status")).json()
+        expected = body["nowcast"] is not None and body["sky"] is not None
+        assert body["outlook_is_learned"] is expected
+
+    async def test_the_forecast_is_always_a_phrase_either_way(self, client, db):
+        await stock(db)
+        body = (await client.get("/api/weather/status")).json()
+        assert isinstance(body["forecast"], str) and body["forecast"]
+
+
+class TestComposedOutlookOnThePage:
+    """The composed path, driven end to end with a sky model installed.
+
+    Nothing else covers it until CI first ships app/sky_model.json, and by
+    then it would be covered by being live — which is the wrong time to find
+    out that the explainer renders the wrong ladder.
+    """
+
+    @pytest.fixture
+    def with_sky(self, monkeypatch, tmp_path):
+        model = nowcast.load(write(tmp_path, SKY_MODEL))
+        monkeypatch.setattr(services, "SKY_MODEL", model)
+        return model
+
+    async def test_the_status_reports_a_learned_outlook(self, client, db, with_sky):
+        await stock(db)
+        body = (await client.get("/api/weather/status")).json()
+        assert body["sky"] is not None
+        assert body["outlook_is_learned"] is True
+        assert body["forecast"]
+
+    async def test_the_page_prints_the_composed_ladder(self, client, db, with_sky):
+        await stock(db)
+        threshold = (await client.get("/api/weather/status")).json()["nowcast"]["threshold"]
+        text = (await client.get("/")).text
+        phrases = set(re.findall(r'data-phrase="([^"]+)"', text))
+        assert phrases == {tier.phrase for tier in weather.learned_ladder(threshold)}
+
+    async def test_the_page_does_not_print_the_threshold_ladder(self, client, db, with_sky):
+        """The two ladders describe different reasoning; showing the rule one
+        beside a composed phrase would describe work the page did not do."""
+        await stock(db)
+        text = (await client.get("/")).text
+        assert "Pressure in the lowest" not in text
+        assert "Any hour at all, for comparison" not in text
+
+    async def test_the_highlighted_rung_is_the_one_the_banner_says(self, client, db, with_sky):
+        await stock(db)
+        body = (await client.get("/api/weather/status")).json()
+        text = (await client.get("/")).text
+        marked = re.findall(r'data-phrase="([^"]+)" class="is-active"', text)
+        ladder = {t.phrase for t in weather.learned_ladder(body["nowcast"]["threshold"])}
+        assert marked == ([body["forecast"]] if body["forecast"] in ladder else [])
+
+    async def test_the_live_sky_sentence_is_rendered(self, client, db, with_sky):
+        await stock(db)
+        text = (await client.get("/")).text
+        assert 'id="deep-sky-live"' in text
+
+    async def test_the_german_page_still_carries_english_identifiers(
+        self, client, db, with_sky
+    ):
+        """Same contract as the rule ladder: data-phrase is what the poller
+        matches status.forecast against, so it stays English."""
+        await stock(db)
+        text = (await client.get("/", headers={"accept-language": "de-DE,de;q=0.9"})).text
+        assert 'data-phrase="Rain likely"' in text
+        assert "Regenmodell über" in text

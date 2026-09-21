@@ -264,3 +264,111 @@ class TestForecastEmoji:
         unknown = {p for p in emitted if p not in self.EXPECTED}
         assert not unknown, f"forecast phrases with no expected emoji: {unknown}"
         assert emitted == set(self.EXPECTED), f"unreachable phrases: {set(self.EXPECTED) - emitted}"
+
+
+class TestSkyBands:
+    """The three states the sky probability is read as."""
+
+    def test_the_bands_cover_the_whole_range_in_order(self):
+        assert weather.sky_band(0.0) == weather.SKY_CLEAR
+        assert weather.sky_band(weather.SKY_CLEAR_PROBABILITY) == weather.SKY_MIXED
+        assert weather.sky_band(weather.SKY_OVERCAST_PROBABILITY) == weather.SKY_OVERCAST
+        assert weather.sky_band(1.0) == weather.SKY_OVERCAST
+
+    def test_the_cut_points_do_not_cross(self):
+        assert weather.SKY_CLEAR_PROBABILITY < weather.SKY_OVERCAST_PROBABILITY
+
+
+class TestLearnedLadder:
+    """The composed ladder the page prints must describe the code that runs.
+
+    Same contract as :class:`TestRuleLadder`, and for the same reason: the
+    ladder is documentation, so a rung that drifts from
+    :func:`compose_forecast` breaks nothing and quietly starts lying. The
+    difference is what the rungs read — four of them a fitted probability,
+    two of them the thresholds no label source can replace.
+    """
+
+    THRESHOLD = 0.212
+
+    #: One set of inputs per rung, inside it and outside the rungs above.
+    #: (rain probability, sky probability, humidity, temperature, dew point, moment)
+    CASES: ClassVar[dict] = {
+        "Rain likely": (0.90, 0.50, 70.0, 12.0, 6.0, TestForecast.WINTER_NIGHT),
+        "Thunderstorm possible": (0.30, 0.50, 60.0, 28.0, 18.0,
+                                  TestForecast.SUMMER_AFTERNOON),
+        "Rain possible": (0.30, 0.50, 70.0, 12.0, 6.0, TestForecast.WINTER_NIGHT),
+        "Fog or drizzle possible": (0.05, 0.50, 95.0, 10.0, 8.5,
+                                    TestForecast.WINTER_NIGHT),
+        "Cloudy": (0.05, 0.90, 60.0, 12.0, 2.0, TestForecast.WINTER_NIGHT),
+        "Little change": (0.05, 0.45, 60.0, 12.0, 2.0, TestForecast.WINTER_NIGHT),
+        "Fair and settled": (0.05, 0.10, 55.0, 12.0, 2.0, TestForecast.WINTER_NIGHT),
+    }
+
+    def test_every_rung_has_a_worked_case(self):
+        ladder = weather.learned_ladder(self.THRESHOLD)
+        assert {tier.phrase for tier in ladder} == set(self.CASES)
+
+    @pytest.mark.parametrize(
+        "phrase", list(CASES), ids=lambda p: p,
+    )
+    def test_the_rung_produces_the_phrase_it_advertises(self, phrase):
+        rain, sky, humidity, temperature, dew, moment = self.CASES[phrase]
+        trend = {"delta": 2.0} if phrase == "Fog or drizzle possible" else None
+        assert weather.compose_forecast(
+            rain, self.THRESHOLD, sky, humidity, temperature, dew, trend, moment
+        ) == phrase
+
+    def test_every_condition_names_only_fields_it_supplies(self):
+        for tier in weather.learned_ladder(self.THRESHOLD):
+            named = set(re.findall(r"\{(\w+)\}", tier.condition))
+            assert named == set(tier.fields), tier.phrase
+
+    def test_every_rung_says_where_its_evidence_came_from(self):
+        """The whole point of the composed ladder is that it can say."""
+        for tier in weather.learned_ladder(self.THRESHOLD):
+            assert tier.note, tier.phrase
+
+    def test_the_unlabelled_rungs_are_marked_as_hand_made(self):
+        """Fog and thunderstorms have no label source; the page must not imply
+        they were fitted alongside the rest."""
+        hand_made = {
+            tier.phrase
+            for tier in weather.learned_ladder(self.THRESHOLD)
+            if "hand-made" in tier.note
+        }
+        assert hand_made == {"Thunderstorm possible", "Fog or drizzle possible"}
+
+    def test_the_rain_rungs_follow_the_model_s_own_threshold(self):
+        """Retuning the fitted threshold must move the printed ladder with it."""
+        low = weather.learned_ladder(0.20)
+        high = weather.learned_ladder(0.45)
+        assert low[2].fields["pct"] == 20
+        assert high[2].fields["pct"] == 45
+
+    def test_every_phrase_it_can_produce_has_an_emoji(self):
+        """"Little change" is the one that keeps the default, deliberately:
+        there is no weather to draw for it."""
+        for phrase in self.CASES:
+            emoji = weather.forecast_emoji(phrase)
+            if phrase == "Little change":
+                assert emoji == weather.DEFAULT_FORECAST_EMOJI
+            else:
+                assert emoji != weather.DEFAULT_FORECAST_EMOJI, phrase
+
+    def test_settled_but_humid_is_reachable_too(self):
+        """Not a rung of its own — a humid variant of the clear band — but it
+        is a phrase the function can return, so it needs an emoji as well."""
+        result = weather.compose_forecast(
+            0.05, self.THRESHOLD, 0.10, 78.0, 12.0, 8.0, None,
+            TestForecast.WINTER_NIGHT,
+        )
+        assert result == "Settled but humid"
+        assert weather.forecast_emoji(result) != weather.DEFAULT_FORECAST_EMOJI
+
+    def test_overcast_and_humid_is_reachable_too(self):
+        result = weather.compose_forecast(
+            0.05, self.THRESHOLD, 0.90, 90.0, 12.0, 11.0, None,
+            TestForecast.WINTER_NIGHT,
+        )
+        assert result == "Overcast and humid"

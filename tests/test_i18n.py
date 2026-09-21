@@ -156,6 +156,31 @@ class TestCatalogueCoverage:
         missing = sorted(strings - set(i18n.GERMAN))
         assert not missing, f"no German for rule ladder row: {missing}"
 
+    def test_every_learned_ladder_row_is_translated(self):
+        """The composed ladder reaches t() as tier.condition too, and its rows
+        are the ones a reader sees once the sky model has shipped."""
+        strings = set()
+        for tier in weather.learned_ladder(0.212):
+            strings.add(tier.condition)
+            if tier.note:
+                strings.add(tier.note)
+        missing = sorted(strings - set(i18n.GERMAN))
+        assert not missing, f"no German for learned ladder row: {missing}"
+
+    def test_every_phrase_the_composed_ladder_can_produce_is_translated(self):
+        """Including the two it reaches through humidity rather than a rung of
+        their own, which the ladder itself therefore does not name."""
+        phrases = {tier.phrase for tier in weather.learned_ladder(0.212)}
+        phrases |= {"Settled but humid", "Overcast and humid"}
+        missing = sorted(phrases - set(i18n.GERMAN))
+        assert not missing, f"no German for composed forecast phrase: {missing}"
+
+    def test_every_sky_wording_is_translated(self):
+        """describe_sky() returns these as message ids, like the phrases."""
+        words = {nowcast.describe_sky(p) for p in (0.05, 0.45, 0.95)}
+        missing = sorted(words - set(i18n.GERMAN))
+        assert not missing, f"no German for sky wording: {missing}"
+
     def test_every_feature_label_is_translated(self):
         """Also passed as a variable — the labels come from the model file."""
         labels = {f.label for f in nowcast.FEATURE_FORMATS.values()}
@@ -347,6 +372,7 @@ class TestDeepDiveStructure:
         'data-cell="intercept"',
         'data-cell="total"',
         "rule-ladder",         # the rung the outlook is standing on
+        "deep-sky-live",       # the cloud model's live probability
     ])
     def test_both_sides_name_the_same_hook(self, hook):
         assert hook in TEMPLATE.read_text(), f"{hook} missing from the template"

@@ -1,13 +1,25 @@
 #!/usr/bin/env python3
-"""Fit the rain nowcast and, if it earns its place, write app/model.json.
+"""Fit the nowcasts and, if they earn their place, write them into app/.
 
 Run by .github/workflows/retrain.yml every week. It is the only part of this
 project that reaches outside the box, and it does so in CI, never in the app:
 
   * the station's own readings, from its public history endpoint;
-  * observed hourly rainfall for the station's location, from Open-Meteo's
+  * observed hourly weather for the station's location, from Open-Meteo's
     ERA5 archive, which supplies the labels, and its 2 km ICON series, which
     is scored as an independent check but never trained on.
+
+Two models come out of one replay, because they are the same question asked
+of the same feature vector against different labels:
+
+  * rain -> app/model.json, labelled by observed precipitation;
+  * sky  -> app/sky_model.json, labelled by observed cloud cover.
+
+They are gated separately, so one can ship while the other is refused. The
+sky model replaces the humidity-only guess behind "Fair and settled" and
+"Overcast and humid" on the banner; the outlook's fog and thunderstorm rungs
+stay hand-made, because the archive carries no label for either (zero fog
+codes and zero thunderstorm codes over two years, and an empty CAPE field).
 
 Features come from ``app.services.nowcast_features`` — the same function the
 running app calls — replayed against a throwaway database with the clock
@@ -72,6 +84,13 @@ TIMEZONE = os.environ.get("TIMEZONE", "Europe/Berlin")
 
 HORIZON_HOURS = 6
 RAIN_MM = 0.2
+#: Mean cloud cover over the horizon at or above which the sky model's label
+#: is "overcast". Mirrors app.nowcast.OVERCAST_PERCENT, which the page prints;
+#: main() asserts the two agree rather than trusting that they do.
+OVERCAST_PERCENT = 80
+#: Both models are fitted on the same vector. Adding a feature means adding it
+#: to app.services.nowcast_features() and to this tuple, never to one target's
+#: fit alone — a feature that means two things is the bug this guards against.
 FEATURES = ("pct30", "pct7", "rh", "rh_max6", "drh3", "drh6", "spread", "dp6", "dp12", "temp")
 REGULARISATION = 1.0
 
@@ -197,46 +216,75 @@ def station_location(latitude: float | None, longitude: float | None) -> tuple[f
     return values[0], values[1]
 
 
-def fetch_rainfall(
+def fetch_observations(
     start: datetime, end: datetime, latitude: float, longitude: float,
-    high_resolution: bool = False,
-) -> dict[datetime, float]:
-    """Observed hourly precipitation at the station.
+    variables: tuple[str, ...] = ("precipitation",), high_resolution: bool = False,
+) -> dict[str, dict[datetime, float]]:
+    """Observed hourly weather at the station, one series per variable.
 
-    The reanalysis supplies the labels; the high-resolution series is only
-    ever scored against, never trained on (see the note by ARCHIVE_URL).
+    Both targets are labelled from the same call: precipitation for the rain
+    model, cloud cover for the sky model. The reanalysis supplies the labels;
+    the high-resolution series is only ever scored against, never trained on
+    (see the note by ARCHIVE_URL).
     """
     base = HIGH_RESOLUTION_URL if high_resolution else ARCHIVE_URL
     url = (
         f"{base}?latitude={latitude}&longitude={longitude}"
         f"&start_date={start:%Y-%m-%d}&end_date={end:%Y-%m-%d}"
-        f"&hourly=precipitation&timezone={urllib.parse.quote(TIMEZONE, safe='')}"
+        f"&hourly={','.join(variables)}"
+        f"&timezone={urllib.parse.quote(TIMEZONE, safe='')}"
         + ("&models=icon_seamless" if high_resolution else "")
     )
     hourly = fetch_json(url)["hourly"]
+    moments = [datetime.strptime(t, "%Y-%m-%dT%H:%M") for t in hourly["time"]]
     return {
-        datetime.strptime(t, "%Y-%m-%dT%H:%M"): p
-        for t, p in zip(hourly["time"], hourly["precipitation"], strict=True)
-        if p is not None
+        name: {m: v for m, v in zip(moments, hourly[name], strict=True) if v is not None}
+        for name in variables
+        if name in hourly
     }
 
 
-def label_for(rain: dict[datetime, float], moment: datetime) -> float | None:
-    """Did at least :data:`RAIN_MM` fall in the next :data:`HORIZON_HOURS`?"""
+def window(series: dict[datetime, float], moment: datetime) -> list[float] | None:
+    """The horizon's hourly values after ``moment``, or ``None`` if incomplete.
+
+    A partial window is not a weaker label, it is a different question, so
+    every target refuses one rather than averaging over the hours it has.
+    """
     hours = [
         moment.replace(minute=0, second=0, microsecond=0) + timedelta(hours=k)
         for k in range(1, HORIZON_HOURS + 1)
     ]
-    observed = [rain[h] for h in hours if h in rain]
-    if len(observed) < len(hours):
-        return None
-    return float(sum(observed) >= RAIN_MM)
+    observed = [series[h] for h in hours if h in series]
+    return observed if len(observed) == len(hours) else None
+
+
+def label_rain(rain: dict[datetime, float], moment: datetime) -> float | None:
+    """Did at least :data:`RAIN_MM` fall in the next :data:`HORIZON_HOURS`?"""
+    observed = window(rain, moment)
+    return None if observed is None else float(sum(observed) >= RAIN_MM)
+
+
+def label_sky(cloud: dict[datetime, float], moment: datetime) -> float | None:
+    """Was the next :data:`HORIZON_HOURS` overcast, on average?
+
+    The mean rather than any hour of it: the outlook is a claim about the
+    period as a whole, and one cloudy hour inside a bright afternoon is not
+    what "Cloudy" on the banner is meant to say.
+    """
+    observed = window(cloud, moment)
+    return None if observed is None else float(
+        sum(observed) / len(observed) >= OVERCAST_PERCENT
+    )
 
 
 # ── Replaying the app's own feature code over history ──────────────────────
 
 
-async def replay(readings: list[dict], rain: dict[datetime, float]) -> list[dict]:
+async def replay(
+    readings: list[dict],
+    rain: dict[datetime, float],
+    cloud: dict[datetime, float] | None = None,
+) -> list[dict]:
     """Walk the history hour by hour, asking the app what it would have seen.
 
     Readings are inserted as the clock reaches them rather than all at once.
@@ -290,15 +338,22 @@ async def replay(readings: list[dict], rain: dict[datetime, float]) -> list[dict
                         await db.commit()
                     cache.invalidate()
 
-                label = label_for(rain, moment)
-                if label is not None and moment >= usable_from:
+                # One replay, both targets. The feature vector is the expensive
+                # part and it is identical for the two, so fitting them from
+                # separate passes would cost twice as much to get the same
+                # numbers — and risk them being built against different hours.
+                labels = {
+                    "rain": label_rain(rain, moment),
+                    "sky": label_sky(cloud, moment) if cloud else None,
+                }
+                if any(v is not None for v in labels.values()) and moment >= usable_from:
                     clock.now = lambda m=moment: m
                     if moment.date() != day:
                         cache.invalidate()  # the ranking windows have moved on
                         day = moment.date()
                     features = await services.nowcast_features()
                     if features is not None:
-                        samples.append({"dt": moment, "y": label, "features": features})
+                        samples.append({"dt": moment, "y": labels, "features": features})
                 moment += timedelta(hours=1)
             return samples
         finally:
@@ -356,13 +411,25 @@ def score(probabilities: np.ndarray, truth: np.ndarray, threshold: float) -> dic
     }
 
 
-def walk_forward(samples: list[dict]) -> tuple[np.ndarray, np.ndarray, float]:
-    """Out-of-sample probabilities: refit weekly, never look ahead."""
+def labelled(samples: list[dict], target: str) -> list[dict]:
+    """The samples carrying a label for one target, in time order."""
+    return [s for s in samples if s["y"].get(target) is not None]
+
+
+def walk_forward(
+    samples: list[dict], target: str
+) -> tuple[np.ndarray, np.ndarray, float, list[dict]]:
+    """Out-of-sample probabilities: refit weekly, never look ahead.
+
+    Returns the samples that were actually tested alongside the scores, so a
+    baseline can be lined up against exactly the same hours instead of
+    assuming they are the tail of the input.
+    """
     X = np.array([[s["features"][f] for f in FEATURES] for s in samples])
-    y = np.array([s["y"] for s in samples])
+    y = np.array([s["y"][target] for s in samples])
     moments = np.array([s["dt"] for s in samples])
 
-    probabilities, truth, thresholds = [], [], []
+    probabilities, truth, thresholds, tested = [], [], [], []
     cursor = moments[0] + timedelta(days=MIN_TRAIN_DAYS)
     while cursor < moments[-1]:
         train = moments < cursor
@@ -374,168 +441,154 @@ def walk_forward(samples: list[dict]) -> tuple[np.ndarray, np.ndarray, float]:
             probabilities.append(model.predict_proba(X[test])[:, 1])
             truth.append(y[test])
             thresholds.append(threshold)
+            tested.extend(s for s, keep in zip(samples, test, strict=True) if keep)
         cursor += timedelta(days=FOLD_DAYS)
 
     if not probabilities:
-        return np.array([]), np.array([]), 0.5
+        return np.array([]), np.array([]), 0.5, []
     return (
         np.concatenate(probabilities),
         np.concatenate(truth),
         float(np.median(thresholds)),
+        tested,
     )
 
 
-def baselines(samples: list[dict], truth: np.ndarray) -> dict:
-    """What you get without a model: climatology, and the incumbent rules."""
+def incumbent(samples: list[dict], target: str) -> np.ndarray:
+    """What the threshold ladder already claims, as a 0/1 call per hour.
+
+    This is the thing each model is asking to replace, so it is the baseline
+    that decides whether shipping is an improvement or just a change. For
+    rain it is the ladder's own "says rain" rungs. For cloud it is the
+    humidity test behind "Overcast and humid" — the claim the sky model
+    exists to put evidence under.
+    """
     from app import weather
 
-    rules = np.array([
-        1.0
-        if any(
-            word in weather.compute_forecast(
-                s["features"]["pct30"],
-                s["features"]["rh"],
-                s["features"]["temp"],
-                s["features"]["temp"] - s["features"]["spread"],
-                {"delta": s["features"]["drh3"]},
-                moment=s["dt"],
+    if target == "sky":
+        return np.array([
+            float(s["features"]["rh"] > weather.HUMIDITY_MUGGY) for s in samples
+        ])
+    return np.array([
+        float(
+            any(
+                word in weather.compute_forecast(
+                    s["features"]["pct30"],
+                    s["features"]["rh"],
+                    s["features"]["temp"],
+                    s["features"]["temp"] - s["features"]["spread"],
+                    {"delta": s["features"]["drh3"]},
+                    moment=s["dt"],
+                )
+                for word in ("Rain", "Thunder")
             )
-            for word in ("Rain", "Thunder")
         )
-        else 0.0
-        for s in samples[-len(truth):]
+        for s in samples
     ])
+
+
+def baselines(tested: list[dict], truth: np.ndarray, target: str) -> dict:
+    """What you get without a model: climatology, and the incumbent rules."""
     return {
         "climatology": score(np.full_like(truth, truth.mean(), dtype=float), truth, 0.5),
-        "rules": score(rules, truth, 0.5),
+        "rules": score(incumbent(tested, target), truth, 0.5),
     }
 
 
 # ── Entry point ────────────────────────────────────────────────────────────
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--app-url", default=os.environ.get("APP_URL", DEFAULT_APP_URL))
-    parser.add_argument("--api-key", default=os.environ.get("API_KEY"),
-                        help="key for /api/weather/export; defaults to $API_KEY")
-    parser.add_argument("--out", type=Path, default=REPO / "app" / "model.json")
-    parser.add_argument("--readings", type=Path, help="a local readings JSON, instead of fetching")
-    parser.add_argument("--rainfall", type=Path,
-                        help="a local Open-Meteo archive JSON, instead of fetching")
-    parser.add_argument("--latitude", type=float,
-                        help="station latitude; defaults to $STATION_LATITUDE")
-    parser.add_argument("--longitude", type=float,
-                        help="station longitude; defaults to $STATION_LONGITUDE")
-    parser.add_argument("--force", action="store_true",
-                        help="write the model even if it does not beat the shipped one")
-    args = parser.parse_args()
+def gates(candidate: dict, reference: dict, shipped: dict | None, target: str) -> list[str]:
+    """Why this candidate may not ship, or an empty list if it may.
 
-    readings = (
-        json.loads(args.readings.read_text())
-        if args.readings
-        else fetch_readings(args.app_url, args.api_key)
-    )
-    if args.readings:
-        for row in readings:
-            row["dt"] = datetime.strptime(row["timestamp"], TS_FORMAT)
-        readings.sort(key=lambda r: r["dt"])
-    print(f"{len(readings)} readings, {readings[0]['dt']} .. {readings[-1]['dt']}")
-
-    if args.rainfall:
-        hourly = json.loads(args.rainfall.read_text())["hourly"]
-        rain = {
-            datetime.strptime(t, "%Y-%m-%dT%H:%M"): p
-            for t, p in zip(hourly["time"], hourly["precipitation"], strict=True)
-            if p is not None
-        }
-    else:
-        latitude, longitude = station_location(args.latitude, args.longitude)
-        rain = fetch_rainfall(readings[0]["dt"], readings[-1]["dt"], latitude, longitude)
-    print(f"{len(rain)} hours of observed rainfall for labels")
-
-    samples = asyncio.run(replay(readings, rain))
-    print(f"{len(samples)} labelled hours with a complete feature vector")
-    if len(samples) < MIN_SAMPLES:
-        print(f"too few samples (need {MIN_SAMPLES}); leaving the shipped model alone")
-        return 0
-
-    probabilities, truth, threshold = walk_forward(samples)
-    if not len(probabilities):
-        print("not enough history for a walk-forward fold; leaving the shipped model alone")
-        return 0
-
-    candidate = score(probabilities, truth, threshold)
-    reference = baselines(samples, truth)
-
-    # An independent read on the same hours. Its base rate is far lower, so
-    # its Brier skill is not comparable with the one above; what it is good
-    # for is AUC — whether the model still ranks wet hours above dry ones
-    # when a different source decides which were wet.
-    cross_check = None
-    if not args.rainfall:
-        try:
-            fine = fetch_rainfall(readings[0]["dt"], readings[-1]["dt"],
-                                  latitude, longitude, high_resolution=True)
-            fine_truth = np.array([label_for(fine, s["dt"]) for s in samples[-len(truth):]],
-                                  dtype=object)
-            usable = np.array([v is not None for v in fine_truth])
-            if usable.sum() > MIN_TRAIN_SAMPLES and len(set(fine_truth[usable].tolist())) > 1:
-                cross_check = score(
-                    probabilities[usable], fine_truth[usable].astype(float), threshold
-                )
-                cross_check["wet_rate"] = round(float(fine_truth[usable].astype(float).mean()), 3)
-        except Exception as error:
-            # A check, never a gate: if the second source is down, the run
-            # carries on and simply records nothing for it.
-            print(f"  (high-resolution cross-check unavailable: {error})")
-    print(f"\nwalk-forward over {len(truth)} out-of-sample hours "
-          f"(base rate {truth.mean()*100:.1f}%), operating threshold {threshold:.3f}")
-    for name, s in (("nowcast", candidate), *reference.items()):
-        print(f"  {name:<12} Brier {s['brier']:.4f}  BSS {s['bss']:+.3f}  "
-              f"AUC {s['auc']}  CSI {s['csi']:.3f}  KSS {s['kss']:+.3f}")
-    if cross_check:
-        print(f"  {'(2 km check)':<12} AUC {cross_check['auc']}  CSI {cross_check['csi']:.3f}  "
-              f"on point rain, which fell in {cross_check['wet_rate']*100:.1f}% of these hours")
-
-    shipped = json.loads(args.out.read_text()) if args.out.exists() else None
+    What a model is *for* decides what it has to beat, and both of these
+    exist to give a calibrated probability, which the ladder they sit beside
+    cannot: it emits a phrase. So the gates are probabilistic — better than
+    quoting the long-run average, and ranking hours at least as well as the
+    rule it replaces. The yes/no hit rate is reported but deliberately not a
+    gate: trading calibration for a better CSI would lose the thing the model
+    adds.
+    """
     previous = (shipped or {}).get("metadata", {}).get("skill", {})
-
-    # What this model is for decides what it has to beat. It exists to give a
-    # calibrated probability, which the rules beside it cannot: they emit a
-    # phrase. So the gates are probabilistic — is it better than quoting the
-    # long-run average, and does it rank hours at least as well as the rules.
-    # Its yes/no hit rate is reported but deliberately not a gate, because
-    # trading calibration for a better CSI would lose the thing it adds.
     reasons = []
     if candidate["bss"] < MIN_SKILL:
         reasons.append(
             f"not enough skill over climatology (BSS {candidate['bss']:+.3f}, "
             f"need {MIN_SKILL:+.2f})"
         )
-    if candidate["auc"] is None or candidate["auc"] < reference["rules"]["auc"]:
+    if candidate["auc"] is None or (
+        reference["rules"]["auc"] is not None and candidate["auc"] < reference["rules"]["auc"]
+    ):
         reasons.append(
             f"ranks hours no better than the rules (AUC {candidate['auc']} "
             f"vs {reference['rules']['auc']})"
         )
     if previous and candidate["bss"] < previous.get("bss", -1) - MAX_REGRESSION:
         reasons.append(
-            f"a clear step down from the shipped model (BSS {candidate['bss']:+.3f} "
-            f"vs {previous.get('bss'):+.3f})"
+            f"a clear step down from the shipped {target} model "
+            f"(BSS {candidate['bss']:+.3f} vs {previous.get('bss'):+.3f})"
         )
-    if reasons and not args.force:
-        print("\nNOT shipping this model:")
+    return reasons
+
+
+def evaluate(samples: list[dict], target: str) -> dict | None:
+    """Walk one target forward and score it, or ``None`` if it cannot be.
+
+    Both targets go through this identically — they differ only in their
+    labels, which is the whole claim being made by fitting them on one shared
+    feature vector.
+    """
+    print(f"\n── {target} " + "─" * (66 - len(target)))
+    usable = labelled(samples, target)
+    if len(usable) < MIN_SAMPLES:
+        print(f"{len(usable)} labelled hours, need {MIN_SAMPLES}; "
+              "leaving the shipped model alone")
+        return None
+
+    probabilities, truth, threshold, tested = walk_forward(usable, target)
+    if not len(probabilities):
+        print("not enough history for a walk-forward fold; leaving the shipped model alone")
+        return None
+
+    candidate = score(probabilities, truth, threshold)
+    reference = baselines(tested, truth, target)
+    print(f"walk-forward over {len(truth)} out-of-sample hours "
+          f"(base rate {truth.mean()*100:.1f}%), operating threshold {threshold:.3f}")
+    for name, s in ((target, candidate), *reference.items()):
+        print(f"  {name:<12} Brier {s['brier']:.4f}  BSS {s['bss']:+.3f}  "
+              f"AUC {s['auc']}  CSI {s['csi']:.3f}  KSS {s['kss']:+.3f}")
+    return {
+        "target": target,
+        "samples": usable,
+        "tested": tested,
+        "probabilities": probabilities,
+        "truth": truth,
+        "threshold": threshold,
+        "skill": candidate,
+        "baselines": reference,
+    }
+
+
+def ship(evaluation: dict, out: Path, extra: dict, force: bool) -> bool:
+    """Gate one evaluated candidate and write it out if it passes."""
+    target, threshold = evaluation["target"], evaluation["threshold"]
+    shipped = json.loads(out.read_text()) if out.exists() else None
+    reasons = gates(evaluation["skill"], evaluation["baselines"], shipped, target)
+    if reasons and not force:
+        print(f"\nNOT shipping this {target} model:")
         for reason in reasons:
             print(f"  - {reason}")
         print("The shipped model is left exactly as it is.")
-        return 0
+        return False
 
+    samples = evaluation["samples"]
     X = np.array([[s["features"][f] for f in FEATURES] for s in samples])
-    y = np.array([s["y"] for s in samples])
+    y = np.array([s["y"][target] for s in samples])
     final = fit(X, y)
-    scaler, logistic = final.named_steps["standardscaler"], final.named_steps["logisticregression"]
+    scaler = final.named_steps["standardscaler"]
+    logistic = final.named_steps["logisticregression"]
 
-    args.out.write_text(
+    out.write_text(
         json.dumps(
             {
                 "features": list(FEATURES),
@@ -550,18 +603,146 @@ def main() -> int:
                     "trained_through": samples[-1]["dt"].strftime("%Y-%m-%d"),
                     "base_rate": round(float(y.mean()), 3),
                     "horizon_hours": HORIZON_HOURS,
-                    "rain_mm": RAIN_MM,
-                    "skill": candidate,
-                    "baselines": reference,
-                    "cross_check_2km": cross_check,
-                    "labels": "ERA5 reanalysis, ~25 km: rain in the area, not on the balcony",
+                    "skill": evaluation["skill"],
+                    "baselines": evaluation["baselines"],
+                    **extra,
                 },
             },
             indent=2,
         )
         + "\n"
     )
-    print(f"\nwrote {args.out}")
+    print(f"\nwrote {out}")
+    return True
+
+
+def cross_check(evaluation: dict, fine: dict[datetime, float]) -> dict | None:
+    """Score the rain model's own probabilities against the 2 km series.
+
+    An independent read on the same hours. Its base rate is far lower, so its
+    Brier skill is not comparable with the reanalysis figures; what it is good
+    for is AUC — whether the model still ranks wet hours above dry ones when a
+    different source decides which were wet.
+    """
+    truth = np.array([label_rain(fine, s["dt"]) for s in evaluation["tested"]], dtype=object)
+    have = np.array([v is not None for v in truth])
+    if have.sum() <= MIN_TRAIN_SAMPLES or len(set(truth[have].tolist())) < 2:
+        return None
+    scored = score(
+        evaluation["probabilities"][have], truth[have].astype(float), evaluation["threshold"]
+    )
+    scored["wet_rate"] = round(float(truth[have].astype(float).mean()), 3)
+    print(f"  {'(2 km check)':<12} AUC {scored['auc']}  CSI {scored['csi']:.3f}  "
+          f"on point rain, which fell in {scored['wet_rate']*100:.1f}% of these hours")
+    return scored
+
+
+# ── Entry point ────────────────────────────────────────────────────────────
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--app-url", default=os.environ.get("APP_URL", DEFAULT_APP_URL))
+    parser.add_argument("--api-key", default=os.environ.get("API_KEY"),
+                        help="key for /api/weather/export; defaults to $API_KEY")
+    parser.add_argument("--out", type=Path, default=REPO / "app" / "model.json")
+    parser.add_argument("--sky-out", type=Path, default=REPO / "app" / "sky_model.json")
+    parser.add_argument("--readings", type=Path, help="a local readings JSON, instead of fetching")
+    parser.add_argument("--rainfall", type=Path,
+                        help="a local Open-Meteo archive JSON, instead of fetching")
+    parser.add_argument("--latitude", type=float,
+                        help="station latitude; defaults to $STATION_LATITUDE")
+    parser.add_argument("--longitude", type=float,
+                        help="station longitude; defaults to $STATION_LONGITUDE")
+    parser.add_argument("--target", choices=("rain", "sky", "both"), default="both",
+                        help="which model to fit; the other is left untouched")
+    parser.add_argument("--force", action="store_true",
+                        help="write the model even if it does not beat the shipped one")
+    args = parser.parse_args()
+
+    # The page prints what "overcast" means, reading it from app.nowcast; the
+    # labels here decide what it actually means. A mismatch would be invisible
+    # on the page and wrong in the model, so it fails the run instead.
+    from app import nowcast as app_nowcast
+
+    if app_nowcast.OVERCAST_PERCENT != OVERCAST_PERCENT:
+        raise SystemExit(
+            f"OVERCAST_PERCENT disagrees: ml/train.py says {OVERCAST_PERCENT}, "
+            f"app/nowcast.py says {app_nowcast.OVERCAST_PERCENT}"
+        )
+
+    readings = (
+        json.loads(args.readings.read_text())
+        if args.readings
+        else fetch_readings(args.app_url, args.api_key)
+    )
+    if args.readings:
+        for row in readings:
+            row["dt"] = datetime.strptime(row["timestamp"], TS_FORMAT)
+        readings.sort(key=lambda r: r["dt"])
+    print(f"{len(readings)} readings, {readings[0]['dt']} .. {readings[-1]['dt']}")
+
+    latitude = longitude = None
+    if args.rainfall:
+        hourly = json.loads(args.rainfall.read_text())["hourly"]
+        moments = [datetime.strptime(t, "%Y-%m-%dT%H:%M") for t in hourly["time"]]
+        observed = {
+            name: {m: v for m, v in zip(moments, hourly[name], strict=True) if v is not None}
+            for name in ("precipitation", "cloud_cover")
+            if name in hourly
+        }
+    else:
+        latitude, longitude = station_location(args.latitude, args.longitude)
+        observed = fetch_observations(
+            readings[0]["dt"], readings[-1]["dt"], latitude, longitude,
+            ("precipitation", "cloud_cover"),
+        )
+    rain, cloud = observed.get("precipitation", {}), observed.get("cloud_cover", {})
+    print(f"{len(rain)} hours of rainfall and {len(cloud)} of cloud cover for labels")
+
+    samples = asyncio.run(replay(readings, rain, cloud))
+    print(f"{len(samples)} labelled hours with a complete feature vector")
+
+    wrote = False
+
+    if args.target in ("rain", "both"):
+        evaluation = evaluate(samples, "rain")
+        if evaluation is not None:
+            fine = None
+            if not args.rainfall:
+                try:
+                    fine = fetch_observations(
+                        readings[0]["dt"], readings[-1]["dt"], latitude, longitude,
+                        ("precipitation",), high_resolution=True,
+                    )["precipitation"]
+                except Exception as error:
+                    # A check, never a gate: if the second source is down the
+                    # run carries on and simply records nothing for it.
+                    print(f"  (high-resolution cross-check unavailable: {error})")
+            wrote |= ship(
+                evaluation, args.out,
+                {
+                    "rain_mm": RAIN_MM,
+                    "cross_check_2km": cross_check(evaluation, fine) if fine else None,
+                    "labels": "ERA5 reanalysis, ~25 km: rain in the area, not on the balcony",
+                },
+                args.force,
+            )
+
+    if args.target in ("sky", "both"):
+        evaluation = evaluate(samples, "sky")
+        if evaluation is not None:
+            wrote |= ship(
+                evaluation, args.sky_out,
+                {
+                    "overcast_percent": OVERCAST_PERCENT,
+                    "labels": "ERA5 reanalysis, ~25 km: mean cloud cover over the horizon",
+                },
+                args.force,
+            )
+
+    if not wrote:
+        print("\nNothing shipped; every model on disk is left exactly as it is.")
     return 0
 
 

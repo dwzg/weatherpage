@@ -87,21 +87,28 @@
             <details class="prediction-deep">
                 <summary>{{ t('The technical details') }}</summary>
                 <div class="prediction-deep-body">
+                    {%- if outlook_is_learned %}
+                    <h3>{{ t('☀️ The outlook: two models and two rules') }}</h3>
+                    <p>
+                        {{ t('Tested in order, and the first rung that matches wins. Four of these rungs read a fitted probability — one model for rain, one for cloud, both from the same ten measurements. Two of them do not, and cannot: see below.') }}
+                    </p>
+                    {%- else %}
                     <h3>{{ t('☀️ The outlook: a ladder of thresholds') }}</h3>
                     <p>
                         {{ t('Two inputs, tested in order. The first rung that matches wins, so the ladder reads top to bottom. Both inputs are medians over {minutes} minutes rather than the latest sample — the rungs sit close enough together that one noisy reading would otherwise flip the phrase.', minutes=smoothing_minutes) }}
                     </p>
+                    {%- endif %}
                     <div class="table-scroll">
                         <table class="deep-table rule-ladder">
                             <thead>
                                 <tr>
                                     <th>{{ t('When') }}</th>
                                     <th>{{ t('It says') }}</th>
-                                    <th class="numeric">{{ t('Rain followed') }}</th>
+                                    <th class="numeric">{{ t('Evidence') if outlook_is_learned else t('Rain followed') }}</th>
                                 </tr>
                             </thead>
                             <tbody>
-                                {%- for tier in rule_ladder %}
+                                {%- for tier in ladder %}
                                 <tr data-phrase="{{ tier.phrase }}"{% if forecast == tier.phrase %} class="is-active"{% endif %}>
                                     <td>{{ rule(tier) }}</td>
                                     <td class="tier-phrase">{{ t(tier.phrase) }}</td>
@@ -112,12 +119,14 @@
                                 </tr>
                                 {%- endfor %}
                             </tbody>
+                            {%- if not outlook_is_learned %}
                             <tfoot>
                                 <tr>
                                     <td colspan="2">{{ t('Any hour at all, for comparison') }}</td>
                                     <td class="numeric">{{ num(calibration.base_rate * 100) }} %</td>
                                 </tr>
                             </tfoot>
+                            {%- endif %}
                         </table>
                     </div>
                     <p class="deep-live" id="deep-outlook-live" data-days="{{ percentile_days }}">
@@ -128,9 +137,30 @@
                         {{ t('Right now the pressure ranks at {pct}% of its last {days} days.', pct=num(pressure_percentile * 100), days=percentile_days) }}
                         {%- endif %}
                     </p>
+                    {%- if outlook_is_learned %}
+                    <p>
+                        {{ t('Why two of them are still hand-made: no label source scores either. Over two years of the reanalysis at this location there are zero fog codes and zero thunderstorm codes, and its convective-energy field is empty. A model cannot be fitted to a label that does not exist, so those rungs stay thresholds and say so.') }}
+                    </p>
+                    {%- if sky %}
+                    <p>
+                        {{ t('The cloud model was fitted on {samples} hours and scored walk-forward: AUC {auc}, Brier skill {bss} against climatology. What it replaces is the humidity threshold this ladder used to read, which scored AUC {rules}.',
+                              samples=num(sky.samples) if sky.samples else '—',
+                              auc=num(sky.skill.auc, 3) if sky.skill and sky.skill.auc else '—',
+                              bss=num(sky.skill.bss, 3, sign=True) if sky.skill else '—',
+                              rules=num(sky.baselines.rules.auc, 3) if sky.baselines and sky.baselines.rules.auc else '—') }}
+                    </p>
+                    {#- Live, so it is its own element: the poller rewrites this
+                        sentence every minute and must not have to reassemble
+                        the fitted numbers above, which do not change. -#}
+                    <p class="deep-live" id="deep-sky-live">
+                        {{ t('Right now it puts the chance of a mostly overcast next {hours} hours at {pct}%.', hours=sky.horizon_hours, pct=num(sky.probability * 100)) }}
+                    </p>
+                    {%- endif %}
+                    {%- else %}
                     <p>
                         {{ t('The rightmost column is how often measurable rain actually followed within {hours} hours, over the {days} days these rungs were fitted on. It is the whole claim being made: a phrase is worth showing only if the weather behind it differed from any other hour.', hours=nowcast.horizon_hours if nowcast else 6, days=calibration.days) }}
                     </p>
+                    {%- endif %}
 
                     <h4>{{ t('Why the barometer is read as a level, not a tendency') }}</h4>
                     <p>

@@ -1,11 +1,23 @@
-"""The learned rain nowcast: a probability, trained offline, served locally.
+"""The learned nowcasts: probabilities, trained offline, served locally.
 
-This is the second of the two predictions on the dashboard, and deliberately
-a different kind of thing from the one in :mod:`app.weather`. That one is a
-handful of thresholds a person can read and argue with. This one is a
-logistic regression fitted to the station's own history against observed
-rainfall, and it answers a narrower question with a number: how likely is
-measurable rain in the next six hours.
+This module holds the machinery for both fitted models and the constants
+that say what they mean. One predicts rain, the other cloud; they share a
+feature vector, a file format and every line of code below, and differ only
+in the labels they were fitted against.
+
+The rain model is the second of the two predictions on the dashboard, and
+deliberately a different kind of thing from the one in :mod:`app.weather`.
+That one is a handful of thresholds a person can read and argue with. This
+one is a logistic regression fitted to the station's own history against
+observed rainfall, and it answers a narrower question with a number: how
+likely is measurable rain in the next six hours.
+
+The sky model answers the other half of the outlook. The threshold ladder
+asserts "Fair and settled" or "Overcast and humid" from humidity alone, with
+nothing measured behind it; fitted against observed cloud cover, that claim
+becomes one the station has evidence for. Where no label exists — fog, and
+the convective afternoon — the ladder's hand-made rungs stay exactly as they
+were, because no amount of fitting invents ground truth.
 
 Nothing here trains, fits or downloads. Training happens in CI (``ml/train.py``),
 which writes :data:`MODEL_PATH` — a small JSON file of feature names, scaling
@@ -36,10 +48,21 @@ log = logging.getLogger(__name__)
 #: Where the trained model lives inside the image. Written by ml/train.py.
 MODEL_PATH = Path(__file__).parent / "model.json"
 
+#: The second fitted model, predicting cloud rather than rain. Same shape,
+#: same features, same loader — only the labels it was fitted against differ,
+#: so everything below serves both. It is optional in a way the rain model is
+#: not: until ``ml/train.py`` has shipped one, the outlook falls back to the
+#: threshold ladder in :mod:`app.weather`, which is what it always was.
+SKY_MODEL_PATH = Path(__file__).parent / "sky_model.json"
+
 #: How far ahead the model predicts, and what counts as rain. Both are baked
 #: into the training labels; they are here so the UI can say what it means.
 HORIZON_HOURS = 6
 RAIN_MM = 0.2
+
+#: What the sky model calls overcast: mean cloud cover over the next
+#: :data:`HORIZON_HOURS` at or above this percentage. Baked into its labels.
+OVERCAST_PERCENT = 80
 
 
 @dataclass(frozen=True)
@@ -143,6 +166,23 @@ def describe(probability: float, threshold: float) -> str:
     if probability >= threshold / 2:
         return "unlikely"
     return "not expected"
+
+
+def describe_sky(probability: float) -> str:
+    """A short word for the sky probability.
+
+    Deliberately not :func:`describe`: that one grades how likely an *event*
+    is, and cloud is not an event. The bands are the ones
+    :func:`app.weather.sky_band` composes the outlook from, so the word beside
+    the percentage and the phrase on the banner cannot disagree.
+    """
+    from . import weather
+
+    return {
+        weather.SKY_OVERCAST: "mostly cloudy",
+        weather.SKY_MIXED: "some cloud",
+        weather.SKY_CLEAR: "mostly clear",
+    }[weather.sky_band(probability)]
 
 
 # ── Describing the features to a reader ────────────────────────────────────

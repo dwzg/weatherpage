@@ -115,7 +115,17 @@ def create_app() -> FastAPI:
                 "t": i18n.translator(lang),
                 "num": i18n.number_formatter(lang),
                 "rule": i18n.rule_describer(lang),
-                "rule_ladder": weather.RULE_LADDER,
+                # The explainer prints whichever ladder actually produced the
+                # phrase on the banner. They are different documents: one is
+                # thresholds on raw readings, the other bands on two fitted
+                # probabilities, and showing the wrong one would describe
+                # reasoning the page did not do.
+                "ladder": (
+                    weather.learned_ladder(context["nowcast"]["threshold"])
+                    if context.get("outlook_is_learned")
+                    else weather.RULE_LADDER
+                ),
+                "outlook_is_learned": bool(context.get("outlook_is_learned")),
                 "calibration": weather.CALIBRATION,
                 "percentile_days": database.PERCENTILE_DAYS,
                 "smoothing_minutes": database.SMOOTHING_WINDOW_MINUTES,
