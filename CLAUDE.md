@@ -241,12 +241,14 @@ An empty database renders the "waiting for first reading" placeholder, so seed s
 
 ## Testing
 
-`pytest` and `ruff` run on every pull request (`.github/workflows/ci.yml`), alongside a Docker build and a container smoke test.
+`pytest` and `ruff` run on every pull request **and on every push to `main`** (`.github/workflows/ci.yml`), alongside a Docker build and a container smoke test.
 
 ```bash
-pytest -q          # 361 tests
+pytest -q
 ruff check .
 ```
+
+The suite's size is deliberately not written down here. It said 361 while the real figure was 403, which is what a number in prose does: nothing enforces it, so it silently stops being true. Anywhere a measured figure is load-bearing, assert it instead — `weather.CALIBRATION` beside the thresholds it was measured against, `TestRuleLadder` against `compute_forecast()`, `TestDeepDiveStructure` across the template and the ES modules. If a number here cannot be asserted, it does not belong here.
 
 `tests/conftest.py` gives each test its own `DATA_DIR`, a fixed timezone and a clean settings cache. Use the `db` fixture for the storage layer and `client` for anything that goes through HTTP.
 
@@ -300,6 +302,8 @@ Every push to `main` builds and pushes a new image, then triggers the Portainer 
 Versioning the query string then fixed only the entry point. The page hands the browser `main.js?v=<sha>`, but the `./heatmap.js` it imports resolves **relative to that URL** and comes out unversioned, so the browser goes on serving whatever it cached the first time it saw the page. The result is a page with new markup, new CSS and a new `main.js` driving months-old modules — which renders *wrong*, not stale: the calendar stopped paging and the climate chart never drew, because the modules were building markup the stylesheet no longer had rules for. Serving from `/static/<version>/…` fixes it at the root, because a relative import inherits the directory, so the whole graph is versioned with no build step. The plain `/static` mount stays for anything holding an old link; the page is `no-store`, so it always hands out the current prefix.
 
 `tests/test_api.py::TestDashboard::test_every_module_the_page_loads_is_versioned` walks that import graph the way the browser does and fails if any module resolves unversioned. Adding a module needs nothing — it is reached through the graph.
+
+Because the path names the build, the versioned mount serves `Cache-Control: public, max-age=31536000, immutable` — the browser then never revalidates, which is the payoff the path versioning was for. With one guard: outside a built image nothing sets `GIT_SHA`, the version falls back to `__version__`, and `/static/2.0.0/…` stands still across releases. Promising a year there would restage the original bug in a development browser, so `Settings.asset_version_names_a_build` records whether the version identifies a build at all and the header is only claimed when it does. The plain `/static` mount never claims it.
 
 **`GET /healthz` reports the commit the running container was built from.** That is how to tell a stalled deploy from a fresh one: the version string moves rarely, so without it the two look identical from outside. The Dockerfile takes it as `GIT_SHA` and both workflows pass `${{ github.sha }}`; it reads `unknown` outside a built image.
 

@@ -694,7 +694,9 @@ def page_payload(lang: str) -> dict:
 
     The whole catalogue goes over, not a hand-picked subset: a list of "these
     strings are the JavaScript ones" is a list that goes stale silently. It is
-    a couple of kilobytes on a page that is already ``no-store``.
+    around 20 KB of German on a page that is already ``no-store`` — which is
+    why the app compresses (see :func:`app.main.create_app`), that being the
+    right answer to its size rather than pruning it.
     """
     return {
         "lang": lang,
