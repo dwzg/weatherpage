@@ -1,13 +1,38 @@
 /* Live updates: refresh the current-conditions cards once a minute. */
 
 import { METRICS, fetchJSON, signed, formatNumber, t } from './format.js';
-import { refresh24h, renderSparklines } from './charts.js';
+import { cachedSeries, refresh24h, renderSparklines } from './charts.js';
 
 const POLL_INTERVAL_MS = 60_000;
 
 /* The sparklines show the most recent slice of the 24h series rather than
    asking the server for a separate 3h window. */
 const SPARK_WINDOW_MS = 3 * 60 * 60 * 1000;
+
+/* Where the series currently on screen ends. Readings arrive every five
+   minutes and this polls every sixty seconds, so four polls in five have
+   nothing new to draw — and the 24h series is 25 KB, by an order of magnitude
+   the largest thing this page fetches. Derived from the series itself rather
+   than from the status that prompted the fetch, so a failed or short response
+   leaves it where it was and the next poll tries again. */
+let seriesTimestamp = null;
+
+const endsAt = (series) =>
+    series && series.readings.length
+        ? series.readings[series.readings.length - 1].timestamp
+        : null;
+
+/** Draw a freshly fetched 24h series into the charts and the sparklines. */
+function drawSeries(series) {
+    if (!series || !series.readings.length) return;
+    refresh24h(series);
+    const cutoff = Date.now() - SPARK_WINDOW_MS;
+    const recent = series.readings.filter(
+        (r) => new Date(r.timestamp.replace(' ', 'T')).getTime() >= cutoff,
+    );
+    renderSparklines(recent.length ? recent : series.readings.slice(-36));
+    seriesTimestamp = endsAt(series);
+}
 
 const setText = (id, text) => {
     const el = document.getElementById(id);
@@ -67,20 +92,16 @@ function updatePressureTrend(trend) {
 }
 
 async function pollStatus() {
-    const [status, series] = await Promise.all([
-        fetchJSON('/api/weather/status'),
-        fetchJSON('/api/weather/history?period=24h'),
-    ]);
-
+    const status = await fetchJSON('/api/weather/status');
     if (status) applyStatus(status);
-    if (series && series.readings.length) {
-        refresh24h(series);
-        const cutoff = Date.now() - SPARK_WINDOW_MS;
-        const recent = series.readings.filter(
-            (r) => new Date(r.timestamp.replace(' ', 'T')).getTime() >= cutoff,
-        );
-        renderSparklines(recent.length ? recent : series.readings.slice(-36));
-    }
+
+    /* The series is worth refetching only once a reading has actually landed.
+       Its own newest point is the one in /status, so that timestamp says
+       whether there is anything new to draw. */
+    const latest = status && status.current ? status.current.timestamp : null;
+    if (latest !== null && latest === seriesTimestamp) return;
+
+    drawSeries(await fetchJSON('/api/weather/history?period=24h'));
 }
 
 function applyStatus(status) {
@@ -237,7 +258,38 @@ function appendCell(tr, text, className) {
     tr.appendChild(td);
 }
 
+/* A hidden tab is not being read, so it is not worth a request a minute —
+   a page left open on a phone or a second monitor otherwise polls all day to
+   redraw something nobody is looking at. Coming back polls immediately, so
+   the first thing a returning reader sees is current rather than however old
+   the tab was when they left it. */
+let timer = null;
+
+function stopTimer() {
+    if (timer !== null) {
+        clearInterval(timer);
+        timer = null;
+    }
+}
+
+function startTimer() {
+    stopTimer();
+    timer = setInterval(pollStatus, POLL_INTERVAL_MS);
+}
+
 export function startPolling() {
+    /* initCharts() has already fetched the 24h series by the time this runs,
+       so adopt it instead of asking for the same 25 KB again. */
+    drawSeries(cachedSeries('24h'));
     pollStatus();
-    setInterval(pollStatus, POLL_INTERVAL_MS);
+    startTimer();
+
+    document.addEventListener('visibilitychange', () => {
+        if (document.hidden) {
+            stopTimer();
+        } else {
+            pollStatus();
+            startTimer();
+        }
+    });
 }

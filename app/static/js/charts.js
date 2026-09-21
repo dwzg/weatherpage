@@ -200,6 +200,14 @@ export async function loadPeriod(period) {
     }
 }
 
+/** The series already fetched for a period, or undefined.
+ *
+ * The poller reads this so the page does not fetch the 24h series twice on
+ * every load — once to draw the charts, once for the poller's first pass a
+ * few milliseconds later, for the same 25 KB of the same readings.
+ */
+export const cachedSeries = (period) => historyCache[period];
+
 /** Replace the cached 24h series and redraw if it is the visible period. */
 export function refresh24h(series) {
     historyCache['24h'] = series;
