@@ -84,6 +84,36 @@ explains the difference to the reader under "How these two predictions work".
 
 Neither may fetch anything at runtime, and neither needs to.
 
+### The explainer on the page
+
+Two `<details>` under the banners. The first is the short answer. The second,
+"The technical details", is the working: the rule ladder with its measured hit
+rates, the model card, the skill table against both baselines, and a live
+breakdown of what each feature is contributing to the current probability.
+
+- **The ladder is generated from the thresholds, not retyped.**
+  `weather.RULE_LADDER` describes each rung of `compute_forecast()` and reads
+  the same constants, so retuning a threshold moves the page with it.
+  `weather.CALIBRATION` carries the measured numbers beside them.
+  `tests/test_weather.py::TestRuleLadder` drives `compute_forecast()` with
+  inputs for every rung and fails if it answers with a different phrase — the
+  ladder is documentation, so nothing else would notice it drifting.
+- **The feature breakdown is the prediction, not an illustration of it.**
+  `Model.predict()` is routed through `Model.contributions()`, so the
+  intercept plus the printed weights is exactly the logit being squashed.
+  Weights are in log-odds for that reason; don't "normalise" them to
+  percentages, which would stop them adding up.
+- **The server picks the scale and the decimals.** `services.nowcast_breakdown()`
+  sends each row's `value`, `digits`, `sign` and `unit` so the render and the
+  poller print the same shape — the same rule the rest of the numbers follow.
+- **The model card is metadata passed through**, not restated in the template,
+  so a retrain updates the page without a code change. Anything `ml/train.py`
+  did not write comes back `None` and the section is skipped.
+- `poll.js` maintains all of it: the live pressure rank, which rung is
+  highlighted, and the whole contribution table. Hooks are the `data-cell`,
+  `data-phrase` and `data-days` attributes;
+  `tests/test_i18n.py::TestDeepDiveStructure` fails if one side renames one.
+
 ### How the nowcast is trained and shipped
 
 `ml/train.py` (run by `.github/workflows/retrain.yml`, Mondays) pulls the
@@ -144,7 +174,7 @@ The rules in `app/weather.py` were fitted offline against observed hourly precip
 - Axis ticks are labelled by `tickFormatter`, which picks decimals from the tick step — pressure spans ~2 hPa a day and would otherwise repeat the same whole number.
 - Chart **dates** are formatted with `Intl.DateTimeFormat` through `i18n.dateFormat()`, not with the date-fns adapter's patterns: the adapter bundle ships English only. The adapter is still loaded — the time scale needs it to generate ticks — but `ticks.callback` and the tooltip `title` callback override every label it would produce. The clock stays 24-hour in both languages.
 - Sparklines are `responsive: true` inside a fixed-size `.sparkline-wrap`. Sizing the canvas directly does not work: Chart.js writes an inline width onto it, which overrides the stylesheet and stops the card shrinking.
-- **Grid overflow gotcha:** grid items default to `min-width: auto`, so a card whose content has a wide minimum pushes the grid past the viewport. `.card` sets `min-width: 0`.
+- **Grid overflow gotcha:** grid items default to `min-width: auto`, so a card whose content has a wide minimum pushes the grid past the viewport. `.card` sets `min-width: 0`. The same failure one level down is why every table in the explainer sits in a `.table-scroll` wrapper: a four-column table narrower than a phone scrolls inside its own box instead of dragging the page sideways.
 - Card spacing: `.stats-card` has no bottom margin because inside `.stats-grid` the grid `gap` does the spacing; `.container > .stats-card` adds its own.
 
 ## Languages
@@ -193,7 +223,7 @@ An empty database renders the "waiting for first reading" placeholder, so seed s
 `pytest` and `ruff` run on every pull request (`.github/workflows/ci.yml`), alongside a Docker build and a container smoke test.
 
 ```bash
-pytest -q          # 293 tests
+pytest -q          # 332 tests
 ruff check .
 ```
 

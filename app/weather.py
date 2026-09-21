@@ -127,6 +127,116 @@ RAIN_POSSIBLE_PERCENTILE = 0.40
 RAIN_POSSIBLE_HUMIDITY = 65.0
 SETTLED_PERCENTILE = 0.60
 
+# ── What the calibration measured ──────────────────────────────────────────
+# These are the numbers the tiers above were chosen against, kept here as
+# constants because the page prints them: a threshold that moves without its
+# measured hit rate moving with it is how an explainer starts lying.
+
+#: How often rain followed within six hours over the whole 90-day sample.
+CALIBRATION_BASE_RATE = 0.21
+#: How many days of this station's readings the tiers were scored on.
+CALIBRATION_DAYS = 90
+#: The binary "says rain" forecast, scored over that sample.
+CALIBRATION_CSI = 0.27
+CALIBRATION_KSS = 0.27
+#: What the tendency-based rules this replaced scored, same sample. Negative:
+#: worse than saying nothing.
+SUPERSEDED_KSS = -0.074
+#: The barometric tendency on its own, as a rain signal. Also negative.
+TENDENCY_KSS = -0.09
+#: Inside the wettest conditions, how often rain followed a *rising* against a
+#: *falling* barometer. The wrong way round, which is the whole argument for
+#: reading pressure as a level.
+TENDENCY_WET_RISING = 0.64
+TENDENCY_WET_FALLING = 0.39
+#: A fixed hPa threshold ("below 1020") scored this in the worst and best
+#: month of the sample. The spread is why the reading is ranked instead.
+FIXED_THRESHOLD_CSI_RANGE = (0.05, 0.44)
+
+
+#: The same figures gathered for the page. A view of the constants above, not
+#: a second copy of them: the explainer prints what the rules were fitted to.
+CALIBRATION: dict[str, float] = {
+    "days": CALIBRATION_DAYS,
+    "base_rate": CALIBRATION_BASE_RATE,
+    "csi": CALIBRATION_CSI,
+    "kss": CALIBRATION_KSS,
+    "superseded_kss": SUPERSEDED_KSS,
+    "tendency_kss": TENDENCY_KSS,
+    "wet_rising": TENDENCY_WET_RISING,
+    "wet_falling": TENDENCY_WET_FALLING,
+    "fixed_csi_low": FIXED_THRESHOLD_CSI_RANGE[0],
+    "fixed_csi_high": FIXED_THRESHOLD_CSI_RANGE[1],
+}
+
+
+@dataclass(frozen=True)
+class Tier:
+    """One rung of the ladder :func:`compute_forecast` walks, for display.
+
+    This is documentation that the page renders, not something the rules
+    consult — :func:`compute_forecast` below is still the implementation, and
+    reads the same constants. Keeping the two beside each other is the point:
+    a tier that is retuned without its row being retuned is visible here.
+    """
+
+    phrase: str                 #: the forecast phrase this rung produces
+    condition: str              #: message id describing when it fires
+    fields: dict                #: placeholder values for that message
+    observed: float | None      #: measured rain-within-6h, or None
+    note: str = ""              #: shown instead, when nothing cleaner was measured
+
+
+#: The tiers in the order :func:`compute_forecast` tests them. The observed
+#: rates are that function's own calibration: 69% at the top down to 6% at the
+#: bottom, against a 21% base rate.
+RULE_LADDER: tuple[Tier, ...] = (
+    Tier(
+        "Rain likely",
+        "Pressure in the lowest {pct}% of 30 days, humidity above {rh}%",
+        {"pct": RAIN_LIKELY_PERCENTILE * 100, "rh": RAIN_LIKELY_HUMIDITY},
+        0.69,
+    ),
+    Tier(
+        "Thunderstorm possible",
+        "Above {temp}°C and humidity above {rh}%, {start}:00 to {end}:59, {first} to {last}",
+        {
+            "temp": CONVECTIVE_TEMP_C,
+            "rh": CONVECTIVE_HUMIDITY,
+            "start": min(CONVECTIVE_HOURS),
+            "end": max(CONVECTIVE_HOURS),
+            "month_first": min(CONVECTIVE_MONTHS),
+            "month_last": max(CONVECTIVE_MONTHS),
+        },
+        None,
+        note="about twice the base rate, whatever the barometer says",
+    ),
+    Tier(
+        "Rain possible",
+        "Pressure in the lowest {pct}% of 30 days, humidity above {rh}%",
+        {"pct": RAIN_POSSIBLE_PERCENTILE * 100, "rh": RAIN_POSSIBLE_HUMIDITY},
+        0.32,
+    ),
+    Tier(
+        "Unsettled",
+        "Pressure in the lowest {pct}% of 30 days, drier than that",
+        {"pct": RAIN_POSSIBLE_PERCENTILE * 100},
+        0.28,
+    ),
+    Tier(
+        "Little change",
+        "Pressure in the middle of its range, {low}% to {high}%",
+        {"low": RAIN_POSSIBLE_PERCENTILE * 100, "high": SETTLED_PERCENTILE * 100},
+        0.15,
+    ),
+    Tier(
+        "Fair and settled",
+        "Pressure above the {pct}th percentile, humidity below {rh}%",
+        {"pct": SETTLED_PERCENTILE * 100, "rh": HUMIDITY_WET},
+        0.06,
+    ),
+)
+
 
 @dataclass(frozen=True)
 class ForecastInputs:

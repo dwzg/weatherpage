@@ -112,6 +112,7 @@ function applyStatus(status) {
         ? `${status.forecast_emoji} ${t(status.forecast)}` : '';
     setBanner('label-forecast', forecast, 'banner');
     updateNowcast(status.nowcast);
+    updateDeepDive(status);
     setBanner('label-frost',
         status.frost_warning ? t('❄️ Frost warning — protect your plants!') : '',
         'banner banner-alert');
@@ -150,6 +151,75 @@ function updateNowcast(nowcast) {
     value.textContent = `${Math.round(nowcast.probability * 100)}%`;
     chance.append('· ', value, ` ${t('in {hours} h', { hours: nowcast.horizon_hours })}`);
     el.append(chance);
+}
+
+/* The deep dive repeats live numbers the banners already show, so it has to
+   be maintained too — a coefficient table that quietly describes the weather
+   from an hour ago is worse than no table. The section is server-rendered and
+   may be absent (no model, or not enough history yet), so every step here
+   checks before it writes. */
+function updateDeepDive(status) {
+    const live = document.getElementById('deep-outlook-live');
+    if (live) {
+        live.textContent = status.pressure_percentile == null ? '' : t(
+            'Right now the pressure ranks at {pct}% of its last {days} days.',
+            {
+                pct: formatNumber(status.pressure_percentile * 100, 0),
+                days: live.dataset.days,
+            },
+        );
+    }
+
+    /* Which rung the ladder is standing on. The phrase is the identifier the
+       API sends, so it matches on data-phrase and translates for display. */
+    document.querySelectorAll('.rule-ladder tbody tr').forEach((row) => {
+        row.classList.toggle('is-active', row.dataset.phrase === status.forecast);
+    });
+
+    updateFeatureTable(status.nowcast);
+}
+
+function updateFeatureTable(nowcast) {
+    const table = document.getElementById('deep-features');
+    if (!table) return;
+
+    const body = table.tBodies[0];
+    if (!nowcast || !nowcast.contributions) {
+        body.textContent = '';
+        return;
+    }
+
+    body.textContent = '';
+    for (const row of nowcast.contributions) {
+        const tr = document.createElement('tr');
+        /* The server picked the scale and the decimals; formatting them here
+           rather than re-deriving them keeps the poller's numbers the same
+           shape as the render's. */
+        const value = `${formatNumber(row.value, row.digits, { sign: row.sign })}${row.unit ? ` ${row.unit}` : ''}`;
+        appendCell(tr, t(row.label), '');
+        appendCell(tr, value, 'numeric');
+        appendCell(tr, signed(row.standardised, 1), 'numeric');
+        const direction = row.weight > 0 ? 'weight-up' : row.weight < 0 ? 'weight-down' : '';
+        appendCell(tr, signed(row.weight, 2), `numeric ${direction}`.trim());
+        body.appendChild(tr);
+    }
+
+    /* The footer's two numbers are the intercept and the squashed total. The
+       total keeps its <strong>, which textContent on the cell would drop —
+       the render's markup is the one this has to reproduce. */
+    const foot = table.tFoot;
+    if (!foot) return;
+    const start = foot.querySelector('[data-cell="intercept"]');
+    const total = foot.querySelector('[data-cell="total"] strong');
+    if (start) start.textContent = signed(nowcast.intercept, 2);
+    if (total) total.textContent = `${formatNumber(nowcast.probability * 100, 0)} %`;
+}
+
+function appendCell(tr, text, className) {
+    const td = document.createElement('td');
+    if (className) td.className = className;
+    td.textContent = text;
+    tr.appendChild(td);
 }
 
 export function startPolling() {

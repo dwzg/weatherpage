@@ -12,6 +12,7 @@
     --accent-warn: #dd6b20;
     --border: #e2e8f0;
     --cell-text: rgba(0, 0, 0, 0.6);
+    --row-highlight: rgba(49, 130, 206, 0.10);
     --shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.06);
     --radius: 12px;
     --gap: 16px;
@@ -25,6 +26,7 @@
         --text-secondary: #a0aec0;
         --border: #4a5568;
         --cell-text: rgba(255, 255, 255, 0.7);
+        --row-highlight: rgba(99, 179, 237, 0.16);
         --shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
     }
 }
@@ -157,6 +159,106 @@ header .subtitle { color: var(--text-secondary); font-size: 0.9rem; margin-top: 
     padding-top: 8px;
     border-top: 1px solid var(--border);
 }
+
+/* ── The deep dive ────────────────────────────────────────────────────── */
+
+/* Wider than the plain explainer: the tables below want the room, and 62ch
+   of prose is a comfortable measure that a four-column table is not. */
+.prediction-deep { max-width: 82ch; margin-top: 6px; }
+.prediction-deep h3 {
+    font-size: 0.86rem;
+    color: var(--text);
+    margin: 18px 0 6px;
+}
+.prediction-deep h3:first-child { margin-top: 0; }
+.prediction-deep h4 {
+    font-size: 0.8rem;
+    color: var(--text);
+    margin: 14px 0 4px;
+}
+.prediction-deep p { margin: 0 0 8px; line-height: 1.55; }
+.prediction-deep p:last-child { margin-bottom: 0; }
+.deep-live { color: var(--text); }
+.deep-live:empty { display: none; }
+
+/* A table narrower than its content should scroll inside its own box rather
+   than push the page sideways — the same failure mode .card's min-width: 0
+   guards against, one level down. */
+.table-scroll { overflow-x: auto; margin: 0 0 10px; }
+
+.deep-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.72rem;
+    line-height: 1.4;
+}
+.deep-table th,
+.deep-table td {
+    padding: 4px 8px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+}
+.deep-table thead th {
+    color: var(--text);
+    font-weight: 600;
+    white-space: nowrap;
+}
+.deep-table tbody th { font-weight: 400; }
+.deep-table .numeric {
+    text-align: right;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}
+.deep-table tfoot td {
+    border-bottom: none;
+    border-top: 1px solid var(--border);
+    color: var(--text);
+}
+.deep-table th[title] { cursor: help; }
+
+/* The rung the outlook is standing on, and the model's own row. */
+.deep-table .is-active { background: var(--row-highlight); }
+.deep-table .is-active td,
+.deep-table .is-active th { color: var(--text); font-weight: 600; }
+
+/* The condition is the long cell; without a hint the other two take their
+   natural width and squeeze it into a six-line column on a phone. */
+.rule-ladder td:first-child { width: 48%; }
+.rule-ladder .tier-phrase { white-space: nowrap; }
+.rule-ladder .tier-note { font-style: italic; white-space: normal; }
+
+/* Below this the three columns cannot all keep their natural width, so the
+   phrase is allowed to wrap rather than the condition going to six lines. */
+@media (max-width: 30rem) {
+    .rule-ladder td:first-child { width: 42%; }
+    .rule-ladder .tier-phrase { white-space: normal; }
+}
+
+/* Raising or lowering the chance of rain. Its own pair of tokens rather than
+   the temperature deltas' classes: those mean warmer and cooler, and a shared
+   class would drag this column along the next time that palette moves. */
+.feature-table .weight-up { color: var(--accent-warn); }
+.feature-table .weight-down { color: var(--accent-hum); }
+
+.model-card {
+    margin: 0 0 10px;
+    display: grid;
+    grid-template-columns: max-content 1fr;
+}
+/* The rows are <div> wrappers so each dt/dd pair stays together; subgrid
+   keeps the values on one column anyway, which a flex row cannot do. */
+.model-card > div {
+    display: grid;
+    grid-column: 1 / -1;
+    grid-template-columns: subgrid;
+    gap: 4px 12px;
+    padding: 3px 0;
+    border-bottom: 1px solid var(--border);
+}
+.model-card > div:last-child { border-bottom: none; }
+.model-card dt { margin: 0; }
+.model-card dd { margin: 0; color: var(--text); }
 
 /* ── Current conditions ───────────────────────────────────────────────── */
 

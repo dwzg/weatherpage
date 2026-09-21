@@ -120,6 +120,203 @@ GERMAN: dict[str, str] = {
     "Model trained {date}": "Modell trainiert am {date}",
     "{bss}% skill over climatology": "{bss} % Güte gegenüber der Klimatologie",
 
+    # ── The deep dive ──────────────────────────────────────────────────────
+    "The technical details": "Die technischen Details",
+
+    # The outlook, in full
+    "☀️ The outlook: a ladder of thresholds":
+        "☀️ Die Aussicht: eine Leiter aus Schwellenwerten",
+    "Two inputs, tested in order. The first rung that matches wins, so the "
+    "ladder reads top to bottom. Both inputs are medians over {minutes} "
+    "minutes rather than the latest sample — the rungs sit close enough "
+    "together that one noisy reading would otherwise flip the phrase.":
+        "Zwei Eingangsgrößen, der Reihe nach geprüft. Die erste passende "
+        "Sprosse gewinnt, die Leiter liest sich also von oben nach unten. "
+        "Beide Eingangsgrößen sind Mediane über {minutes} Minuten und nicht "
+        "der jüngste Messwert — die Sprossen liegen so dicht beieinander, "
+        "dass ein einzelner Ausreißer den Text sonst umkippen ließe.",
+    "When": "Wann",
+    "It says": "Sagt",
+    "Rain followed": "Regen folgte",
+    "Any hour at all, for comparison": "Beliebige Stunde, zum Vergleich",
+    "about twice the base rate, whatever the barometer says":
+        "etwa doppelt so oft wie im Mittel, was auch immer das Barometer sagt",
+    "Right now the pressure ranks at {pct}% of its last {days} days.":
+        "Derzeit liegt der Luftdruck auf Rang {pct} % seiner letzten {days} Tage.",
+    "The rightmost column is how often measurable rain actually followed "
+    "within {hours} hours, over the {days} days these rungs were fitted on. "
+    "It is the whole claim being made: a phrase is worth showing only if the "
+    "weather behind it differed from any other hour.":
+        "Die rechte Spalte zeigt, wie oft tatsächlich messbarer Regen "
+        "innerhalb von {hours} Stunden folgte, über die {days} Tage, auf die "
+        "diese Sprossen angepasst wurden. Mehr wird nicht behauptet: Ein Text "
+        "lohnt sich nur, wenn sich das Wetter dahinter von einer beliebigen "
+        "anderen Stunde unterschied.",
+
+    # The tier conditions (app/weather.py RULE_LADDER)
+    "Pressure in the lowest {pct}% of 30 days, humidity above {rh}%":
+        "Luftdruck in den untersten {pct} % von 30 Tagen, Feuchte über {rh} %",
+    "Above {temp}°C and humidity above {rh}%, {start}:00 to {end}:59, "
+    "{first} to {last}":
+        "Über {temp} °C und Feuchte über {rh} %, {start}:00 bis {end}:59, "
+        "{first} bis {last}",
+    "Pressure in the lowest {pct}% of 30 days, drier than that":
+        "Luftdruck in den untersten {pct} % von 30 Tagen, trockener als das",
+    "Pressure in the middle of its range, {low}% to {high}%":
+        "Luftdruck in der Mitte seiner Spanne, {low} % bis {high} %",
+    "Pressure above the {pct}th percentile, humidity below {rh}%":
+        "Luftdruck über dem {pct}. Perzentil, Feuchte unter {rh} %",
+
+    "Why the barometer is read as a level, not a tendency":
+        "Warum das Barometer als Stand und nicht als Tendenz gelesen wird",
+    '"Falling barometer means rain" is the first rule anyone reaches for, and '
+    'on this station it is worse than useless. A fall of more than 1 hPa over '
+    'six hours scored a Hanssen-Kuipers score of {kss} against rain within '
+    'six hours; inside the wettest conditions, rain followed a rising '
+    'barometer {rising}% of the time against {falling}% for a falling one — '
+    'the wrong way round. The rules this ladder replaced were built entirely '
+    'on tendency and scored {old}.':
+        "„Fallendes Barometer heißt Regen“ ist die erste Regel, zu der jeder "
+        "greift, und an dieser Station ist sie schlechter als nutzlos. Ein "
+        "Fall von mehr als 1 hPa in sechs Stunden erreichte gegenüber Regen "
+        "binnen sechs Stunden einen Hanssen-Kuipers-Wert von {kss}; unter den "
+        "feuchtesten Bedingungen folgte Regen auf ein steigendes Barometer in "
+        "{rising} % der Fälle gegenüber {falling} % bei fallendem — genau "
+        "andersherum. Die Regeln, die diese Leiter ersetzt hat, beruhten "
+        "vollständig auf der Tendenz und erreichten {old}.",
+    "Where the pressure sits does carry signal, but no fixed hPa threshold "
+    "survives the change of season: a plain 'below 1020 hPa' scored a "
+    "critical success index of {low} in one month of the sample and {high} in "
+    "another. Ranking the reading against the station's own last {days} days "
+    "is stable across all of them, which is why the column above is a "
+    "percentile. The tendency is still measured and shown on the pressure "
+    "card, because it is a fact about the last six hours — it is just not "
+    "evidence about the next six.":
+        "Wo der Luftdruck steht, trägt sehr wohl Information, aber keine "
+        "feste hPa-Schwelle übersteht den Jahreszeitenwechsel: Ein schlichtes "
+        "„unter 1020 hPa“ erreichte in einem Monat der Stichprobe einen "
+        "Critical Success Index von {low} und in einem anderen {high}. Den "
+        "Messwert gegen die eigenen letzten {days} Tage der Station zu "
+        "sortieren, ist über alle hinweg stabil — deshalb steht oben ein "
+        "Perzentil. Die Tendenz wird weiterhin gemessen und auf der "
+        "Luftdruck-Kachel gezeigt, denn sie ist eine Tatsache über die "
+        "vergangenen sechs Stunden — nur eben kein Beleg für die nächsten "
+        "sechs.",
+    "Taken as a yes/no rain forecast the ladder scores CSI {csi} and KSS "
+    "{kss}, against {old} for what it replaced.":
+        "Als Ja/Nein-Regenvorhersage gelesen erreicht die Leiter CSI {csi} "
+        "und KSS {kss}, gegenüber {old} für das, was sie ersetzt hat.",
+
+    # The model, in full
+    "🤖 The rain chance: a fitted model":
+        "🤖 Die Regenwahrscheinlichkeit: ein angepasstes Modell",
+    "A logistic regression over {n} features. Each is standardised against "
+    "its training mean, multiplied by a weight, and added up; a sigmoid turns "
+    "that sum into a probability. Serving it is a dot product and a sigmoid, "
+    "so the container carries no numpy and no scikit-learn — the training job "
+    "in CI does, and all it ships back is a small JSON file of names, means, "
+    "scales and weights.":
+        "Eine logistische Regression über {n} Merkmale. Jedes wird gegen "
+        "seinen Trainingsmittelwert standardisiert, mit einem Gewicht "
+        "multipliziert und aufaddiert; eine Sigmoidfunktion macht aus dieser "
+        "Summe eine Wahrscheinlichkeit. Das Auswerten ist ein Skalarprodukt "
+        "und eine Sigmoidfunktion, der Container trägt also weder numpy noch "
+        "scikit-learn — das tut der Trainingslauf in der CI, und zurück kommt "
+        "nur eine kleine JSON-Datei mit Namen, Mittelwerten, Skalen und "
+        "Gewichten.",
+    "Question": "Frage",
+    "{mm} mm of rain within {hours} hours, in the area":
+        "{mm} mm Regen innerhalb von {hours} Stunden, in der Umgebung",
+    "Fitted": "Angepasst",
+    "data through {date}": "Daten bis {date}",
+    "Sample": "Stichprobe",
+    "{n} hours": "{n} Stunden",
+    "{pct}% of them wet": "davon {pct} % nass",
+    "Fires above": "Schlägt an ab",
+
+    "How well it scores": "Wie gut es abschneidet",
+    "Mean squared error of the probability. Lower is better.":
+        "Mittlerer quadratischer Fehler der Wahrscheinlichkeit. Kleiner ist besser.",
+    "How often it ranks a wet hour above a dry one. 0.5 is a coin flip.":
+        "Wie oft es eine nasse Stunde über eine trockene stellt. 0,5 ist ein "
+        "Münzwurf.",
+    "Critical success index of the yes/no call. Higher is better.":
+        "Critical Success Index der Ja/Nein-Entscheidung. Größer ist besser.",
+    "Hanssen-Kuipers score: hit rate minus false-alarm rate.":
+        "Hanssen-Kuipers-Wert: Trefferrate minus Fehlalarmrate.",
+    "This model": "Dieses Modell",
+    "The ladder above": "Die Leiter oben",
+    "Always saying {pct}%": "Immer {pct} % sagen",
+    "Scored walk-forward with weekly refits, never on hours it was fitted on. "
+    "A retrained model only ships if it clears all three gates: skill over "
+    "climatology, ranking at least as well as the ladder, and no sharp "
+    "regression against the model already deployed. Refusing to ship is a "
+    "normal outcome.":
+        "Vorwärtsrollend bewertet, mit wöchentlicher Neuanpassung, nie auf "
+        "Stunden, auf die es angepasst wurde. Ein neu trainiertes Modell geht "
+        "nur live, wenn es alle drei Hürden nimmt: Güte gegenüber der "
+        "Klimatologie, mindestens so gute Sortierung wie die Leiter und kein "
+        "deutlicher Rückschritt gegenüber dem bereits ausgelieferten Modell. "
+        "Nicht auszuliefern ist ein normaler Ausgang.",
+
+    "Why the percentage means rain in the area":
+        "Warum der Prozentwert Regen in der Umgebung meint",
+    'The labels it learned from are a {km} km reanalysis — "did it rain '
+    'around here", not "did it rain on this balcony". That is deliberate, and '
+    'it was measured: trained and judged on a 2 km series instead, the same '
+    'features manage AUC {auc} against {auc_good} on the reanalysis. Point '
+    'rain is a few percent of hours and turns on convective detail a '
+    'barometer cannot see; the synoptic question is the one these sensors can '
+    'answer.':
+        "Die Zielwerte, aus denen es gelernt hat, stammen aus einer "
+        "Reanalyse mit {km} km Auflösung — „hat es hier in der Gegend "
+        "geregnet“, nicht „hat es auf diesem Balkon geregnet“. Das ist "
+        "Absicht, und es wurde nachgemessen: Auf einer 2-km-Reihe trainiert "
+        "und bewertet schaffen dieselben Merkmale AUC {auc} gegenüber "
+        "{auc_good} auf der Reanalyse. Punktregen macht nur wenige Prozent "
+        "der Stunden aus und hängt an konvektiven Details, die ein Barometer "
+        "nicht sieht; die großräumige Frage ist die, die diese Sensoren "
+        "beantworten können.",
+    "Held against point rain at the station, the same model scores Brier "
+    "{brier} with a skill of {bss} — negative, because it is quoting area "
+    "odds at a question about one roof. That is the honest cost of the "
+    "choice, and it is why the pill says nearby.":
+        "Gegen den Punktregen an der Station gehalten erreicht dasselbe "
+        "Modell Brier {brier} bei einer Güte von {bss} — negativ, weil es auf "
+        "eine Frage nach einem einzelnen Dach mit Chancen für die Umgebung "
+        "antwortet. Das ist der ehrliche Preis dieser Entscheidung, und "
+        "deshalb steht auf der Plakette „in der Nähe“.",
+
+    "What is driving the number right now":
+        "Was die Zahl gerade antreibt",
+    "Every weight below is in log-odds, which is the unit the model actually "
+    "adds in. The starting point plus all ten weights is the number the "
+    "sigmoid squashes, so this table is the prediction rather than a picture "
+    "of it.":
+        "Jedes Gewicht unten steht in Log-Odds, der Einheit, in der das "
+        "Modell tatsächlich addiert. Der Ausgangswert plus alle zehn Gewichte "
+        "ergibt die Zahl, die die Sigmoidfunktion zusammenstaucht — diese "
+        "Tabelle ist also die Vorhersage und nicht ein Bild davon.",
+    "Signal": "Größe",
+    "Now": "Jetzt",
+    "vs normal": "vs. normal",
+    "Standard deviations from the training mean.":
+        "Standardabweichungen vom Trainingsmittelwert.",
+    "Weight": "Gewicht",
+    "Starting point, before any signal": "Ausgangswert, vor allen Größen",
+    "Total, squashed to a probability":
+        "Summe, zur Wahrscheinlichkeit gestaucht",
+
+    # Feature names (app/nowcast.py FEATURE_FORMATS)
+    "Pressure rank, 30 days": "Luftdruck-Rang, 30 Tage",
+    "Pressure rank, 7 days": "Luftdruck-Rang, 7 Tage",
+    "Peak humidity, 6 h": "Höchste Feuchte, 6 Std.",
+    "Humidity change, 3 h": "Feuchteänderung, 3 Std.",
+    "Humidity change, 6 h": "Feuchteänderung, 6 Std.",
+    "Dew-point spread": "Taupunktdifferenz",
+    "Pressure change, 6 h": "Luftdruckänderung, 6 Std.",
+    "Pressure change, 12 h": "Luftdruckänderung, 12 Std.",
+
     # ── Current conditions ─────────────────────────────────────────────────
     "Temperature": "Temperatur",
     "Humidity": "Luftfeuchtigkeit",
@@ -259,6 +456,32 @@ def translator(lang: str) -> Callable[..., str]:
         return translated.format(**fields) if fields else translated
 
     return t
+
+
+def rule_describer(lang: str) -> Callable[..., str]:
+    """A ``rule(tier)`` that writes one forecast tier's condition, for Jinja.
+
+    :mod:`app.weather` holds the tiers as a message id and raw numbers, and
+    knows nothing about languages. This is where those numbers pick up the
+    right separators and the month indices become month names — the same
+    split the rest of the page uses, with the catalogue at the edge.
+    """
+    t = translator(lang)
+    months = MONTHS_SHORT[lang]
+
+    def rule(tier: object) -> str:
+        fields: dict[str, object] = {}
+        for key, value in tier.fields.items():  # type: ignore[attr-defined]
+            if key in ("month_first", "month_last"):
+                fields[key.removeprefix("month_")] = months[int(value) - 1]
+            else:
+                # Thresholds are carried as floats; none of them is meant to
+                # be read with a decimal place unless it actually has one.
+                digits = 0 if float(value).is_integer() else 1
+                fields[key] = format_number(value, digits, lang)
+        return t(tier.condition, **fields)  # type: ignore[attr-defined]
+
+    return rule
 
 
 def number_formatter(lang: str) -> Callable[..., str]:

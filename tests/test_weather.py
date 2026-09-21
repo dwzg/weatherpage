@@ -1,5 +1,6 @@
 """Tests for the pure meteorological computations."""
 
+import re
 from datetime import datetime
 from typing import ClassVar
 
@@ -165,6 +166,55 @@ class TestForecast:
                         humidity_trend={"delta": 2.0}, moment=self.SUMMER_AFTERNOON,
                     )
                     assert isinstance(result, str) and result
+
+
+class TestRuleLadder:
+    """The ladder the page prints must still describe the code that runs.
+
+    ``RULE_LADDER`` is documentation, so nothing breaks if it drifts — the
+    forecast keeps working and the explainer quietly starts lying. These
+    drive :func:`compute_forecast` with inputs that satisfy each rung and
+    check it answers with that rung's phrase.
+    """
+
+    #: One set of inputs per rung, chosen to sit inside it and outside the
+    #: rungs above. (percentile, humidity, temperature, dew point, moment)
+    CASES: ClassVar[dict] = {
+        "Rain likely": (0.1, 90.0, 12.0, 10.5, TestForecast.WINTER_NIGHT),
+        "Thunderstorm possible": (0.3, 60.0, 28.0, 20.0,
+                                  TestForecast.SUMMER_AFTERNOON),
+        "Rain possible": (0.3, 70.0, 12.0, 6.5, TestForecast.WINTER_NIGHT),
+        "Unsettled": (0.3, 50.0, 12.0, 2.0, TestForecast.WINTER_NIGHT),
+        "Little change": (0.5, 50.0, 12.0, 2.0, TestForecast.WINTER_NIGHT),
+        "Fair and settled": (0.9, 50.0, 12.0, 2.0, TestForecast.WINTER_NIGHT),
+    }
+
+    def test_every_rung_has_a_worked_case(self):
+        assert {tier.phrase for tier in weather.RULE_LADDER} == set(self.CASES)
+
+    @pytest.mark.parametrize("tier", weather.RULE_LADDER, ids=lambda t: t.phrase)
+    def test_the_rung_produces_the_phrase_it_advertises(self, tier):
+        pct, humidity, temperature, dew, moment = self.CASES[tier.phrase]
+        assert weather.compute_forecast(
+            pct, humidity, temperature, dew, moment=moment
+        ) == tier.phrase
+
+    def test_the_rungs_are_in_the_order_the_code_tests_them(self):
+        """Ordered by the pressure rank they admit, wettest rung first."""
+        observed = [t.observed for t in weather.RULE_LADDER if t.observed is not None]
+        assert observed == sorted(observed, reverse=True)
+
+    def test_every_condition_names_only_fields_it_supplies(self):
+        """A placeholder with no value renders the sentence with a hole in it."""
+        for tier in weather.RULE_LADDER:
+            named = set(re.findall(r"\{(\w+)\}", tier.condition))
+            supplied = {k.removeprefix("month_") for k in tier.fields}
+            assert named == supplied, tier.phrase
+
+    def test_the_top_rung_beat_the_base_rate(self):
+        """The ladder is only worth printing if its tiers separated anything."""
+        rates = [t.observed for t in weather.RULE_LADDER if t.observed is not None]
+        assert max(rates) > weather.CALIBRATION_BASE_RATE > min(rates)
 
 
 class TestForecastEmoji:
