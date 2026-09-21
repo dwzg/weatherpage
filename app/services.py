@@ -20,6 +20,13 @@ SPARK_PERIOD = "3h"
 #: forecast alone.
 NOWCAST_MODEL = nowcast.load()
 
+#: The sky model, same shape and same features, fitted against observed cloud
+#: cover instead of rainfall. Far more likely to be ``None`` than the one
+#: above: it ships only once ``ml/train.py`` has one that clears its gates,
+#: and on a short or single-season archive it correctly refuses. While it is
+#: absent the outlook is exactly what it always was — the threshold ladder.
+SKY_MODEL = nowcast.load(nowcast.SKY_MODEL_PATH)
+
 #: Windows the nowcast's features are measured over. They must match the
 #: ones ml/train.py replays, which it guarantees by calling this module.
 NOWCAST_PRESSURE_HOURS = (6, 12)
@@ -69,13 +76,22 @@ async def build_status() -> dict | None:
     # the smoothed pair so the spread is consistent with them.
     smooth_t = temp_trend["current"] if temp_trend else temperature
     smooth_h = humidity_trend["current"] if humidity_trend else humidity
-    forecast = weather.compute_forecast(
-        percentile,
-        smooth_h,
-        smooth_t,
-        weather.compute_dew_point(smooth_t, smooth_h),
-        humidity_trend,
-    )
+    smooth_dew = weather.compute_dew_point(smooth_t, smooth_h)
+    rain, sky = run_nowcast(features), run_sky(features)
+
+    # Composed from both fitted models where both are available, and from the
+    # threshold ladder where they are not. The two paths agree on the rungs
+    # no label exists for — fog and the convective afternoon are hand-made in
+    # either — and differ on the ones that now have evidence behind them.
+    if rain is not None and sky is not None:
+        forecast = weather.compose_forecast(
+            rain["probability"], rain["threshold"], sky["probability"],
+            smooth_h, smooth_t, smooth_dew, humidity_trend,
+        )
+    else:
+        forecast = weather.compute_forecast(
+            percentile, smooth_h, smooth_t, smooth_dew, humidity_trend,
+        )
 
     return {
         "current": current,
@@ -85,7 +101,11 @@ async def build_status() -> dict | None:
         "pressure_percentile": percentile,
         "forecast": forecast,
         "forecast_emoji": weather.forecast_emoji(forecast),
-        "nowcast": run_nowcast(features),
+        "nowcast": rain,
+        "sky": sky,
+        # Which of the two paths produced the phrase above. The explainer
+        # prints a different ladder for each, so it has to be told.
+        "outlook_is_learned": rain is not None and sky is not None,
         "frost_warning": weather.is_frost_risk(temperature),
         "yesterday": yesterday,
         "stale": is_stale(current["timestamp"]),
@@ -218,6 +238,40 @@ def run_nowcast(
         "cross_check": meta.get("cross_check_2km"),
         "intercept": round(model.intercept, 3),
         "logit": round(model.logit(features), 3),
+        "contributions": nowcast_breakdown(model, features),
+    }
+
+
+def run_sky(
+    features: dict[str, float] | None, model: nowcast.Model | None = None
+) -> dict | None:
+    """Turn a feature vector into the sky half of the outlook.
+
+    Deliberately thinner than :func:`run_nowcast`. The rain probability is a
+    number the page shows in its own right, with a model card and a live
+    breakdown beside it; the sky probability exists to decide a word on the
+    banner, so it carries what the explainer needs to justify that word and
+    nothing more.
+    """
+    model = model if model is not None else SKY_MODEL
+    if model is None or features is None:
+        return None
+    if any(name not in features for name in model.features):
+        return None
+
+    probability = model.predict(features)
+    meta = model.metadata
+    return {
+        "probability": round(probability, 3),
+        "band": weather.sky_band(probability),
+        "label": nowcast.describe_sky(probability),
+        "overcast_percent": meta.get("overcast_percent", nowcast.OVERCAST_PERCENT),
+        "horizon_hours": nowcast.HORIZON_HOURS,
+        "trained_at": meta.get("trained_at"),
+        "samples": meta.get("samples"),
+        "base_rate": meta.get("base_rate"),
+        "skill": meta.get("skill"),
+        "baselines": meta.get("baselines"),
         "contributions": nowcast_breakdown(model, features),
     }
 

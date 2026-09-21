@@ -351,6 +351,185 @@ def compute_forecast(
     return _air_now(f)
 
 
+# ── Composing the outlook from the two fitted models ───────────────────────
+#
+# The ladder above reads raw sensor values through thresholds fitted by hand.
+# Where a model exists, the same ladder reads its probability instead, and the
+# rung stops being an assertion and starts being a measurement.
+#
+# Only two of the axes have ground truth to fit against, and that is not a
+# choice — it is what the label sources actually contain. Measured over two
+# years of the reanalysis at the station's own location:
+#
+#   * Rain has labels (observed precipitation) and a model: app/model.json.
+#   * Cloud has labels (observed cloud cover) and a model: app/sky_model.json.
+#     It replaces the humidity-only guess behind "Fair and settled" and
+#     "Overcast and humid" — the one claim on the banner with nothing
+#     measured behind it.
+#   * Fog has NO label. The archive emits its fog codes (45, 48) exactly zero
+#     times in 17,520 hours, at a valley site where fog is common. That is a
+#     property of how the reanalysis derives the code, not of the weather.
+#   * Thunderstorms have NO label either: zero occurrences of codes 95-99,
+#     and the archive's CAPE field comes back empty.
+#
+# So those two rungs stay hand-made. A model cannot be fitted to a label that
+# does not exist, and pretending otherwise would put a learned-looking number
+# on a guess.
+
+#: The three states the sky model's probability is read as. Strings rather
+#: than an enum because they are compared in one place and printed in none.
+SKY_OVERCAST = "overcast"
+SKY_MIXED = "mixed"
+SKY_CLEAR = "clear"
+
+#: Where the bands are cut. Unlike the rain model's threshold — which
+#: training fits by maximising CSI and writes into model.json — these are
+#: chosen by hand, and they can be, because the probability is calibrated:
+#: at 0.60 roughly three in five such hours really are overcast. A middle
+#: band exists so that "the model is unsure" and "the sky is genuinely
+#: mixed" are not reported as the same thing.
+SKY_OVERCAST_PROBABILITY = 0.60
+SKY_CLEAR_PROBABILITY = 0.30
+
+
+def sky_band(probability: float) -> str:
+    """Which of the three sky states a probability falls in."""
+    if probability >= SKY_OVERCAST_PROBABILITY:
+        return SKY_OVERCAST
+    if probability < SKY_CLEAR_PROBABILITY:
+        return SKY_CLEAR
+    return SKY_MIXED
+
+
+def compose_forecast(
+    rain_probability: float,
+    rain_threshold: float,
+    sky_probability: float,
+    humidity: float,
+    temperature: float | None = None,
+    dew_point: float | None = None,
+    humidity_trend: dict | None = None,
+    moment: datetime | None = None,
+) -> str:
+    """The outlook, composed from both fitted models plus the unlabelled rungs.
+
+    Used in place of :func:`compute_forecast` whenever both models are loaded
+    and the feature vector is complete. When either is missing — a young
+    database, or an image built before the sky model was first fitted — the
+    caller falls back to the threshold ladder, which is what the outlook has
+    always been and remains fully tested.
+
+    The rain bands are :func:`app.nowcast.describe`'s, so the phrase on the
+    banner and the word printed beside the percentage are the same decision
+    read twice and cannot drift into contradicting each other.
+    """
+    if moment is None:
+        from .clock import now
+
+        moment = now()
+
+    from .nowcast import describe
+
+    f = ForecastInputs.build(
+        None, humidity, temperature, dew_point, humidity_trend, moment
+    )
+    rain = describe(rain_probability, rain_threshold)
+
+    if rain == "likely":
+        return "Rain likely"
+
+    # Hand-made, and staying that way: a warm humid afternoon carries a risk
+    # the barometer cannot see, and no label source scores it.
+    if f.convective:
+        return "Thunderstorm possible"
+
+    if rain == "possible":
+        return "Rain possible"
+
+    # Also hand-made, for the same reason. Tested before the sky rungs
+    # because saturated air that is still wetting is the more specific claim.
+    if f.near_saturation and f.humidity_rising:
+        return "Fog or drizzle possible"
+
+    band = sky_band(sky_probability)
+    if band == SKY_OVERCAST:
+        return "Overcast and humid" if f.humidity > HUMIDITY_MUGGY else "Cloudy"
+    if band == SKY_CLEAR:
+        return "Fair and settled" if f.humidity < HUMIDITY_WET else "Settled but humid"
+    return "Little change"
+
+
+def learned_ladder(rain_threshold: float) -> tuple[Tier, ...]:
+    """The composed ladder, for the explainer to print.
+
+    A function rather than a constant because one of its cut points is not a
+    constant: the rain threshold is fitted, and arrives in model.json. Same
+    contract as :data:`RULE_LADDER` — generated from the numbers
+    :func:`compose_forecast` actually reads, so retuning a band moves the page
+    with it, and ``tests/test_weather.py`` drives the function to check the
+    two still agree.
+    """
+    return (
+        Tier(
+            "Rain likely",
+            "Rain model above {pct}%",
+            {"pct": round(max(rain_threshold, 0.6) * 100)},
+            None,
+            note="fitted against observed rainfall",
+        ),
+        Tier(
+            "Thunderstorm possible",
+            "Above {temp}°C and humidity above {rh}%, {start}:00 to {end}:59",
+            {
+                "temp": CONVECTIVE_TEMP_C,
+                "rh": CONVECTIVE_HUMIDITY,
+                "start": min(CONVECTIVE_HOURS),
+                "end": max(CONVECTIVE_HOURS),
+            },
+            None,
+            note="hand-made: no label source scores thunderstorms here",
+        ),
+        Tier(
+            "Rain possible",
+            "Rain model above {pct}%",
+            {"pct": round(rain_threshold * 100)},
+            None,
+            note="fitted against observed rainfall",
+        ),
+        Tier(
+            "Fog or drizzle possible",
+            "Dew-point spread under {spread}°C and humidity rising",
+            {"spread": SATURATION_SPREAD_C},
+            None,
+            note="hand-made: the archive records no fog at all",
+        ),
+        Tier(
+            "Cloudy",
+            "Sky model above {pct}%",
+            {"pct": round(SKY_OVERCAST_PROBABILITY * 100)},
+            None,
+            note="fitted against observed cloud cover",
+        ),
+        Tier(
+            "Little change",
+            "Sky model between {low}% and {high}%",
+            {
+                "low": round(SKY_CLEAR_PROBABILITY * 100),
+                "high": round(SKY_OVERCAST_PROBABILITY * 100),
+            },
+            None,
+            note="fitted against observed cloud cover",
+        ),
+        Tier(
+            "Fair and settled",
+            "Sky model below {pct}%, humidity below {rh}%",
+            {"pct": round(SKY_CLEAR_PROBABILITY * 100), "rh": HUMIDITY_WET},
+            None,
+            note="fitted against observed cloud cover",
+        ),
+    )
+
+
 #: Forecast phrase fragments mapped to the emoji shown beside them.
 #:
 #: Order matters and matching is case-insensitive, which the original rules
@@ -363,7 +542,7 @@ _FORECAST_EMOJI: tuple[tuple[tuple[str, ...], str], ...] = (
     (("storm", "thunder"), "⛈️"),
     (("rain",), "🌧️"),
     (("fog", "drizzle"), "🌫️"),
-    (("unsettled", "overcast", "humid"), "☁️"),
+    (("unsettled", "overcast", "humid", "cloud"), "☁️"),
     (("clearing", "improv", "fair", "settled"), "☀️"),
 )
 

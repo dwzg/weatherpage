@@ -67,6 +67,7 @@ GERMAN: dict[str, str] = {
     "Settled but humid": "Beständig, aber schwül",
     "Overcast and humid": "Bedeckt und schwül",
     "Fair and settled": "Heiter und beständig",
+    "Cloudy": "Bewölkt",
     "Little change": "Wenig Veränderung",
     "Not enough data": "Nicht genug Daten",
 
@@ -166,6 +167,68 @@ GERMAN: dict[str, str] = {
         "Luftdruck in der Mitte seiner Spanne, {low} % bis {high} %",
     "Pressure above the {pct}th percentile, humidity below {rh}%":
         "Luftdruck über dem {pct}. Perzentil, Feuchte unter {rh} %",
+
+    # The tier conditions and notes of the composed ladder
+    # (app/weather.py learned_ladder)
+    "Rain model above {pct}%": "Regenmodell über {pct} %",
+    "Sky model above {pct}%": "Wolkenmodell über {pct} %",
+    "Sky model between {low}% and {high}%":
+        "Wolkenmodell zwischen {low} % und {high} %",
+    "Sky model below {pct}%, humidity below {rh}%":
+        "Wolkenmodell unter {pct} %, Feuchte unter {rh} %",
+    "Above {temp}°C and humidity above {rh}%, {start}:00 to {end}:59":
+        "Über {temp} °C und Feuchte über {rh} %, {start}:00 bis {end}:59",
+    "Dew-point spread under {spread}°C and humidity rising":
+        "Taupunktdifferenz unter {spread} °C und steigende Feuchte",
+    "fitted against observed rainfall":
+        "an beobachtetem Niederschlag angepasst",
+    "fitted against observed cloud cover":
+        "an beobachteter Bewölkung angepasst",
+    "hand-made: no label source scores thunderstorms here":
+        "von Hand: keine Datenquelle bewertet hier Gewitter",
+    "hand-made: the archive records no fog at all":
+        "von Hand: das Archiv verzeichnet überhaupt keinen Nebel",
+
+    # How the sky probability is worded (app/nowcast.py describe_sky)
+    "mostly cloudy": "überwiegend bewölkt",
+    "some cloud": "teils bewölkt",
+    "mostly clear": "überwiegend klar",
+
+    # The composed ladder's own section of the explainer
+    "☀️ The outlook: two models and two rules":
+        "☀️ Die Aussicht: zwei Modelle und zwei Regeln",
+    "Evidence": "Grundlage",
+    "Tested in order, and the first rung that matches wins. Four of these "
+    "rungs read a fitted probability — one model for rain, one for cloud, "
+    "both from the same ten measurements. Two of them do not, and cannot: "
+    "see below.":
+        "Der Reihe nach geprüft; die erste zutreffende Sprosse gewinnt. Vier "
+        "dieser Sprossen lesen eine angepasste Wahrscheinlichkeit — ein "
+        "Modell für Regen, eines für Bewölkung, beide aus denselben zehn "
+        "Messwerten. Zwei tun das nicht, und können es nicht: siehe unten.",
+    "Why two of them are still hand-made: no label source scores either. Over "
+    "two years of the reanalysis at this location there are zero fog codes "
+    "and zero thunderstorm codes, and its convective-energy field is empty. A "
+    "model cannot be fitted to a label that does not exist, so those rungs "
+    "stay thresholds and say so.":
+        "Warum zwei davon weiterhin von Hand stammen: Keine Datenquelle "
+        "bewertet sie. Über zwei Jahre der Reanalyse an diesem Ort gibt es "
+        "null Nebel-Codes und null Gewitter-Codes, und ihr Feld für "
+        "konvektive Energie ist leer. Ein Modell lässt sich nicht an ein "
+        "Label anpassen, das es nicht gibt; diese Sprossen bleiben daher "
+        "Schwellenwerte und sagen das auch.",
+    "The cloud model was fitted on {samples} hours and scored walk-forward: "
+    "AUC {auc}, Brier skill {bss} against climatology. What it replaces is "
+    "the humidity threshold this ladder used to read, which scored AUC "
+    "{rules}.":
+        "Das Wolkenmodell wurde an {samples} Stunden angepasst und "
+        "vorwärtsschreitend bewertet: AUC {auc}, Brier-Skill {bss} gegenüber "
+        "der Klimatologie. Es ersetzt den Feuchte-Schwellenwert, den diese "
+        "Leiter zuvor las und der AUC {rules} erreichte.",
+    "Right now it puts the chance of a mostly overcast next {hours} hours "
+    "at {pct}%.":
+        "Aktuell beziffert es die Chance auf überwiegend bedeckte nächste "
+        "{hours} Stunden mit {pct} %.",
 
     "Why the barometer is read as a level, not a tendency":
         "Warum das Barometer als Stand und nicht als Tendenz gelesen wird",

@@ -409,3 +409,55 @@ class TestTrainerReadsTheRawArchive:
         workflow = (self.SOURCE.parent.parent
                     / ".github" / "workflows" / "retrain.yml").read_text()
         assert "API_KEY: ${{ secrets.API_KEY }}" in workflow
+
+
+class TestTrainerAndAppAgree:
+    """Constants the trainer bakes into labels and the app prints to readers.
+
+    Parsed rather than imported, like the test above: ml/train.py pulls in
+    numpy and scikit-learn, which are training dependencies and deliberately
+    absent from the image. A disagreement here would be invisible — the page
+    would describe one threshold while the model had been fitted to another.
+    """
+
+    SOURCE = Path(__file__).resolve().parent.parent / "ml" / "train.py"
+
+    def assigned(self, name: str):
+        import ast
+
+        tree = ast.parse(self.SOURCE.read_text())
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign) and any(
+                isinstance(t, ast.Name) and t.id == name for t in node.targets
+            ):
+                return ast.literal_eval(node.value)
+        raise AssertionError(f"{name} is not assigned in {self.SOURCE.name}")
+
+    def test_overcast_means_the_same_on_both_sides(self):
+        from app import nowcast
+
+        assert self.assigned("OVERCAST_PERCENT") == nowcast.OVERCAST_PERCENT
+
+    def test_the_horizon_is_the_same_on_both_sides(self):
+        from app import nowcast
+
+        assert self.assigned("HORIZON_HOURS") == nowcast.HORIZON_HOURS
+
+    def test_the_rain_amount_is_the_same_on_both_sides(self):
+        from app import nowcast
+
+        assert self.assigned("RAIN_MM") == nowcast.RAIN_MM
+
+    def test_the_trainer_fits_both_targets_from_one_feature_tuple(self):
+        """Two models, one vector: a feature that meant different things to
+        the two would make their contributions incomparable."""
+        features = self.assigned("FEATURES")
+        from app import nowcast
+
+        assert set(features) <= set(nowcast.FEATURE_FORMATS)
+
+    def test_the_trainer_writes_the_path_the_app_loads(self):
+        from app import nowcast
+
+        assert nowcast.SKY_MODEL_PATH.name in self.SOURCE.read_text()
+        assert nowcast.MODEL_PATH.name in self.SOURCE.read_text()

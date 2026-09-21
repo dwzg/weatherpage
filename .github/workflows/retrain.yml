@@ -1,8 +1,15 @@
-name: Retrain the rain nowcast
+name: Retrain the nowcasts
 
-# The model is fitted from the station's own readings against observed
-# rainfall, so it gets better as the archive grows. Once a week is often
+# The models are fitted from the station's own readings against observed
+# weather, so they get better as the archive grows. Once a week is often
 # enough to matter and rare enough to stay reviewable in the commit log.
+#
+# Two come out of one run: rain, labelled by observed precipitation, and sky,
+# labelled by observed cloud cover. They share a feature vector and a replay
+# but are gated independently, so a run that ships one and refuses the other
+# is working as intended. The sky model in particular needs a year or so of
+# archive before it clears — on a single season it is measurably worse than
+# quoting the long-run average, and the gates catch that.
 on:
   schedule:
     - cron: "17 4 * * 1"   # Mondays, 04:17 UTC
@@ -53,14 +60,22 @@ jobs:
           STATION_LONGITUDE: ${{ secrets.STATION_LONGITUDE }}
         run: python ml/train.py ${{ inputs.force && '--force' || '' }} | tee training.log
 
-      - name: Did the model change?
+      # Two models come out of one run and are gated separately, so either,
+      # both or neither may have moved. Anything that changed is committed
+      # together; nothing changing is a normal outcome.
+      - name: Did either model change?
         id: changed
         run: |
-          if git diff --quiet -- app/model.json; then
+          # `git status`, not `git diff`: the first sky model ever fitted is
+          # an untracked file, and git diff cannot see those. Detecting it
+          # with diff would report "no change", skip the commit and throw the
+          # model away — on that run and on every run after it.
+          if [ -z "$(git status --porcelain -- app/model.json app/sky_model.json)" ]; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
-            echo "The candidate did not clear the gates, or matched the shipped model."
+            echo "No candidate cleared its gates, or both matched what is shipped."
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
+            git status --short -- app/model.json app/sky_model.json
           fi
 
       # A model is data the app trusts, so it goes through the same checks a
@@ -77,17 +92,22 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           {
-            echo "Retrain the rain nowcast"
+            echo "Retrain the nowcasts"
             echo
             echo "Fitted by .github/workflows/retrain.yml from the station's own"
-            echo "readings against observed rainfall. It replaced the previous model"
-            echo "only by clearing the gates in ml/train.py, which are measured"
+            echo "readings: the rain model against observed rainfall, the sky model"
+            echo "against observed cloud cover. Each replaced what was shipped only"
+            echo "by clearing its own gates in ml/train.py, which are measured"
             echo "walk-forward; the scores and the baselines they were compared"
-            echo "against are in app/model.json under metadata."
+            echo "against are in each file under metadata."
             echo
-            sed -n '/walk-forward/,$p' training.log | head -n 12
+            sed -n '/walk-forward/,$p' training.log | head -n 24
           } > "$RUNNER_TEMP/commit-message.txt"
-          git add app/model.json
+          # `git add` is fatal on a path that does not exist, and a run
+          # before the sky model has ever cleared its gates has only one file.
+          for model in app/model.json app/sky_model.json; do
+            [ -e "$model" ] && git add "$model"
+          done
           git commit --file "$RUNNER_TEMP/commit-message.txt"
           git push origin HEAD:main
 
