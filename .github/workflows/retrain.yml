@@ -46,6 +46,9 @@ jobs:
       - name: Fit the model
         env:
           APP_URL: ${{ secrets.APP_URL }}
+          # /api/weather/export is behind the API key: it is the one endpoint
+          # that hands back the raw archive rather than a chart-sized summary.
+          API_KEY: ${{ secrets.API_KEY }}
           STATION_LATITUDE: ${{ secrets.STATION_LATITUDE }}
           STATION_LONGITUDE: ${{ secrets.STATION_LONGITUDE }}
         run: python ml/train.py ${{ inputs.force && '--force' || '' }} | tee training.log

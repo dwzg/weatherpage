@@ -98,7 +98,9 @@ TS_FORMAT = "%Y-%m-%d %H:%M:%S"
 # ── Inputs ─────────────────────────────────────────────────────────────────
 
 
-def fetch_json(url: str, timeout: int = 120, attempts: int = 5) -> dict | list:
+def fetch_json(
+    url: str, timeout: int = 120, attempts: int = 5, headers: dict | None = None
+) -> dict | list:
     """GET some JSON, retrying the failures a free weather API actually hands out.
 
     Open-Meteo rate-limits with 429 and occasionally 5xx. A weekly job that
@@ -108,7 +110,8 @@ def fetch_json(url: str, timeout: int = 120, attempts: int = 5) -> dict | list:
     delay = 10
     for attempt in range(1, attempts + 1):
         try:
-            with urllib.request.urlopen(url, timeout=timeout) as response:
+            request = urllib.request.Request(url, headers=headers or {})
+            with urllib.request.urlopen(request, timeout=timeout) as response:
                 return json.loads(response.read())
         except urllib.error.HTTPError as error:
             retryable = error.code == 429 or 500 <= error.code < 600
@@ -125,14 +128,49 @@ def fetch_json(url: str, timeout: int = 120, attempts: int = 5) -> dict | list:
     raise RuntimeError("unreachable")
 
 
-def fetch_readings(app_url: str) -> list[dict]:
-    """Every reading the station has, from its own public history endpoint."""
-    payload = fetch_json(f"{app_url.rstrip('/')}/api/weather/history?period=all")
-    rows = payload["readings"] if isinstance(payload, dict) else payload
+def fetch_readings(app_url: str, api_key: str | None = None) -> list[dict]:
+    """Every raw reading the station has, walked page by page.
+
+    Deliberately NOT /api/weather/history. That endpoint downsamples above
+    TARGET_CHART_POINTS, so on any archive longer than a few days it returns
+    bucket averages — and it did, for months: a 92-day archive of ~26,500
+    readings came back as 734 three-hourly points. The features replayed
+    below are 30-minute medians and 6 and 12 hour deltas over a 5-minute
+    grid, and none of them can be completed from 3-hourly means, so every
+    run produced zero samples, printed "too few samples" and exited 0. A
+    green tick and nothing learned.
+
+    /export never downsamples. It needs the API key, and pages with a
+    (timestamp, utc_offset) cursor because a timestamp alone is not unique
+    across the repeated hour of the autumn DST fallback.
+    """
+    base = f"{app_url.rstrip('/')}/api/weather/export"
+    headers = {"X-API-Key": api_key} if api_key else {}
+    rows: list[dict] = []
+    cursor: dict | None = None
+
+    while True:
+        query = urllib.parse.urlencode(cursor) if cursor else ""
+        payload = fetch_json(f"{base}?{query}" if query else base, headers=headers)
+        page = payload["readings"]
+        rows.extend(page)
+        cursor = payload.get("next")
+        if not cursor:
+            break
+        print(f"  {len(rows)} readings so far")
+
     for row in rows:
         row["dt"] = datetime.strptime(row["timestamp"], TS_FORMAT)
-    rows.sort(key=lambda r: r["dt"])
+    # The server already returns them oldest first; sorting is belt and
+    # braces for a replay whose whole correctness rests on the order.
+    rows.sort(key=lambda r: (r["dt"], -row_offset(r)))
     return rows
+
+
+def row_offset(row: dict) -> int:
+    """A reading's UTC offset, defaulting for a row that predates the column."""
+    value = row.get("utc_offset")
+    return int(value) if value is not None else 0
 
 
 def station_location(latitude: float | None, longitude: float | None) -> tuple[float, float]:
@@ -230,12 +268,16 @@ async def replay(readings: list[dict], rain: dict[datetime, float]) -> list[dict
                 batch = []
                 while cursor < len(readings) and readings[cursor]["dt"] <= moment:
                     row = readings[cursor]
-                    # The history endpoint reports the wall clock only, so the
-                    # offset is resolved from it — the same first-pass reading
-                    # of a repeated autumn hour the migration takes.
+                    # /export carries the offset each reading was stored with,
+                    # so the repeated autumn hour replays as the two distinct
+                    # hours it was. Only a local --readings file lacks it, and
+                    # then the wall clock is all there is to go on — the same
+                    # first-pass reading the migration takes.
+                    offset = row.get("utc_offset")
                     batch.append((row["temperature"], row["humidity"], row["pressure"],
                                   row["timestamp"],
-                                  clock.resolve_offset(row["timestamp"])))
+                                  int(offset) if offset is not None
+                                  else clock.resolve_offset(row["timestamp"])))
                     cursor += 1
                 if batch:
                     async with database.acquire() as db:
@@ -375,6 +417,8 @@ def baselines(samples: list[dict], truth: np.ndarray) -> dict:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--app-url", default=os.environ.get("APP_URL", DEFAULT_APP_URL))
+    parser.add_argument("--api-key", default=os.environ.get("API_KEY"),
+                        help="key for /api/weather/export; defaults to $API_KEY")
     parser.add_argument("--out", type=Path, default=REPO / "app" / "model.json")
     parser.add_argument("--readings", type=Path, help="a local readings JSON, instead of fetching")
     parser.add_argument("--rainfall", type=Path,
@@ -388,7 +432,9 @@ def main() -> int:
     args = parser.parse_args()
 
     readings = (
-        json.loads(args.readings.read_text()) if args.readings else fetch_readings(args.app_url)
+        json.loads(args.readings.read_text())
+        if args.readings
+        else fetch_readings(args.app_url, args.api_key)
     )
     if args.readings:
         for row in readings:

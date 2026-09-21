@@ -17,6 +17,7 @@ Dynamic weather dashboard ("Balcony Weather Station") served by a FastAPI app in
                                             ├── GET    /api/weather/history?period=...
                                             ├── GET    /api/weather/stats?period=...
                                             ├── GET    /api/weather/daily?months=...  ← calendar heatmap
+                                            ├── GET    /api/weather/export     ← raw archive, paged (API key)
                                             ├── GET    /healthz                ← container healthcheck
                                             └── GET    /                       ← serves UI
 ```
@@ -121,8 +122,8 @@ summary`) precisely so the nested handle does not inherit the card's own.
 ### How the nowcast is trained and shipped
 
 `ml/train.py` (run by `.github/workflows/retrain.yml`, Mondays) pulls the
-station's readings from its own public history endpoint and observed hourly
-rainfall from Open-Meteo's ERA5 archive for the labels. It fits a logistic
+station's readings from `/api/weather/export` and observed hourly rainfall
+from Open-Meteo's ERA5 archive for the labels. It fits a logistic
 regression, scores it walk-forward with weekly refits, and writes
 `app/model.json` **only if** the candidate clears the gates in that file:
 skill over climatology, ranking at least as well as the rules, and no sharp
@@ -156,6 +157,18 @@ Three things are load-bearing here:
   bound — right in production, but against a fully populated table every
   historical hour would get the values from the end of the series. That bug
   produced a model that looked plausible and had learned nothing.
+- **The trainer reads `/export`, never `/history`.** `/history` downsamples
+  above `TARGET_CHART_POINTS`, which is right for a chart and ruinous here:
+  on a 92-day archive it turned ~26,500 readings into 734 three-hourly
+  averages, and none of the features — 30-minute medians, 6 and 12 hour
+  deltas — can be completed from those. Every run therefore found **zero**
+  labelled hours, printed "too few samples", and exited 0. A weekly job that
+  was green and decorative for months. `/export` never downsamples; it is
+  behind the API key because an unbucketed archive is the largest response
+  this app serves, and it pages with a `(timestamp, utc_offset)` cursor
+  because a timestamp alone is not unique across the repeated autumn hour.
+  `tests/test_api.py::TestTrainerReadsTheRawArchive` parses the trainer and
+  fails if a `/history` URL reappears in it.
 - **The image carries no ML dependency.** `app/nowcast.py` evaluates the
   model with a dot product and a sigmoid; numpy and scikit-learn live in
   `ml/requirements.txt` and are installed only by the retraining job.
@@ -230,7 +243,7 @@ An empty database renders the "waiting for first reading" placeholder, so seed s
 `pytest` and `ruff` run on every pull request (`.github/workflows/ci.yml`), alongside a Docker build and a container smoke test.
 
 ```bash
-pytest -q          # 347 tests
+pytest -q          # 361 tests
 ruff check .
 ```
 
@@ -281,7 +294,7 @@ Versioning the query string then fixed only the entry point. The page hands the 
 
 - `APP_URL` — base URL of the running app. Used by the relay workflow (`main.yml`) to forward HA webhook data.
 - `STATION_LATITUDE` / `STATION_LONGITUDE` — where the station stands, read by `ml/train.py` to ask Open-Meteo for the rainfall that labels the training data. **They are deliberately not in the repository**, and the trainer has no fallback: a default would either be wrong, and quietly label the data with another place's weather, or be the real location, which is what these keep out of a public file. An unset secret fails the retraining run. To run the trainer locally, export them or pass `--latitude` / `--longitude`.
-- `API_KEY` — shared secret protecting `POST /api/weather` and `DELETE /api/weather/cleanup`. Must match between the app (env var), the relay workflow, and (eventually) Home Assistant. When the env var is unset those endpoints are unauthenticated, which is how local dev works.
+- `API_KEY` — shared secret protecting `POST /api/weather`, `DELETE /api/weather/cleanup` and `GET /api/weather/export`. The retraining workflow passes it too, since the trainer reads the export endpoint. Must match between the app (env var), the relay workflow, and (eventually) Home Assistant. When the env var is unset those endpoints are unauthenticated, which is how local dev works.
 - `PORTAINER_WEBHOOK_URL` — Portainer webhook URL triggered by `deploy.yml` after a successful image push.
 - `GITHUB_TOKEN` — auto-provided, used for GHCR login and push.
 - `DELETE_PACKAGES_TOKEN` — personal access token with `delete:packages` scope for cleaning old untagged images.

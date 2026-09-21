@@ -101,6 +101,56 @@ async def get_status() -> dict:
     return payload
 
 
+@router.get("/export", dependencies=[Depends(require_api_key)])
+async def export(
+    after: str | None = Query(None, description="exclusive cursor timestamp"),
+    after_offset: int | None = Query(None, description="that cursor's utc_offset"),
+    to_ts: str | None = Query(None, alias="to", description="inclusive upper bound"),
+    limit: int = Query(
+        database.EXPORT_PAGE_SIZE, ge=1, le=database.EXPORT_MAX_PAGE_SIZE
+    ),
+) -> dict:
+    """Raw readings for the retraining job, paged oldest first.
+
+    Deliberately separate from ``/history``, which downsamples above
+    TARGET_CHART_POINTS: this one never does, which is the whole point of it.
+    It is behind the API key because an unbucketed archive is a far larger
+    response than anything else here, not because the numbers are secret.
+
+    ``next`` carries the cursor for the following page, or is ``null`` when
+    the last page came back short. The cursor is a ``(timestamp, offset)``
+    pair because a timestamp alone is not unique across the repeated hour of
+    the autumn DST fallback.
+    """
+    if (after is None) != (after_offset is None):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="'after' and 'after_offset' must be given together",
+        )
+    try:
+        readings = await database.export_readings(
+            after=(after, after_offset) if after is not None else None,
+            until=to_ts,
+            limit=limit,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
+
+    # A short page is the last one. A full page might be exactly the end of
+    # the data, in which case the caller spends one more request finding out.
+    last = readings[-1] if len(readings) == limit else None
+    return {
+        "readings": readings,
+        "next": (
+            {"after": last["timestamp"], "after_offset": last["utc_offset"]}
+            if last
+            else None
+        ),
+    }
+
+
 @router.get("/history")
 async def get_history(period: str = PeriodQuery) -> dict:
     """Readings for ``period``.
