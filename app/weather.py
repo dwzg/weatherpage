@@ -94,9 +94,9 @@ def is_frost_risk(temp_c: float) -> bool:
 # ── Forecast ───────────────────────────────────────────────────────────────
 #
 # These rules were fitted against 90 days of this station's readings scored
-# on observed hourly rainfall at Rheinfelden. That reference data was used
-# offline, for calibration only: the app itself fetches nothing and forecasts
-# from its own sensor. What the scoring showed:
+# on observed hourly rainfall for the station's own location. That reference
+# data was used offline, for calibration only: the app itself fetches nothing
+# and forecasts from its own sensor. What the scoring showed:
 #
 #   * The barometric tendency every weather-lore rule reaches for first has
 #     NEGATIVE skill here. "Pressure fell more than 1 hPa in 6 hours" scored

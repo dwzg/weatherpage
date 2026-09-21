@@ -40,9 +40,14 @@ jobs:
       - name: Install training dependencies
         run: pip install -r ml/requirements.txt -r requirements-dev.txt
 
+      # The station's coordinates are not in the repository — ml/train.py
+      # refuses to guess, so an unset secret fails the run rather than
+      # labelling the data with some other place's rain.
       - name: Fit the model
         env:
           APP_URL: ${{ secrets.APP_URL }}
+          STATION_LATITUDE: ${{ secrets.STATION_LATITUDE }}
+          STATION_LONGITUDE: ${{ secrets.STATION_LONGITUDE }}
         run: python ml/train.py ${{ inputs.force && '--force' || '' }} | tee training.log
 
       - name: Did the model change?

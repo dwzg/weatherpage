@@ -29,6 +29,7 @@ import sys
 import tempfile
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -53,8 +54,21 @@ DEFAULT_APP_URL = "https://weather.wtzg.de"
 # fetched and scored, as a check that the two have not drifted apart.
 ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive"
 HIGH_RESOLUTION_URL = "https://historical-forecast-api.open-meteo.com/v1/forecast"
-#: Rheinfelden (Baden). Only used to ask for the rainfall that labels the data.
-LATITUDE, LONGITUDE = 47.5606, 7.7924
+
+#: Where the station stands, used only to ask Open-Meteo for the rainfall that
+#: labels the data. It is supplied by the environment rather than written down
+#: here: the coordinates are the one thing in this repository that says where
+#: somebody lives, and this file is public. In CI they come from the
+#: STATION_LATITUDE and STATION_LONGITUDE secrets.
+#:
+#: There is deliberately no fallback. A default would be either wrong — which
+#: would label the data with some other place's weather and quietly poison the
+#: model — or the real location, which is the thing being kept out of the file.
+LOCATION_VARS = ("STATION_LATITUDE", "STATION_LONGITUDE")
+
+#: The rainfall hours must line up with the station's local timestamps, which
+#: app.clock reads from the same variable.
+TIMEZONE = os.environ.get("TIMEZONE", "Europe/Berlin")
 
 HORIZON_HOURS = 6
 RAIN_MM = 0.2
@@ -121,8 +135,33 @@ def fetch_readings(app_url: str) -> list[dict]:
     return rows
 
 
+def station_location(latitude: float | None, longitude: float | None) -> tuple[float, float]:
+    """The coordinates to label against, from the command line or the environment.
+
+    Raises rather than guessing: see :data:`LOCATION_VARS`.
+    """
+    values = []
+    for given, name in zip((latitude, longitude), LOCATION_VARS, strict=True):
+        if given is not None:
+            values.append(given)
+            continue
+        raw = os.environ.get(name)
+        if not raw:
+            raise SystemExit(
+                f"{name} is not set. The station's coordinates are not stored in this "
+                f"repository; set {' and '.join(LOCATION_VARS)} (they are GitHub secrets "
+                "in CI), or pass --latitude and --longitude."
+            )
+        try:
+            values.append(float(raw))
+        except ValueError as error:
+            raise SystemExit(f"{name} is not a number: {raw!r}") from error
+    return values[0], values[1]
+
+
 def fetch_rainfall(
-    start: datetime, end: datetime, high_resolution: bool = False
+    start: datetime, end: datetime, latitude: float, longitude: float,
+    high_resolution: bool = False,
 ) -> dict[datetime, float]:
     """Observed hourly precipitation at the station.
 
@@ -131,9 +170,9 @@ def fetch_rainfall(
     """
     base = HIGH_RESOLUTION_URL if high_resolution else ARCHIVE_URL
     url = (
-        f"{base}?latitude={LATITUDE}&longitude={LONGITUDE}"
+        f"{base}?latitude={latitude}&longitude={longitude}"
         f"&start_date={start:%Y-%m-%d}&end_date={end:%Y-%m-%d}"
-        "&hourly=precipitation&timezone=Europe%2FBerlin"
+        f"&hourly=precipitation&timezone={urllib.parse.quote(TIMEZONE, safe='')}"
         + ("&models=icon_seamless" if high_resolution else "")
     )
     hourly = fetch_json(url)["hourly"]
@@ -340,6 +379,10 @@ def main() -> int:
     parser.add_argument("--readings", type=Path, help="a local readings JSON, instead of fetching")
     parser.add_argument("--rainfall", type=Path,
                         help="a local Open-Meteo archive JSON, instead of fetching")
+    parser.add_argument("--latitude", type=float,
+                        help="station latitude; defaults to $STATION_LATITUDE")
+    parser.add_argument("--longitude", type=float,
+                        help="station longitude; defaults to $STATION_LONGITUDE")
     parser.add_argument("--force", action="store_true",
                         help="write the model even if it does not beat the shipped one")
     args = parser.parse_args()
@@ -361,7 +404,8 @@ def main() -> int:
             if p is not None
         }
     else:
-        rain = fetch_rainfall(readings[0]["dt"], readings[-1]["dt"])
+        latitude, longitude = station_location(args.latitude, args.longitude)
+        rain = fetch_rainfall(readings[0]["dt"], readings[-1]["dt"], latitude, longitude)
     print(f"{len(rain)} hours of observed rainfall for labels")
 
     samples = asyncio.run(replay(readings, rain))
@@ -385,7 +429,8 @@ def main() -> int:
     cross_check = None
     if not args.rainfall:
         try:
-            fine = fetch_rainfall(readings[0]["dt"], readings[-1]["dt"], high_resolution=True)
+            fine = fetch_rainfall(readings[0]["dt"], readings[-1]["dt"],
+                                  latitude, longitude, high_resolution=True)
             fine_truth = np.array([label_for(fine, s["dt"]) for s in samples[-len(truth):]],
                                   dtype=object)
             usable = np.array([v is not None for v in fine_truth])
