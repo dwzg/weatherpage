@@ -16,8 +16,11 @@
         poller rewrites elements the render produced, so both must read the
         same catalogue or the page ends up half-translated. -#}
     <script id="i18n-data" type="application/json">{{ i18n_payload | tojson }}</script>
-    <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-    <script defer src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+    {#- Served from this image, not from a CDN: the rest of the app fetches
+        nothing at runtime, and a script tag with no integrity hands whoever
+        controls that origin the run of this page. See static/vendor/README. -#}
+    <script defer src="/static/{{ asset_version }}/vendor/chart.umd.js"></script>
+    <script defer src="/static/{{ asset_version }}/vendor/chartjs-adapter-date-fns.bundle.min.js"></script>
     <script type="module" src="/static/{{ asset_version }}/js/main.js"></script>
 </head>
 <body>

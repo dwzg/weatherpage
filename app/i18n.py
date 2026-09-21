@@ -401,8 +401,8 @@ GERMAN: dict[str, str] = {
     "Min": "Min",
     "Max": "Max",
     "Average": "Mittel",
-    "Charts need network access to load the charting library.":
-        "Die Diagramme brauchen Netzzugriff, um die Diagrammbibliothek zu laden.",
+    "The charting library did not load, so the graphs are missing.":
+        "Die Diagrammbibliothek wurde nicht geladen, daher fehlen die Grafiken.",
     "Averaged into {interval} intervals · shaded band shows the range within each":
         "Gemittelt über {interval} · das schattierte Band zeigt die Spanne je Intervall",
     "{n}-day": "{n}-Tages-Intervalle",

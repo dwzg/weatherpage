@@ -184,7 +184,7 @@ The rules in `app/weather.py` were fitted offline against observed hourly precip
 
 ## Frontend conventions
 
-- No build step, no framework, no bundler. The page loads `static/js/main.js` as an ES module; Chart.js 4 and its date-fns adapter come from jsDelivr, so **charts need network access** — without it the page still renders values, records and the calendar, and shows a note where the charts would be.
+- No build step, no framework, no bundler. The page loads `static/js/main.js` as an ES module; Chart.js 4 and its date-fns adapter are **vendored into `static/vendor/`** and served from the image, so the page loads nothing from anywhere else. `tests/test_api.py::TestThePageIsSelfContained` fails if an `https://` `src` or `href` reappears in the markup. See `app/static/vendor/README.md` for the versions and how to update them. The `.chart-fallback` note is kept for a library that somehow does not load — the page still renders values, records and the calendar without it — but it is no longer the expected outcome of being offline.
 - **Asset URLs are root-relative (`/static/...`), deliberately.** `url_for()` builds an absolute URL from the request, which behind the HTTPS reverse proxy comes out as `http://` and is blocked as mixed content, leaving the page with no CSS and no JS.
 - The page is server-rendered, then `poll.js` updates the same elements every 60 s. Anything the server renders *and* the poller rewrites must have one source of truth: the forecast emoji is computed server-side and sent in `/status`, and the climate card's year pages are rendered server-side with the pager only scrolling between them.
 - Charts use a **time scale**; `toTimeData()` inserts a `NaN` point when consecutive points are more than three intervals apart, so outages show as breaks of proportional width. The threshold comes from the response's `interval_seconds`, so a bucketed series doesn't read as one long outage.
@@ -249,7 +249,7 @@ ruff check .
 
 `tests/conftest.py` gives each test its own `DATA_DIR`, a fixed timezone and a clean settings cache. Use the `db` fixture for the storage layer and `client` for anything that goes through HTTP.
 
-For UI changes, drive the page in a real browser (Playwright is available). Measuring the DOM — element boxes, computed styles, console errors — is more reliable than eyeballing a screenshot for spacing work. The sandbox cannot reach jsDelivr, so intercept those requests and serve Chart.js from a local copy if you need the charts to render.
+For UI changes, drive the page in a real browser (Playwright is available). Measuring the DOM — element boxes, computed styles, console errors — is more reliable than eyeballing a screenshot for spacing work. Chart.js is served from the app itself, so the charts render in a sandbox with no network at all; nothing needs intercepting.
 
 ```bash
 curl -X POST http://localhost:8080/api/weather \

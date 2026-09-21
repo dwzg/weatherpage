@@ -451,6 +451,42 @@ class TestExport:
         assert second["readings"][0]["utc_offset"] == 60
 
 
+class TestThePageIsSelfContained:
+    """Nothing the browser loads may come from anywhere but this app.
+
+    The forecast, the nowcast and every number on the page are computed from
+    the station's own readings, and the app fetches nothing at runtime. Two
+    CDN script tags were the exception, and the expensive kind: a script with
+    no integrity hands whoever controls that origin the run of the page. If
+    one reappears, this fails rather than the deployment quietly depending on
+    a third party again.
+    """
+
+    async def test_no_external_resource_is_referenced(self, client):
+        for minutes in range(0, 120, 5):
+            await client.post("/api/weather", json=at(minutes))
+        markup = (await client.get("/")).text
+
+        external = re.findall(r'(?:src|href)="(https?://[^"]+)"', markup)
+        assert external == [], external
+
+    def test_the_charting_library_is_in_the_image(self):
+        vendor = Path(__file__).resolve().parent.parent / "app" / "static" / "vendor"
+        for name in ("chart.umd.js", "chartjs-adapter-date-fns.bundle.min.js"):
+            asset = vendor / name
+            assert asset.is_file(), name
+            # Checked in as npm publishes it, licence banner and all.
+            assert "MIT" in asset.read_text(errors="ignore")[:400], name
+
+    async def test_the_vendored_library_is_actually_served(self, client):
+        from app.config import get_settings
+
+        version = get_settings().asset_version
+        response = await client.get(f"/static/{version}/vendor/chart.umd.js")
+        assert response.status_code == 200
+        assert "Chart.js v4.4.0" in response.text[:400]
+
+
 class TestTrainerReadsTheRawArchive:
     """ml/train.py must not go back to the endpoint that downsamples."""
 
