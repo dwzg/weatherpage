@@ -1,13 +1,21 @@
 /* Main history charts and the per-card sparklines. */
 
-import { METRICS, chartStyle, chartsAvailable, parseTimestamp, fetchJSON } from './format.js';
+import {
+    METRICS, chartStyle, chartsAvailable, parseTimestamp, fetchJSON,
+    t, formatNumber, dateFormat, LOCALE,
+} from './format.js';
 
-/** Axis formats per period. */
+/* Axis formats per period, as Intl.DateTimeFormat options rather than the
+   date-fns patterns the adapter would otherwise use: the adapter bundle ships
+   English only, while Intl already knows every locale the browser does. The
+   clock stays 24-hour in both languages, which is what the page always had. */
+const CLOCK = { hour: '2-digit', minute: '2-digit', hour12: false };
+
 const TIME_FORMATS = {
-    '24h': { unit: 'hour',  tooltip: 'HH:mm',     display: 'HH:mm' },
-    '7d':  { unit: 'day',   tooltip: 'EEE HH:mm', display: 'EEE' },
-    '30d': { unit: 'day',   tooltip: 'MMM d',     display: 'MMM d' },
-    'all': { unit: 'month', tooltip: 'MMM yyyy',  display: "MMM ''yy" },
+    '24h': { unit: 'hour',  display: CLOCK,                              tooltip: CLOCK },
+    '7d':  { unit: 'day',   display: { weekday: 'short' },               tooltip: { weekday: 'short', ...CLOCK } },
+    '30d': { unit: 'day',   display: { day: 'numeric', month: 'short' }, tooltip: { day: 'numeric', month: 'short', ...CLOCK } },
+    'all': { unit: 'month', display: { month: 'short', year: '2-digit' }, tooltip: { month: 'long', year: 'numeric' } },
 };
 
 /* A gap wider than this many point-intervals is an outage rather than
@@ -26,12 +34,12 @@ const historyCache = {};
 function toTimeData(readings, key, gapThresholdMs) {
     const points = [];
     for (let i = 0; i < readings.length; i++) {
-        const t = parseTimestamp(readings[i].timestamp);
-        points.push({ x: t, y: readings[i][key] });
+        const at = parseTimestamp(readings[i].timestamp);
+        points.push({ x: at, y: readings[i][key] });
 
         if (i < readings.length - 1) {
             const next = parseTimestamp(readings[i + 1].timestamp);
-            if (next - t > gapThresholdMs) points.push({ x: t + 1, y: NaN });
+            if (next - at > gapThresholdMs) points.push({ x: at + 1, y: NaN });
         }
     }
     return points;
@@ -54,7 +62,7 @@ function toBandData(readings, key, bound, gapThresholdMs) {
 function tickFormatter(value, index, ticks) {
     const step = ticks.length > 1 ? Math.abs(ticks[1].value - ticks[0].value) : 1;
     const decimals = step >= 1 ? 0 : step >= 0.1 ? 1 : 2;
-    return value.toFixed(decimals);
+    return formatNumber(value, decimals);
 }
 
 function makeChartConfig(metric, series, period) {
@@ -67,7 +75,7 @@ function makeChartConfig(metric, series, period) {
     if (series.bucketed) {
         datasets.push(
             {
-                label: 'Min',
+                label: t('Min'),
                 data: toBandData(series.readings, metric.key, 'min', gap),
                 borderColor: 'transparent',
                 backgroundColor: metric.color.band,
@@ -77,7 +85,7 @@ function makeChartConfig(metric, series, period) {
                 spanGaps: false,
             },
             {
-                label: 'Max',
+                label: t('Max'),
                 data: toBandData(series.readings, metric.key, 'max', gap),
                 borderColor: 'transparent',
                 backgroundColor: metric.color.band,
@@ -106,6 +114,7 @@ function makeChartConfig(metric, series, period) {
         type: 'line',
         data: { datasets },
         options: {
+            locale: LOCALE,
             responsive: true,
             maintainAspectRatio: false,
             animation: false,
@@ -114,21 +123,23 @@ function makeChartConfig(metric, series, period) {
                 tooltip: {
                     // The band datasets would just repeat the average's tooltip.
                     filter: (item) => item.datasetIndex === datasets.length - 1,
+                    callbacks: {
+                        title: (items) => (items.length
+                            ? dateFormat(fmt.tooltip).format(items[0].parsed.x) : ''),
+                    },
                 },
             },
             scales: {
                 x: {
                     type: 'time',
-                    time: {
-                        unit: fmt.unit,
-                        displayFormats: { [fmt.unit]: fmt.display },
-                        tooltipFormat: fmt.tooltip,
-                    },
+                    time: { unit: fmt.unit },
                     ticks: {
                         maxTicksLimit: 8,
                         maxRotation: 0,
                         color: style.tickColor,
                         font: { size: 10 },
+                        // The time scale hands its callback the raw timestamp.
+                        callback: (value) => dateFormat(fmt.display).format(value),
                     },
                     grid: { display: false },
                 },
@@ -155,10 +166,11 @@ function destroyCharts() {
 function describeSeries(series) {
     if (!series.bucketed) return '';
     const minutes = series.interval_seconds / 60;
-    const label = minutes >= 1440
-        ? `${minutes / 1440}-day`
-        : minutes >= 60 ? `${minutes / 60}-hour` : `${minutes}-minute`;
-    return `Averaged into ${label} intervals · shaded band shows the range within each`;
+    const interval = minutes >= 1440
+        ? t('{n}-day', { n: minutes / 1440 })
+        : minutes >= 60 ? t('{n}-hour', { n: minutes / 60 }) : t('{n}-minute', { n: minutes });
+    return t('Averaged into {interval} intervals · shaded band shows the range within each',
+        { interval });
 }
 
 export async function loadPeriod(period) {

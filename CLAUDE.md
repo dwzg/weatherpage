@@ -35,11 +35,12 @@ Dynamic weather dashboard ("Balcony Weather Station") served by a FastAPI app in
 | `app/cache.py` | Memoisation for the whole-table aggregates, dropped on every write. |
 | `app/models.py` | Pydantic request/response schemas, including the sensor plausibility ranges. |
 | `app/services.py` | Assembles the dashboard payload shared by the API and the page render. |
+| `app/i18n.py` | English and German: `Accept-Language` negotiation, the whole string catalogue, locale-aware number formatting. |
 | `app/api.py` | The `/api/weather` router and the API-key dependency. |
 | `app/main.py` | App factory, lifespan, the `/` and `/healthz` routes, static mount. |
 | `app/templates/index.html` | Markup only — no inline CSS or JS. |
 | `app/static/css/dashboard.css` | All styles. |
-| `app/static/js/*.js` | ES modules: `format` (shared helpers), `charts`, `heatmap`, `climate`, `poll`, `main` (entry point). |
+| `app/static/js/*.js` | ES modules: `i18n` (the catalogue the render embedded), `format` (shared helpers), `charts`, `heatmap`, `climate`, `poll`, `main` (entry point). |
 | `backfill.py` | Standalone script (not in the image) that replays a Home Assistant window to fill an outage. |
 
 ## Data conventions
@@ -136,9 +137,38 @@ The rules in `app/weather.py` were fitted offline against observed hourly precip
 - The page is server-rendered, then `poll.js` updates the same elements every 60 s. Anything the server renders *and* the poller rewrites must have one source of truth: the forecast emoji is computed server-side and sent in `/status`, and every year's Monthly Details table is rendered server-side with the year switcher only toggling `hidden`.
 - Charts use a **time scale**; `toTimeData()` inserts a `NaN` point when consecutive points are more than three intervals apart, so outages show as breaks of proportional width. The threshold comes from the response's `interval_seconds`, so a bucketed series doesn't read as one long outage.
 - Axis ticks are labelled by `tickFormatter`, which picks decimals from the tick step — pressure spans ~2 hPa a day and would otherwise repeat the same whole number.
+- Chart **dates** are formatted with `Intl.DateTimeFormat` through `i18n.dateFormat()`, not with the date-fns adapter's patterns: the adapter bundle ships English only. The adapter is still loaded — the time scale needs it to generate ticks — but `ticks.callback` and the tooltip `title` callback override every label it would produce. The clock stays 24-hour in both languages.
 - Sparklines are `responsive: true` inside a fixed-size `.sparkline-wrap`. Sizing the canvas directly does not work: Chart.js writes an inline width onto it, which overrides the stylesheet and stops the card shrinking.
 - **Grid overflow gotcha:** grid items default to `min-width: auto`, so a card whose content has a wide minimum pushes the grid past the viewport. `.card` sets `min-width: 0`.
 - Card spacing: `.stats-card` has no bottom margin because inside `.stats-grid` the grid `gap` does the spacing; `.container > .stats-card` adds its own.
+
+## Languages
+
+The page is English and German, and nothing else. German is served when the
+browser asks for it in `Accept-Language`, which is what a German-language OS
+sets; `?lang=de` / `?lang=en` overrides it, for testing and for a reader whose
+OS disagrees with them.
+
+- **The message id is the English string.** `app/i18n.py` holds one catalogue,
+  `GERMAN`, keyed by the English text, so English needs no table and a missing
+  translation degrades to English rather than to a bare key.
+- **The JSON API stays English.** The forecast phrases are identifiers, not
+  prose: `weather.forecast_emoji()` matches on them, `ml/train.py` replays
+  against them and the tests compare them. Translating them in `/status` would
+  make all three language-dependent, so `poll.js` translates instead.
+- **One catalogue, two consumers.** The render embeds the catalogue it used in
+  `<script id="i18n-data">` and `static/js/i18n.js` unpacks it. The poller
+  rewrites elements the render produced, so a second copy of the strings in
+  JavaScript would show up as a page that turns half-English after 60 s.
+- **Numbers are formatted from the separators the server sent**, not from
+  `Intl.NumberFormat`, for the same reason: German writes 22,5 °C and 208.942
+  readings, and a value the server rendered must not change shape when the
+  poller rewrites it. `i18n.format_number()` and its JS twin are deliberately
+  the same arithmetic.
+- `tests/test_i18n.py` scans the template and every ES module for the literals
+  they pass to `t()` and fails if one has no German, then renders the whole
+  page and fails if a known English string survives. Adding a string without a
+  translation is a test failure, not something to notice on the live site.
 
 ## Local Development
 
@@ -158,7 +188,7 @@ An empty database renders the "waiting for first reading" placeholder, so seed s
 `pytest` and `ruff` run on every pull request (`.github/workflows/ci.yml`), alongside a Docker build and a container smoke test.
 
 ```bash
-pytest -q          # 191 tests
+pytest -q          # 249 tests
 ruff check .
 ```
 

@@ -1,6 +1,6 @@
 /* Live updates: refresh the current-conditions cards once a minute. */
 
-import { METRICS, fetchJSON, signed } from './format.js';
+import { METRICS, fetchJSON, signed, formatNumber, t } from './format.js';
 import { refresh24h, renderSparklines } from './charts.js';
 
 const POLL_INTERVAL_MS = 60_000;
@@ -17,14 +17,14 @@ const setText = (id, text) => {
 function setValue(id, value, digits, unit) {
     const el = document.getElementById(id);
     if (!el) return;
-    el.textContent = value.toFixed(digits);
+    el.textContent = formatNumber(value, digits);
     const unitEl = document.createElement('span');
     unitEl.className = 'unit';
     unitEl.textContent = unit;
     el.appendChild(unitEl);
 }
 
-/** Show a "+1.4°C vs 24h ago" line, coloured by direction. */
+/** Show a "vs 24h ago: +1.4°C" line, coloured by direction. */
 function setComparison(id, delta, digits, unit, hours, inverted) {
     const el = document.getElementById(id);
     if (!el) return;
@@ -35,7 +35,8 @@ function setComparison(id, delta, digits, unit, hours, inverted) {
         return;
     }
 
-    el.textContent = `vs ${hours}h ago: ${signed(delta, digits)}${unit}`;
+    el.textContent = t(`vs {hours}h ago: {delta}${unit}`,
+        { hours, delta: signed(delta, digits) });
     const suffix = inverted ? '-hum' : '';
     const direction = delta > 0 ? `delta-up${suffix}` : delta < 0 ? `delta-down${suffix}` : '';
     el.className = `detail detail-compare ${direction}`.trim();
@@ -91,9 +92,9 @@ function applyStatus(status) {
     setValue('val-pres', current.pressure, byKey.pressure.digits, 'hPa');
 
     setText('detail-heat', status.heat_index != null
-        ? `Feels like ${status.heat_index.toFixed(1)}°C` : '');
+        ? t('Feels like {value}°C', { value: formatNumber(status.heat_index, 1) }) : '');
     setText('detail-dew', status.dew_point != null
-        ? `Dew point ${status.dew_point.toFixed(1)}°C` : '');
+        ? t('Dew point {value}°C', { value: formatNumber(status.dew_point, 1) }) : '');
 
     const hours = status.comparison_hours;
     const past = status.yesterday;
@@ -104,18 +105,21 @@ function applyStatus(status) {
 
     updatePressureTrend(status.pressure_trend);
 
+    /* The API stays in English — the forecast phrase is the same identifier
+       app.weather.forecast_emoji() matches on — so the translation happens
+       here, against the catalogue the server rendered the page from. */
     const forecast = status.forecast && status.forecast !== 'Not enough data'
-        ? `${status.forecast_emoji} ${status.forecast}` : '';
+        ? `${status.forecast_emoji} ${t(status.forecast)}` : '';
     setBanner('label-forecast', forecast, 'banner');
     updateNowcast(status.nowcast);
     setBanner('label-frost',
-        status.frost_warning ? '❄️ Frost warning — protect your plants!' : '',
+        status.frost_warning ? t('❄️ Frost warning — protect your plants!') : '',
         'banner banner-alert');
     setBanner('label-stale',
-        status.stale ? '⚠️ No new readings — the sensor feed may be down' : '',
+        status.stale ? t('⚠️ No new readings — the sensor feed may be down') : '',
         'banner banner-warn');
 
-    setText('label-updated', `Last updated: ${current.timestamp}`);
+    setText('label-updated', t('Last updated: {timestamp}', { timestamp: current.timestamp }));
 }
 
 /* The learned rain chance, beside the rule-based phrase. The element is only
@@ -134,14 +138,14 @@ function updateNowcast(nowcast) {
         el = document.createElement('span');
         el.id = 'label-nowcast';
         el.className = 'banner banner-nowcast';
-        el.title = "Learned from this station's own history";
+        el.title = t("Learned from this station's own history");
         row.appendChild(el);
     }
     el.textContent = '';
-    el.append(`🤖 Rain nearby ${nowcast.label} · `);
+    el.append(`🤖 ${t('Rain nearby')} ${t(nowcast.label)} · `);
     const value = document.createElement('strong');
     value.textContent = `${Math.round(nowcast.probability * 100)}%`;
-    el.append(value, ` in ${nowcast.horizon_hours} h`);
+    el.append(value, ` ${t('in {hours} h', { hours: nowcast.horizon_hours })}`);
 }
 
 export function startPolling() {

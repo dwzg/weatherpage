@@ -1,17 +1,21 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="{{ lang }}">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="color-scheme" content="light dark">
-    <meta name="description" content="Live temperature, humidity and pressure from a balcony weather station.">
+    <meta name="description" content="{{ t('Live temperature, humidity and pressure from a balcony weather station.') }}">
     {#- Asset paths are root-relative on purpose. url_for() emits an absolute
         URL built from the request, which behind the HTTPS reverse proxy comes
         out as http:// and gets blocked as mixed content, leaving the page with
         no stylesheet and no scripts. -#}
-    <title>Balcony Weather Station</title>
+    <title>{{ t('Balcony Weather Station') }}</title>
     <link rel="icon" type="image/svg+xml" href="/static/icons/favicon.svg?v={{ asset_version }}">
     <link rel="stylesheet" href="/static/css/dashboard.css?v={{ asset_version }}">
+    {#- The language the server picked, and the strings that go with it. The
+        poller rewrites elements the render produced, so both must read the
+        same catalogue or the page ends up half-translated. -#}
+    <script id="i18n-data" type="application/json">{{ i18n_payload | tojson }}</script>
     <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <script defer src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
     <script type="module" src="/static/js/main.js?v={{ asset_version }}"></script>
@@ -20,21 +24,21 @@
 <div class="container">
 
 <header>
-    <h1>🌤️ Balcony Weather</h1>
-    <p class="subtitle">Live from the balcony</p>
+    <h1>🌤️ {{ t('Balcony Weather') }}</h1>
+    <p class="subtitle">{{ t('Live from the balcony') }}</p>
 </header>
 
 {#- Banners are rendered server-side and replaced in place by the poller. -#}
 <div class="banner-row" id="label-forecast">
     {%- if forecast and forecast != 'Not enough data' %}
-    <span class="banner">{{ forecast_emoji }} {{ forecast }}</span>
+    <span class="banner">{{ forecast_emoji }} {{ t(forecast) }}</span>
     {%- endif %}
     {%- if nowcast %}
     <span class="banner banner-nowcast" id="label-nowcast"
-          title="Learned from this station's own history">
-        🤖 Rain nearby {{ nowcast.label }} ·
-        <strong>{{ "%.0f"|format(nowcast.probability * 100) }}%</strong>
-        in {{ nowcast.horizon_hours }} h
+          title="{{ t("Learned from this station's own history") }}">
+        🤖 {{ t('Rain nearby') }} {{ t(nowcast.label) }} ·
+        <strong>{{ num(nowcast.probability * 100) }}%</strong>
+        {{ t('in {hours} h', hours=nowcast.horizon_hours) }}
     </span>
     {%- endif %}
 </div>
@@ -44,39 +48,34 @@
     Both are server-rendered, then replaced in place by the poller. -#}
 <div class="predictions" id="predictions">
     <details class="prediction-note">
-        <summary>How these two predictions work</summary>
+        <summary>{{ t('How these two predictions work') }}</summary>
         <div class="prediction-note-body">
             <dl>
-                <dt>☀️ The outlook</dt>
+                <dt>{{ t('☀️ The outlook') }}</dt>
                 <dd>
-                    Thresholds on two numbers: where the pressure sits in this station's
-                    own last 30 days, and the humidity. It ignores which way the barometer
-                    is moving — measured against real rainfall here, that carries no signal.
+                    {{ t("Thresholds on two numbers: where the pressure sits in this station's own last 30 days, and the humidity. It ignores which way the barometer is moving — measured against real rainfall here, that carries no signal.") }}
                 </dd>
 
-                <dt>🤖 The rain chance</dt>
+                <dt>{{ t('🤖 The rain chance') }}</dt>
                 <dd>
-                    A model fitted to this station's readings against observed rainfall and
-                    retrained weekly. Ten measurements in, one number out: the chance of
-                    {{ nowcast.rain_mm if nowcast else 0.2 }} mm of rain within
-                    {{ nowcast.horizon_hours if nowcast else 6 }} hours
-                    <strong>in the surrounding area</strong> — not on this balcony. Whether a
-                    shower crosses here or the next valley is not something a barometer knows.
+                    {{ t("A model fitted to this station's readings against observed rainfall and retrained weekly. Ten measurements in, one number out: the chance of {mm} mm of rain within {hours} hours",
+                          mm=num(nowcast.rain_mm if nowcast else 0.2, 1),
+                          hours=nowcast.horizon_hours if nowcast else 6) }}
+                    <strong>{{ t('in the surrounding area') }}</strong>
+                    {{ t('— not on this balcony. Whether a shower crosses here or the next valley is not something a barometer knows.') }}
                 </dd>
 
-                <dt>Why both</dt>
+                <dt>{{ t('Why both') }}</dt>
                 <dd>
-                    The phrase is a category; the percentage is a calibrated probability, and
-                    they can disagree. Neither sees wind, radar or anything upstream of the
-                    balcony, so treat both as a hint rather than a forecast.
+                    {{ t('The phrase is a category; the percentage is a calibrated probability, and they can disagree. Neither sees wind, radar or anything upstream of the balcony, so treat both as a hint rather than a forecast.') }}
                 </dd>
             </dl>
             {%- if nowcast and nowcast.skill %}
             <p class="prediction-provenance">
-                Model trained {{ nowcast.trained_at }} ·
-                Brier {{ "%.3f"|format(nowcast.skill.brier) }} ·
-                {{ "%+.0f"|format(nowcast.skill.bss * 100) }}% skill over climatology ·
-                AUC {{ nowcast.skill.auc }}
+                {{ t('Model trained {date}', date=nowcast.trained_at) }} ·
+                Brier {{ num(nowcast.skill.brier, 3) }} ·
+                {{ t('{bss}% skill over climatology', bss=num(nowcast.skill.bss * 100, 0, sign=True)) }} ·
+                AUC {{ num(nowcast.skill.auc, 3) }}
             </p>
             {%- endif %}
         </div>
@@ -85,13 +84,13 @@
 
 <div class="banner-row" id="label-frost">
     {%- if frost_warning %}
-    <span class="banner banner-alert">❄️ Frost warning — protect your plants!</span>
+    <span class="banner banner-alert">{{ t('❄️ Frost warning — protect your plants!') }}</span>
     {%- endif %}
 </div>
 
 <div class="banner-row" id="label-stale">
     {%- if stale %}
-    <span class="banner banner-warn">⚠️ No new readings — the sensor feed may be down</span>
+    <span class="banner banner-warn">{{ t('⚠️ No new readings — the sensor feed may be down') }}</span>
     {%- endif %}
 </div>
 
@@ -100,35 +99,35 @@
 <!-- ── Current conditions ─────────────────────────────────────────────── -->
 <div class="current-grid">
     <div class="card current-card temp">
-        <div class="label">Temperature</div>
-        <div class="value" id="val-temp">{{ "%.1f"|format(current.temperature) }}<span class="unit">°C</span></div>
-        <div class="detail" id="detail-heat">{% if heat_index is not none %}Feels like {{ "%.1f"|format(heat_index) }}°C{% endif %}</div>
-        <div class="detail" id="detail-dew">{% if dew_point is not none %}Dew point {{ "%.1f"|format(dew_point) }}°C{% endif %}</div>
+        <div class="label">{{ t('Temperature') }}</div>
+        <div class="value" id="val-temp">{{ num(current.temperature, 1) }}<span class="unit">°C</span></div>
+        <div class="detail" id="detail-heat">{% if heat_index is not none %}{{ t('Feels like {value}°C', value=num(heat_index, 1)) }}{% endif %}</div>
+        <div class="detail" id="detail-dew">{% if dew_point is not none %}{{ t('Dew point {value}°C', value=num(dew_point, 1)) }}{% endif %}</div>
         {% set temp_delta = (current.temperature - yesterday.temperature) if yesterday else none %}
         <div class="detail detail-compare{% if temp_delta is not none %}{% if temp_delta > 0 %} delta-up{% elif temp_delta < 0 %} delta-down{% endif %}{% endif %}" id="detail-temp-24h">
-            {%- if temp_delta is not none %}vs {{ comparison_hours }}h ago: {{ "%+.1f"|format(temp_delta) }}°C{% endif %}
+            {%- if temp_delta is not none %}{{ t('vs {hours}h ago: {delta}°C', hours=comparison_hours, delta=num(temp_delta, 1, sign=True)) }}{% endif %}
         </div>
         <div class="sparkline-wrap"><canvas class="sparkline" id="spark-temp" aria-hidden="true"></canvas></div>
     </div>
 
     <div class="card current-card hum">
-        <div class="label">Humidity</div>
-        <div class="value" id="val-hum">{{ "%.0f"|format(current.humidity) }}<span class="unit">%</span></div>
+        <div class="label">{{ t('Humidity') }}</div>
+        <div class="value" id="val-hum">{{ num(current.humidity) }}<span class="unit">%</span></div>
         {% set hum_delta = (current.humidity - yesterday.humidity) if yesterday else none %}
         <div class="detail detail-compare{% if hum_delta is not none %}{% if hum_delta > 0 %} delta-up-hum{% elif hum_delta < 0 %} delta-down-hum{% endif %}{% endif %}" id="detail-hum-24h">
-            {%- if hum_delta is not none %}vs {{ comparison_hours }}h ago: {{ "%+.0f"|format(hum_delta) }}%{% endif %}
+            {%- if hum_delta is not none %}{{ t('vs {hours}h ago: {delta}%', hours=comparison_hours, delta=num(hum_delta, 0, sign=True)) }}{% endif %}
         </div>
         <div class="sparkline-wrap"><canvas class="sparkline" id="spark-hum" aria-hidden="true"></canvas></div>
     </div>
 
     <div class="card current-card pres">
-        <div class="label">Pressure</div>
-        <div class="value" id="val-pres">{{ "%.0f"|format(current.pressure) }}<span class="unit">hPa</span></div>
+        <div class="label">{{ t('Pressure') }}</div>
+        <div class="value" id="val-pres">{{ num(current.pressure) }}<span class="unit">hPa</span></div>
         <div class="detail" id="detail-pres-trend">
             {%- if pressure_trend %}
             <span class="trend-{{ pressure_trend.direction }}">
                 {%- if pressure_trend.direction == 'rising' %}↑{% elif pressure_trend.direction == 'falling' %}↓{% else %}→{% endif %}
-                {{ "%+.1f"|format(pressure_trend.delta) }} hPa
+                {{ num(pressure_trend.delta, 1, sign=True) }} hPa
             </span>
             {%- endif %}
         </div>
@@ -136,23 +135,23 @@
     </div>
 </div>
 
-<p class="updated" id="label-updated">Last updated: {{ current.timestamp }}</p>
+<p class="updated" id="label-updated">{{ t('Last updated: {timestamp}', timestamp=current.timestamp) }}</p>
 
 <!-- ── History charts ─────────────────────────────────────────────────── -->
-<div class="card period-selector" role="group" aria-label="Chart period">
-    <button type="button" class="period-btn active" data-period="24h" aria-pressed="true">24 Hours</button>
-    <button type="button" class="period-btn" data-period="7d" aria-pressed="false">7 Days</button>
-    <button type="button" class="period-btn" data-period="30d" aria-pressed="false">30 Days</button>
-    <button type="button" class="period-btn" data-period="all" aria-pressed="false">All Time</button>
+<div class="card period-selector" role="group" aria-label="{{ t('Chart period') }}">
+    <button type="button" class="period-btn active" data-period="24h" aria-pressed="true">{{ t('24 Hours') }}</button>
+    <button type="button" class="period-btn" data-period="7d" aria-pressed="false">{{ t('7 Days') }}</button>
+    <button type="button" class="period-btn" data-period="30d" aria-pressed="false">{{ t('30 Days') }}</button>
+    <button type="button" class="period-btn" data-period="all" aria-pressed="false">{{ t('All Time') }}</button>
 </div>
 
 {% for chart in [
-    {'id': 'chart-temp', 'title': '🌡️ Temperature'},
-    {'id': 'chart-hum',  'title': '💧 Humidity'},
-    {'id': 'chart-pres', 'title': '📊 Pressure'}
+    {'id': 'chart-temp', 'emoji': '🌡️', 'title': 'Temperature'},
+    {'id': 'chart-hum',  'emoji': '💧', 'title': 'Humidity'},
+    {'id': 'chart-pres', 'emoji': '📊', 'title': 'Pressure'}
 ] %}
 <div class="card chart-card">
-    <h3 class="card-title">{{ chart.title }}</h3>
+    <h3 class="card-title">{{ chart.emoji }} {{ t(chart.title) }}</h3>
     <canvas id="{{ chart.id }}"></canvas>
     <p class="chart-fallback"></p>
     <p class="chart-note"></p>
@@ -160,13 +159,13 @@
 {% endfor %}
 
 <!-- ── Records ────────────────────────────────────────────────────────── -->
-{% macro extreme_row(label, extreme, fmt, unit, kind='', time_slice='time') %}
+{% macro extreme_row(label, extreme, digits, unit, kind='', time_slice='time') %}
 <div class="stat-row">
-    <span class="stat-label">{{ label }}</span>
+    <span class="stat-label">{{ t(label) }}</span>
     <span class="stat-spacer"></span>
-    <span class="stat-val {{ kind }}">{{ fmt|format(extreme.value) }}{{ unit }}</span>
+    <span class="stat-val {{ kind }}">{{ num(extreme.value, digits) }}{{ unit }}</span>
     <span class="stat-time">
-        {%- if time_slice == 'time' %}at {{ extreme.timestamp[11:16] }}{% else %}{{ extreme.timestamp[:10] }}{% endif -%}
+        {%- if time_slice == 'time' %}{{ t('at {time}', time=extreme.timestamp[11:16]) }}{% else %}{{ extreme.timestamp[:10] }}{% endif -%}
     </span>
 </div>
 {% endmacro %}
@@ -174,40 +173,40 @@
 <div class="stats-grid">
     {% if extremes_today %}
     <div class="card stats-card">
-        <h3 class="card-title">📅 Today's Records</h3>
-        {{ extreme_row("Hottest", extremes_today.temperature.max, "%.1f", "°C", "hi") }}
-        {{ extreme_row("Coldest", extremes_today.temperature.min, "%.1f", "°C", "lo") }}
-        {{ extreme_row("Most humid", extremes_today.humidity.max, "%.0f", "%") }}
-        {{ extreme_row("Least humid", extremes_today.humidity.min, "%.0f", "%") }}
+        <h3 class="card-title">{{ t("📅 Today's Records") }}</h3>
+        {{ extreme_row("Hottest", extremes_today.temperature.max, 1, "°C", "hi") }}
+        {{ extreme_row("Coldest", extremes_today.temperature.min, 1, "°C", "lo") }}
+        {{ extreme_row("Most humid", extremes_today.humidity.max, 0, "%") }}
+        {{ extreme_row("Least humid", extremes_today.humidity.min, 0, "%") }}
     </div>
     {% endif %}
 
     {% if extremes_all %}
     <div class="card stats-card">
-        <h3 class="card-title">🏆 All-Time Records</h3>
-        {{ extreme_row("Hottest", extremes_all.temperature.max, "%.1f", "°C", "hi", "date") }}
-        {{ extreme_row("Coldest", extremes_all.temperature.min, "%.1f", "°C", "lo", "date") }}
-        {{ extreme_row("Highest pressure", extremes_all.pressure.max, "%.0f", " hPa", "", "date") }}
-        {{ extreme_row("Lowest pressure", extremes_all.pressure.min, "%.0f", " hPa", "", "date") }}
+        <h3 class="card-title">{{ t('🏆 All-Time Records') }}</h3>
+        {{ extreme_row("Hottest", extremes_all.temperature.max, 1, "°C", "hi", "date") }}
+        {{ extreme_row("Coldest", extremes_all.temperature.min, 1, "°C", "lo", "date") }}
+        {{ extreme_row("Highest pressure", extremes_all.pressure.max, 0, " hPa", "", "date") }}
+        {{ extreme_row("Lowest pressure", extremes_all.pressure.min, 0, " hPa", "", "date") }}
         {% if daily_extremes %}
         {% for row in [
-            ('Warmest day (avg)',     daily_extremes.hottest_avg,     daily_extremes.hottest_avg_day,     '%.1f', '°C', 'hi'),
-            ('Coldest day (avg)',     daily_extremes.coldest_avg,     daily_extremes.coldest_avg_day,     '%.1f', '°C', 'lo'),
-            ('Most humid day (avg)',  daily_extremes.most_humid_avg,  daily_extremes.most_humid_avg_day,  '%.0f', '%',  ''),
-            ('Least humid day (avg)', daily_extremes.least_humid_avg, daily_extremes.least_humid_avg_day, '%.0f', '%',  '')
+            ('Warmest day (avg)',     daily_extremes.hottest_avg,     daily_extremes.hottest_avg_day,     1, '°C', 'hi'),
+            ('Coldest day (avg)',     daily_extremes.coldest_avg,     daily_extremes.coldest_avg_day,     1, '°C', 'lo'),
+            ('Most humid day (avg)',  daily_extremes.most_humid_avg,  daily_extremes.most_humid_avg_day,  0, '%',  ''),
+            ('Least humid day (avg)', daily_extremes.least_humid_avg, daily_extremes.least_humid_avg_day, 0, '%',  '')
         ] %}
         <div class="stat-row">
-            <span class="stat-label">{{ row[0] }}</span>
+            <span class="stat-label">{{ t(row[0]) }}</span>
             <span class="stat-spacer"></span>
-            <span class="stat-val {{ row[5] }}">{{ row[3]|format(row[1]) }}{{ row[4] }}</span>
+            <span class="stat-val {{ row[5] }}">{{ num(row[1], row[3]) }}{{ row[4] }}</span>
             <span class="stat-time">{{ row[2] }}</span>
         </div>
         {% endfor %}
         {% endif %}
         <div class="stat-row">
-            <span class="stat-label">Readings</span>
+            <span class="stat-label">{{ t('Readings') }}</span>
             <span class="stat-spacer"></span>
-            <span class="stat-val">{{ "{:,}".format(stats_all.count) }}</span>
+            <span class="stat-val">{{ num(stats_all.count, 0, grouping=True) }}</span>
         </div>
     </div>
     {% endif %}
@@ -216,7 +215,7 @@
 <!-- ── Climate ────────────────────────────────────────────────────────── -->
 {% if climate and climate.years %}
 <div class="card chart-card climate">
-    <h3 class="card-title">📊 Climate</h3>
+    <h3 class="card-title">📊 {{ t('Climate') }}</h3>
     <canvas id="chart-climate"></canvas>
     <p class="chart-fallback"></p>
 </div>
@@ -226,8 +225,8 @@
 {% for entry in climate.yearly %}{% set _ = yearly_by_year.update({entry.year: entry}) %}{% endfor %}
 
 <div class="card stats-card">
-    <h4 class="subcard-title">Monthly Details</h4>
-    <div class="year-selector" id="climate-year-selector" data-default="{{ default_year }}" role="group" aria-label="Year">
+    <h4 class="subcard-title">{{ t('Monthly Details') }}</h4>
+    <div class="year-selector" id="climate-year-selector" data-default="{{ default_year }}" role="group" aria-label="{{ t('Year') }}">
         {% for year in climate.years %}
         <button type="button" class="period-btn climate-yr-btn" data-year="{{ year }}" aria-pressed="false">{{ year }}</button>
         {% endfor %}
@@ -240,10 +239,10 @@
         {% set summary = yearly_by_year.get(year) %}
         {% if summary and summary.temp_avg is not none %}
         <div class="stat-row stat-summary">
-            <span class="stat-label">{{ year }} average</span>
+            <span class="stat-label">{{ t('{year} average', year=year) }}</span>
             <span class="stat-spacer"></span>
-            <span class="stat-val">{{ "%.1f"|format(summary.temp_avg) }}°C</span>
-            <span class="stat-range">min {{ "%.1f"|format(summary.temp_min) }} max {{ "%.1f"|format(summary.temp_max) }}</span>
+            <span class="stat-val">{{ num(summary.temp_avg, 1) }}°C</span>
+            <span class="stat-range">{{ t('min {min} max {max}', min=num(summary.temp_min, 1), max=num(summary.temp_max, 1)) }}</span>
         </div>
         {% endif %}
         <div class="month-columns">
@@ -255,8 +254,8 @@
                     <span class="stat-label">{{ months[month.month - 1] }}</span>
                     <span class="stat-spacer"></span>
                     {% if month.temp_avg is not none %}
-                    <span class="stat-val">{{ "%.1f"|format(month.temp_avg) }}°C</span>
-                    <span class="stat-range">min {{ "%.1f"|format(month.temp_min) }} max {{ "%.1f"|format(month.temp_max) }}</span>
+                    <span class="stat-val">{{ num(month.temp_avg, 1) }}°C</span>
+                    <span class="stat-range">{{ t('min {min} max {max}', min=num(month.temp_min, 1), max=num(month.temp_max, 1)) }}</span>
                     {% else %}
                     <span class="stat-muted">—</span>
                     {% endif %}
@@ -274,29 +273,29 @@
 
 <!-- ── Calendar ───────────────────────────────────────────────────────── -->
 <div class="card heatmap-card">
-    <h3 class="card-title">📆 Temperature Calendar</h3>
+    <h3 class="card-title">📆 {{ t('Temperature Calendar') }}</h3>
     <div class="heatmap-nav">
-        <button type="button" id="heatmap-prev" aria-label="Previous month" disabled>&#8249;</button>
+        <button type="button" id="heatmap-prev" aria-label="{{ t('Previous month') }}" disabled>&#8249;</button>
         <span class="heatmap-month-label" id="heatmap-label" aria-live="polite">&nbsp;</span>
-        <button type="button" id="heatmap-next" aria-label="Next month" disabled>&#8250;</button>
+        <button type="button" id="heatmap-next" aria-label="{{ t('Next month') }}" disabled>&#8250;</button>
     </div>
     <div class="heatmap-track" id="heatmap-track" tabindex="0" role="group"
-         aria-label="Temperature calendar, one month per page"></div>
+         aria-label="{{ t('Temperature calendar, one month per page') }}"></div>
     <div class="heatmap-legend">
-        <span>Cold</span>
+        <span>{{ t('Cold') }}</span>
         <div class="heatmap-legend-bar"></div>
-        <span>Hot</span>
+        <span>{{ t('Hot') }}</span>
     </div>
 </div>
 
 {% else %}
 <div class="no-data">
-    <p>📡 Waiting for first weather reading...</p>
-    <p class="hint">Data arrives every few minutes from the balcony sensor.</p>
+    <p>{{ t('📡 Waiting for first weather reading...') }}</p>
+    <p class="hint">{{ t('Data arrives every few minutes from the balcony sensor.') }}</p>
 </div>
 {% endif %}
 
-<footer>Balcony Weather Station · {{ now.strftime('%Y-%m-%d') }}</footer>
+<footer>{{ t('Balcony Weather Station') }} · {{ now.strftime('%Y-%m-%d') }}</footer>
 
 </div><!-- .container -->
 </body>

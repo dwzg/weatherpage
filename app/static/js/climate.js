@@ -4,12 +4,12 @@
    year; this only toggles which is visible. Building them here as well would
    mean two implementations of the same table drifting apart. */
 
-import { MONTH_ABBR, chartStyle, chartsAvailable } from './format.js';
+import { MONTH_ABBR, chartStyle, chartsAvailable, t, formatNumber, LOCALE } from './format.js';
 
 const SERIES = [
-    { key: 'temp_max', label: 'Max',     color: '#e53e3e', width: 1.5, dash: [4, 3], radius: 3 },
-    { key: 'temp_avg', label: 'Average', color: '#38a169', width: 2.5, dash: [],     radius: 4 },
-    { key: 'temp_min', label: 'Min',     color: '#3182ce', width: 1.5, dash: [4, 3], radius: 3 },
+    { key: 'temp_max', label: t('Max'),     color: '#e53e3e', width: 1.5, dash: [4, 3], radius: 3 },
+    { key: 'temp_avg', label: t('Average'), color: '#38a169', width: 2.5, dash: [],     radius: 4 },
+    { key: 'temp_min', label: t('Min'),     color: '#3182ce', width: 1.5, dash: [4, 3], radius: 3 },
 ];
 
 function buildChart() {
@@ -37,6 +37,7 @@ function buildChart() {
             })),
         },
         options: {
+            locale: LOCALE,
             responsive: true,
             maintainAspectRatio: false,
             animation: false,
@@ -52,7 +53,7 @@ function buildChart() {
                     ticks: {
                         color: style.tickColor,
                         font: { size: 10 },
-                        callback: (v) => `${v.toFixed(0)}°`,
+                        callback: (v) => `${formatNumber(v, 0)}°`,
                     },
                     grid: { color: style.gridColor },
                 },
