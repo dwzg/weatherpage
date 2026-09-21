@@ -146,6 +146,22 @@ class TestCatalogueCoverage:
         missing = sorted(labels - set(i18n.GERMAN))
         assert not missing, f"no German for record label: {missing}"
 
+    def test_every_rule_ladder_row_is_translated(self):
+        """The ladder reaches t() as tier.condition, so the scan cannot see it."""
+        strings = set()
+        for tier in weather.RULE_LADDER:
+            strings.add(tier.condition)
+            if tier.note:
+                strings.add(tier.note)
+        missing = sorted(strings - set(i18n.GERMAN))
+        assert not missing, f"no German for rule ladder row: {missing}"
+
+    def test_every_feature_label_is_translated(self):
+        """Also passed as a variable — the labels come from the model file."""
+        labels = {f.label for f in nowcast.FEATURE_FORMATS.values()}
+        missing = sorted(labels - set(i18n.GERMAN))
+        assert not missing, f"no German for feature label: {missing}"
+
     def test_the_catalogue_has_no_empty_translations(self):
         assert not [k for k, v in i18n.GERMAN.items() if not v.strip()]
 
@@ -207,6 +223,7 @@ ENGLISH_GIVEAWAYS = (
     "All Time", "Today's Records", "All-Time Records", "Hottest", "Coldest",
     "Most humid", "Readings", "Temperature Calendar", "Previous month",
     "Cold", "How these two predictions work", "The outlook", "Why both",
+    "The technical details", "Rain followed", "What is driving the number",
 )
 
 
@@ -312,3 +329,66 @@ class TestNowcastPillStructure:
         rule = re.search(r"\.banner-nowcast\s*\{([^}]*)\}", self.CSS.read_text())
         assert rule, "no .banner-nowcast rule"
         assert "flex" not in rule.group(1), "flex items wrap internally; see the docstring"
+
+
+class TestDeepDiveStructure:
+    """The explainer's tables are written by Jinja and rewritten by poll.js.
+
+    They are the same hooks in both, so the contract is the attribute names.
+    A rename on one side alone leaves a section that is correct on load and
+    silently frozen a minute later, which is the failure this catches.
+    """
+
+    POLL = JS_DIR / "poll.js"
+
+    @pytest.mark.parametrize("hook", [
+        "deep-outlook-live",   # the live pressure rank
+        "deep-features",       # the contribution table
+        'data-cell="intercept"',
+        'data-cell="total"',
+        "rule-ladder",         # the rung the outlook is standing on
+    ])
+    def test_both_sides_name_the_same_hook(self, hook):
+        assert hook in TEMPLATE.read_text(), f"{hook} missing from the template"
+        assert hook in self.POLL.read_text(), f"{hook} missing from poll.js"
+
+    async def test_the_ladder_rows_carry_the_phrase_the_api_sends(self, client):
+        """The poller matches data-phrase against status.forecast, which is
+        English whatever the page is in — so the German render must still
+        carry the English identifier in the attribute."""
+        await seed(client)
+        text = (await client.get("/", headers=GERMAN_HEADERS)).text
+        phrases = set(re.findall(r'data-phrase="([^"]+)"', text))
+        assert phrases == {tier.phrase for tier in weather.RULE_LADDER}
+
+    async def test_the_rendered_ladder_marks_the_current_rung(self, client):
+        """Exactly one rung is highlighted, and it is the one the banner says."""
+        await seed(client)
+        body = (await client.get("/api/weather/status")).json()
+        text = (await client.get("/")).text
+        marked = re.findall(r'data-phrase="([^"]+)" class="is-active"', text)
+        if body["forecast"] in {tier.phrase for tier in weather.RULE_LADDER}:
+            assert marked == [body["forecast"]]
+        else:
+            assert marked == []
+
+    def test_the_live_line_carries_the_window_it_describes(self):
+        """poll.js reads the day count off the element rather than hard-coding it."""
+        assert 'data-days="{{ percentile_days }}"' in TEMPLATE.read_text()
+        assert "dataset.days" in self.POLL.read_text()
+
+    def test_the_weight_colours_are_not_the_temperature_ones(self):
+        """delta-up/-down mean warmer and cooler; these mean more and less rain."""
+        css = (PACKAGE / "static" / "css" / "dashboard.css").read_text()
+        assert ".feature-table .weight-up" in css
+        assert ".feature-table .weight-down" in css
+        assert "delta-up" not in re.search(
+            r"function updateFeatureTable.*?\n}", self.POLL.read_text(), re.S).group(0)
+
+    def test_wide_tables_scroll_inside_their_own_box(self):
+        """A table wider than the phone must not push the whole page sideways."""
+        css = (PACKAGE / "static" / "css" / "dashboard.css").read_text()
+        rule = re.search(r"\.table-scroll\s*\{([^}]*)\}", css)
+        assert rule, "no .table-scroll rule"
+        assert "auto" in rule.group(1)
+        assert TEMPLATE.read_text().count('class="table-scroll"') >= 3

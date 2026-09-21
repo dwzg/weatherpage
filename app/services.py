@@ -199,12 +199,51 @@ def run_nowcast(
         return None
 
     probability = model.predict(features)
+    meta = model.metadata
     return {
         "probability": round(probability, 3),
         "threshold": model.threshold,
         "label": nowcast.describe(probability, model.threshold),
         "horizon_hours": nowcast.HORIZON_HOURS,
         "rain_mm": nowcast.RAIN_MM,
-        "trained_at": model.metadata.get("trained_at"),
-        "skill": model.metadata.get("skill"),
+        "trained_at": meta.get("trained_at"),
+        "skill": meta.get("skill"),
+        # The model card the explainer prints. All of it is metadata the
+        # trainer already writes, passed through rather than restated here,
+        # so a retrain updates the page without a code change.
+        "samples": meta.get("samples"),
+        "trained_through": meta.get("trained_through"),
+        "base_rate": meta.get("base_rate"),
+        "baselines": meta.get("baselines"),
+        "cross_check": meta.get("cross_check_2km"),
+        "intercept": round(model.intercept, 3),
+        "logit": round(model.logit(features), 3),
+        "contributions": nowcast_breakdown(model, features),
     }
+
+
+def nowcast_breakdown(model: nowcast.Model, features: dict[str, float]) -> list[dict]:
+    """The per-feature decomposition, ready to print.
+
+    The value is scaled and the decimals are chosen here rather than in the
+    browser, for the same reason the numbers elsewhere are: the poller
+    rewrites what the render produced, and a value that changes shape after
+    sixty seconds reads as a bug.
+    """
+    rows = []
+    for c in model.contributions(features):
+        fmt = nowcast.describe_feature(c.name)
+        rows.append({
+            "name": c.name,
+            "label": fmt.label,
+            "unit": fmt.unit,
+            "digits": fmt.digits,
+            "sign": fmt.sign,
+            "value": round(c.value * fmt.factor, 6),
+            "standardised": round(c.standardised, 2),
+            "weight": round(c.weight, 3),
+        })
+    # Biggest movers first: the point of the table is which signals are
+    # driving this number, and ten rows in training order does not say.
+    rows.sort(key=lambda r: abs(r["weight"]), reverse=True)
+    return rows

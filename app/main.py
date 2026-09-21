@@ -13,7 +13,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import __version__, database, i18n, services
+from . import __version__, database, i18n, services, weather
 from .api import router as api_router
 from .config import STALE_AFTER_MINUTES, get_settings
 
@@ -97,6 +97,11 @@ def create_app() -> FastAPI:
                 "lang": lang,
                 "t": i18n.translator(lang),
                 "num": i18n.number_formatter(lang),
+                "rule": i18n.rule_describer(lang),
+                "rule_ladder": weather.RULE_LADDER,
+                "calibration": weather.CALIBRATION,
+                "percentile_days": database.PERCENTILE_DAYS,
+                "smoothing_minutes": database.SMOOTHING_WINDOW_MINUTES,
                 "months": i18n.MONTHS_SHORT[lang],
                 "i18n_payload": i18n.page_payload(lang),
                 "asset_version": get_settings().asset_version,

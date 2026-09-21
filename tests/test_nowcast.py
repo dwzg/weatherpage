@@ -7,6 +7,7 @@ broken page, and that the file currently shipped is one the app can read.
 
 import json
 import math
+import re
 from datetime import datetime, timedelta
 
 import pytest
@@ -28,6 +29,20 @@ def write(tmp_path, payload, name="model.json"):
     path = tmp_path / name
     path.write_text(json.dumps(payload) if isinstance(payload, dict) else payload)
     return path
+
+
+async def stock(db, days: int = 32) -> None:
+    """Enough history for every nowcast feature, including the 30-day rank."""
+    now = clock.now().replace(minute=0, second=0, microsecond=0, tzinfo=None)
+    moment = now - timedelta(days=days)
+    i = 0
+    while moment <= now:
+        await db.insert_reading(
+            20.0 + (i % 24) * 0.3, 50.0 + (i % 40), 1005.0 + (i % 50) * 0.5,
+            moment.strftime(clock.TS_FORMAT),
+        )
+        moment += timedelta(minutes=30)
+        i += 1
 
 
 class TestLoading:
@@ -89,6 +104,61 @@ class TestPrediction:
         """A constant feature comes out of training with scale 0."""
         model = nowcast.load(write(tmp_path, MODEL | {"scale": [0.0, 15.0]}))
         assert 0.0 <= model.predict({"pct30": 0.5, "rh": 60.0}) <= 1.0
+
+
+class TestBreakdown:
+    """The per-feature decomposition the page prints.
+
+    Its whole claim is that it *is* the prediction: if the rows stopped
+    summing to the logit the table would be a decorative illustration of a
+    number computed somewhere else.
+    """
+
+    def model(self, tmp_path):
+        return nowcast.load(write(tmp_path, MODEL))
+
+    def test_the_weights_and_the_intercept_are_the_logit(self, tmp_path):
+        model = self.model(tmp_path)
+        values = {"pct30": 0.75, "rh": 75.0}
+        total = model.intercept + sum(c.weight for c in model.contributions(values))
+        assert total == pytest.approx(model.logit(values))
+
+    def test_the_logit_squashes_to_the_prediction(self, tmp_path):
+        model = self.model(tmp_path)
+        values = {"pct30": 0.2, "rh": 88.0}
+        squashed = 1 / (1 + math.exp(-model.logit(values)))
+        assert model.predict(values) == pytest.approx(squashed)
+
+    def test_one_row_per_feature_in_model_order(self, tmp_path):
+        model = self.model(tmp_path)
+        rows = model.contributions({"pct30": 0.5, "rh": 60.0})
+        assert [c.name for c in rows] == list(model.features)
+
+    def test_standardising_is_relative_to_the_training_mean(self, tmp_path):
+        model = self.model(tmp_path)
+        at_mean = model.contributions({"pct30": 0.5, "rh": 60.0})
+        assert [c.standardised for c in at_mean] == [0.0, 0.0]
+        assert [c.weight for c in at_mean] == [0.0, 0.0]
+
+    def test_a_constant_feature_does_not_divide_by_zero(self, tmp_path):
+        """scale 0 is what a feature that never varied comes out of training as."""
+        model = nowcast.load(write(tmp_path, MODEL | {"scale": [0.0, 15.0]}))
+        assert all(math.isfinite(c.weight) for c in
+                   model.contributions({"pct30": 0.9, "rh": 60.0}))
+
+    def test_an_unknown_feature_still_gets_a_row(self, tmp_path):
+        """A newer model may carry a name this code has never heard of."""
+        fmt = nowcast.describe_feature("whatever_is_next")
+        assert fmt.label == "whatever_is_next"
+        assert fmt.digits == 2
+
+    def test_every_shipped_feature_is_described(self):
+        """A feature with no entry prints as a bare name on the live page."""
+        model = nowcast.load()
+        if model is None:
+            pytest.skip("no model shipped")
+        missing = [n for n in model.features if n not in nowcast.FEATURE_FORMATS]
+        assert not missing, f"no display format for: {missing}"
 
 
 class TestLabel:
@@ -161,18 +231,7 @@ class TestServiceIntegration:
         assert await services.nowcast_features() is None
 
     async def test_a_stocked_database_produces_every_feature(self, db):
-        now = clock.now().replace(minute=0, second=0, microsecond=0, tzinfo=None)
-        moment = now - timedelta(days=32)
-        step = timedelta(minutes=30)
-        i = 0
-        while moment <= now:
-            await db.insert_reading(
-                20.0 + (i % 24) * 0.3, 50.0 + (i % 40), 1005.0 + (i % 50) * 0.5,
-                moment.strftime(clock.TS_FORMAT),
-            )
-            moment += step
-            i += 1
-
+        await stock(db)
         features = await services.nowcast_features()
         assert features is not None
         assert set(features) == {"pct30", "pct7", "rh", "rh_max6", "drh3", "drh6",
@@ -205,3 +264,93 @@ class TestStatusPayload:
         await db.insert_reading(20.0, 55.0, 1013.0, now.strftime(clock.TS_FORMAT))
         body = (await client.get("/api/weather/status")).json()
         assert "nowcast" in body  # present, even when there is not enough history
+
+
+class TestRenderedBreakdown:
+    """What ``run_nowcast`` hands the page and the poller.
+
+    The explainer's table is rendered twice — by Jinja and, a minute later,
+    by ``poll.js`` — from this one payload. The server picks the scale and
+    the decimals so both print the same shape; a row that left them out
+    would change under the reader after sixty seconds.
+    """
+
+    MODEL_FILE = MODEL | {"features": ["pct30", "rh"]}
+
+    def payload(self, tmp_path):
+        model = nowcast.load(write(tmp_path, self.MODEL_FILE))
+        return services.run_nowcast({"pct30": 0.2, "rh": 88.0}, model)
+
+    def test_every_feature_gets_a_row(self, tmp_path):
+        rows = self.payload(tmp_path)["contributions"]
+        assert {r["name"] for r in rows} == {"pct30", "rh"}
+
+    def test_each_row_carries_its_own_formatting(self, tmp_path):
+        for row in self.payload(tmp_path)["contributions"]:
+            assert set(row) >= {"label", "unit", "digits", "sign", "value",
+                                "standardised", "weight"}
+            assert isinstance(row["digits"], int)
+            assert isinstance(row["sign"], bool)
+
+    def test_percentile_rows_are_sent_as_percentages(self, tmp_path):
+        """The model carries a fraction; the page prints 20 %, not 0.2."""
+        row = next(r for r in self.payload(tmp_path)["contributions"]
+                   if r["name"] == "pct30")
+        assert row["value"] == pytest.approx(20.0)
+        assert row["unit"] == "%"
+
+    def test_rows_are_ordered_by_influence(self, tmp_path):
+        weights = [abs(r["weight"]) for r in self.payload(tmp_path)["contributions"]]
+        assert weights == sorted(weights, reverse=True)
+
+    def test_the_intercept_and_weights_reach_the_quoted_probability(self, tmp_path):
+        """The table has to add up, or it is describing a different number."""
+        payload = self.payload(tmp_path)
+        total = payload["intercept"] + sum(r["weight"] for r in payload["contributions"])
+        assert total == pytest.approx(payload["logit"], abs=0.01)
+        assert 1 / (1 + math.exp(-payload["logit"])) == pytest.approx(
+            payload["probability"], abs=0.01)
+
+    def test_the_model_card_passes_the_trainer_s_metadata_through(self, tmp_path):
+        model = nowcast.load(write(tmp_path, self.MODEL_FILE | {"metadata": {
+            "samples": 1454, "base_rate": 0.193, "trained_through": "2026-09-20",
+            "baselines": {"rules": {"brier": 0.19}},
+            "cross_check_2km": {"brier": 0.11, "bss": -0.25},
+        }}))
+        payload = services.run_nowcast({"pct30": 0.5, "rh": 60.0}, model)
+        assert payload["samples"] == 1454
+        assert payload["base_rate"] == 0.193
+        assert payload["trained_through"] == "2026-09-20"
+        assert payload["baselines"]["rules"]["brier"] == 0.19
+        assert payload["cross_check"]["bss"] == -0.25
+
+    def test_metadata_the_trainer_did_not_write_is_simply_absent(self, tmp_path):
+        """An older model file must not take the explainer down with it."""
+        model = nowcast.load(write(tmp_path, self.MODEL_FILE | {"metadata": {}}))
+        payload = services.run_nowcast({"pct30": 0.5, "rh": 60.0}, model)
+        assert payload["samples"] is None
+        assert payload["baselines"] is None
+        assert payload["cross_check"] is None
+        assert payload["contributions"]
+
+    async def test_the_poller_is_given_the_breakdown(self, client, db):
+        """poll.js rebuilds the table from /status, so it has to be in there."""
+        if services.NOWCAST_MODEL is None:
+            pytest.skip("no model shipped")
+        await stock(db)
+        nowcast_payload = (await client.get("/api/weather/status")).json()["nowcast"]
+        assert nowcast_payload is not None
+        rows = nowcast_payload["contributions"]
+        assert {r["name"] for r in rows} == set(services.NOWCAST_MODEL.features)
+        total = nowcast_payload["intercept"] + sum(r["weight"] for r in rows)
+        assert total == pytest.approx(nowcast_payload["logit"], abs=0.01)
+
+    async def test_the_page_renders_the_breakdown_it_was_given(self, client, db):
+        """The table is server-rendered first; the poller only maintains it."""
+        if services.NOWCAST_MODEL is None:
+            pytest.skip("no model shipped")
+        await stock(db)
+        text = (await client.get("/")).text
+        body = re.search(r'id="deep-features".*?<tbody>(.*?)</tbody>', text, re.S)
+        assert body, "the contribution table did not render"
+        assert body.group(1).count("<tr>") == len(services.NOWCAST_MODEL.features)
