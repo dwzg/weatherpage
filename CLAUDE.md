@@ -280,6 +280,8 @@ The readings are the only thing here that cannot be rebuilt: code is in git, the
 
 - **Nightly, off-host** (`.github/workflows/backup.yml`). Pages the whole archive out of `/api/weather/export` and keeps it as a workflow artifact for 90 days. It reads `/export`, never `/history` — the same trap `ml/train.py` fell into, and a "backup" of bucket averages would look fine until someone needed it. `tests/test_backup.py::TestTheOffHostBackupUsesTheRawArchive` fails if a `/history` URL appears there. It follows the `(timestamp, utc_offset)` cursor to the end, and fails loudly on an empty export rather than storing a zero-byte file and reporting success.
 
+**Nothing else watches the feed.** `/healthz` reports `ok` while the sensor is dead — it only says the container can reach its database — so `.github/workflows/feed-check.yml` asks `/api/weather/status` every half hour and fails when `age_seconds` exceeds 45 minutes. A failed workflow run is the alert: GitHub emails the repository owner, exactly as it does for a failed retrain or deploy. That is the whole mechanism, on purpose — no third-party push service, no webhook, no new secret. It reads `age_seconds` rather than computing the age itself, because the stored timestamp is a naive local wall clock and only the app knows which clock it belongs to.
+
 To restore: stop the container, put the snapshot in place of `/data/weather.db` (removing any `-wal`/`-shm` beside it), start it again. The migration is idempotent and will rebuild anything missing. From the off-host NDJSON instead, replay it into `POST /api/weather` — the ingest upserts on `(timestamp, utc_offset)`, so a replay over a partially recovered database converges rather than duplicating.
 
 ## Deployment

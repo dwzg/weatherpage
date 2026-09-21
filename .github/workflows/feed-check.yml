@@ -1,0 +1,68 @@
+name: Is the sensor feed still running
+
+# /healthz answers "ok" as long as the container can reach its database, so a
+# dead sensor and a healthy one look identical from outside: the container
+# stays up, the page keeps serving, and the newest reading simply stops
+# moving. The page says so in a banner, which helps exactly as often as
+# someone happens to open it.
+#
+# This is the whole alerting mechanism, and deliberately so: it fails, and
+# GitHub emails the owner about a failed workflow run in their own repository,
+# the same way it already does for a failed retrain or deploy. No third-party
+# service, no webhook, no new secret, nothing leaving the repo.
+on:
+  schedule:
+    - cron: "*/30 * * * *"   # every half hour
+  workflow_dispatch:
+
+concurrency:
+  group: feed-check
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Ask the app how old its newest reading is
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          # Readings arrive every 5 minutes. Generous enough that a deploy, a
+          # restart or a couple of missed relays do not cry wolf; tight
+          # enough that a genuinely dead feed is noticed within the hour
+          # rather than at the weekend.
+          MAX_AGE_MINUTES: "45"
+        run: |
+          set -euo pipefail
+
+          if [ -z "${APP_URL:-}" ]; then
+            echo "APP_URL is not set; nothing to check." >&2
+            exit 1
+          fi
+
+          # age_seconds comes from the app, which is the only party that
+          # knows which clock its stored timestamps belong to — they are
+          # naive local wall clocks, so computing the age here would be two
+          # hours out every summer. One retry, for a deploy mid-restart; a
+          # failure to reach the app at all is itself worth the email, so
+          # this is not wrapped in anything that would paper over an outage.
+          curl -sS --fail-with-body --retry 1 --retry-delay 20 \
+               "$APP_URL/api/weather/status" -o status.json
+
+          age=$(jq -r '.age_seconds // empty' status.json)
+          latest=$(jq -r '.current.timestamp // "unknown"' status.json)
+
+          if [ -z "$age" ]; then
+            echo "::error::The app is up but reported no reading age at all."
+            exit 1
+          fi
+
+          minutes=$(( age / 60 ))
+          echo "Newest reading: $latest ($minutes minutes old)"
+
+          if [ "$minutes" -gt "$MAX_AGE_MINUTES" ]; then
+            echo "::error::No reading for $minutes minutes (limit $MAX_AGE_MINUTES). The sensor feed or the relay has stopped."
+            exit 1
+          fi
+
+          echo "The feed is running."
