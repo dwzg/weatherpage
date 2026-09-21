@@ -101,12 +101,17 @@ header .subtitle { color: var(--text-secondary); font-size: 0.9rem; margin-top: 
 /* The banner row holds both, side by side, wrapping on a narrow screen. */
 .banner-row { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
 
-.banner-nowcast {
-    display: inline-flex;
-    align-items: baseline;
-    gap: 4px;
-}
+/* Ordinary wrapping text, deliberately NOT a flex row. As flex items the
+   label, the percentage and the horizon become side-by-side columns that
+   each wrap internally, so on a narrow screen the "·" is orphaned onto its
+   own line and "in 6 h" splits down the middle. English was short enough to
+   hide it; German is not. */
+.banner-nowcast { line-height: 1.45; }
 .banner-nowcast strong { font-weight: 700; }
+
+/* The separator, the number and the horizon read as one thing: a line may
+   break before them, never inside them. */
+.nowcast-chance { white-space: nowrap; }
 
 .predictions { text-align: center; margin-bottom: 16px; }
 

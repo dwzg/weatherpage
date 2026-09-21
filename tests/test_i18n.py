@@ -283,3 +283,32 @@ class TestApiStaysEnglish:
         body = (await client.get("/api/weather/status", headers=GERMAN_HEADERS)).json()
         assert body["forecast"] in set(i18n.GERMAN) | {None}
         assert body["forecast"] not in i18n.GERMAN.values()
+
+
+class TestNowcastPillStructure:
+    """The pill is built twice — by Jinja and by the poller — and the two must
+    agree on its shape, not just its words.
+
+    It was an ``inline-flex`` row, which makes the label, the percentage and
+    the horizon three side-by-side columns that each wrap inside themselves.
+    English was short enough to hide it; German put the "·" alone on one line
+    and split "in 6 Std." down the middle on a phone.
+    """
+
+    CSS = PACKAGE / "static" / "css" / "dashboard.css"
+
+    def test_the_template_keeps_the_chance_in_one_span(self):
+        assert 'class="nowcast-chance"' in TEMPLATE.read_text()
+
+    def test_the_poller_builds_the_same_span(self):
+        assert "nowcast-chance" in (JS_DIR / "poll.js").read_text()
+
+    def test_the_stylesheet_stops_the_chance_wrapping(self):
+        rule = re.search(r"\.nowcast-chance\s*\{([^}]*)\}", self.CSS.read_text())
+        assert rule, "no .nowcast-chance rule"
+        assert "nowrap" in rule.group(1)
+
+    def test_the_pill_is_not_a_flex_row(self):
+        rule = re.search(r"\.banner-nowcast\s*\{([^}]*)\}", self.CSS.read_text())
+        assert rule, "no .banner-nowcast rule"
+        assert "flex" not in rule.group(1), "flex items wrap internally; see the docstring"

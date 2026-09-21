@@ -36,9 +36,10 @@
     {%- if nowcast %}
     <span class="banner banner-nowcast" id="label-nowcast"
           title="{{ t("Learned from this station's own history") }}">
-        🤖 {{ t('Rain nearby') }} {{ t(nowcast.label) }} ·
-        <strong>{{ num(nowcast.probability * 100) }}%</strong>
-        {{ t('in {hours} h', hours=nowcast.horizon_hours) }}
+        🤖 {{ t('Rain nearby') }} {{ t(nowcast.label) }}
+        <span class="nowcast-chance">·
+            <strong>{{ num(nowcast.probability * 100) }}%</strong>
+            {{ t('in {hours} h', hours=nowcast.horizon_hours) }}</span>
     </span>
     {%- endif %}
 </div>

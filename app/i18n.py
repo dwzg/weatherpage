@@ -75,7 +75,7 @@ GERMAN: dict[str, str] = {
     "possible": "möglich",
     "unlikely": "unwahrscheinlich",
     "not expected": "nicht zu erwarten",
-    "Rain nearby": "Regen in der Umgebung",
+    "Rain nearby": "Regen in der Nähe",
     "in {hours} h": "in {hours} Std.",
     "Learned from this station's own history":
         "Aus der eigenen Messreihe dieser Station gelernt",
