@@ -311,6 +311,12 @@
     {%- endif %}
 </div>
 
+{#- Filled only by the poller, and deliberately empty here: the server
+    cannot render "you cannot reach the server". The banner above says the
+    sensor stopped, which is something this app was told; this one says the
+    page stopped being told anything, which it can only find out itself. -#}
+<div class="banner-row" id="label-offline"></div>
+
 {% if current %}
 
 <!-- ── Current conditions ─────────────────────────────────────────────── -->

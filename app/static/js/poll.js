@@ -17,6 +17,14 @@ const SPARK_WINDOW_MS = 3 * 60 * 60 * 1000;
    leaves it where it was and the next poll tries again. */
 let seriesTimestamp = null;
 
+/* How many polls in a row have to fail before the page says so. One failure
+   is a blip — a dropped wifi frame, a container restarting mid-deploy — and
+   announcing it would be noisier than useful. Two is a little over a minute
+   of silence, by which point the numbers on screen really are unverified. */
+const OFFLINE_AFTER_FAILURES = 2;
+
+let failedPolls = 0;
+
 const endsAt = (series) =>
     series && series.readings.length
         ? series.readings[series.readings.length - 1].timestamp
@@ -91,9 +99,31 @@ function updatePressureTrend(trend) {
     el.appendChild(span);
 }
 
+/* Everything on this page is a measurement, and a page that cannot reach the
+   server has stopped knowing whether its measurements are current. Left
+   unsaid, the values simply freeze and go on looking live — which is the one
+   failure this dashboard should not have. */
+function setOffline(failing) {
+    setBanner(
+        'label-offline',
+        failing ? t('⚠️ Not reachable — these readings may be out of date') : '',
+        'banner banner-warn',
+    );
+}
+
 async function pollStatus() {
     const status = await fetchJSON('/api/weather/status');
-    if (status) applyStatus(status);
+
+    if (status) {
+        failedPolls = 0;
+        setOffline(false);
+    } else {
+        failedPolls += 1;
+        if (failedPolls >= OFFLINE_AFTER_FAILURES) setOffline(true);
+        return;
+    }
+
+    applyStatus(status);
 
     /* The series is worth refetching only once a reading has actually landed.
        Its own newest point is the one in /status, so that timestamp says

@@ -86,6 +86,8 @@ GERMAN: dict[str, str] = {
         "❄️ Frostwarnung — Pflanzen schützen!",
     "⚠️ No new readings — the sensor feed may be down":
         "⚠️ Keine neuen Messwerte — der Sensor meldet sich möglicherweise nicht",
+    "⚠️ Not reachable — these readings may be out of date":
+        "⚠️ Nicht erreichbar — diese Messwerte sind möglicherweise veraltet",
 
     # ── The explainer ──────────────────────────────────────────────────────
     "How these two predictions work": "Wie diese beiden Vorhersagen funktionieren",
