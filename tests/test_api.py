@@ -189,8 +189,8 @@ class TestDashboard:
 
     async def test_page_references_its_assets(self, client):
         text = (await client.get("/")).text
-        assert "/static/css/dashboard.css" in text
-        assert "/static/js/main.js" in text
+        assert "/css/dashboard.css" in text
+        assert "/js/main.js" in text
 
     async def test_local_asset_urls_are_root_relative(self, client):
         """An absolute http:// asset URL is blocked as mixed content behind an
@@ -207,5 +207,50 @@ class TestDashboard:
         assert "http://test/" not in text
 
     async def test_assets_are_cache_busted_by_version(self, client):
-        from app import __version__
-        assert f"?v={__version__}" in (await client.get("/")).text
+        from app.config import get_settings
+
+        version = get_settings().asset_version
+        text = (await client.get("/")).text
+        assert f"/static/{version}/js/main.js" in text
+        assert f"/static/{version}/css/dashboard.css" in text
+
+    async def test_the_versioned_prefix_serves_the_same_files(self, client):
+        from app.config import get_settings
+
+        version = get_settings().asset_version
+        for path in ("css/dashboard.css", "js/main.js", "js/pager.js"):
+            assert (await client.get(f"/static/{version}/{path}")).status_code == 200, path
+
+    async def test_every_module_the_page_loads_is_versioned(self, client):
+        """Resolve the import graph the way the browser does.
+
+        A ``?v=`` query versions only the URL the page hands out. The entry
+        module's ``./heatmap.js`` resolves against *that* URL, so with the
+        query scheme it came out unversioned and the browser went on serving
+        whatever it had cached — a page with new markup and months-old
+        modules, which renders wrong rather than merely stale. Versioning the
+        directory fixes it because relative imports inherit the directory,
+        and this walks the graph to prove they do.
+        """
+        from app.config import get_settings
+
+        version = get_settings().asset_version
+        text = (await client.get("/")).text
+        entry = re.search(r'<script type="module" src="([^"]+)"', text)
+        assert entry, "no module entry point on the page"
+
+        seen, queue = set(), [entry.group(1)]
+        while queue:
+            url = queue.pop()
+            if url in seen:
+                continue
+            seen.add(url)
+            assert f"/static/{version}/" in url, f"{url} is not versioned"
+            response = await client.get(url)
+            assert response.status_code == 200, url
+            base = url.rsplit("/", 1)[0]
+            for spec in re.findall(r"""from ['"](\./[^'"]+)['"]""", response.text):
+                queue.append(f"{base}/{spec[2:]}")
+
+        # The whole graph, not just the entry point.
+        assert len(seen) >= 7, sorted(seen)

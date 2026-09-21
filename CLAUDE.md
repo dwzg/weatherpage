@@ -230,7 +230,7 @@ An empty database renders the "waiting for first reading" placeholder, so seed s
 `pytest` and `ruff` run on every pull request (`.github/workflows/ci.yml`), alongside a Docker build and a container smoke test.
 
 ```bash
-pytest -q          # 345 tests
+pytest -q          # 347 tests
 ruff check .
 ```
 
@@ -265,7 +265,13 @@ Deployed via Docker Compose managed by Portainer. The compose file lives in a se
 
 Every push to `main` builds and pushes a new image, then triggers the Portainer webhook to pull and restart. Images are also tagged with the commit SHA, so a bad deploy can be rolled back by pinning the previous SHA in the compose file.
 
-**Asset URLs are versioned by the commit**, not by `__version__`. The app version sat at `2.0.0` across every deploy, so `?v=2.0.0` never changed and browsers kept serving the stylesheet and ES modules from *before* a release — which looks like a broken page rather than a stale one, because the server-rendered markup is new while the JS that maintains it is old. `ASSET_VERSION` still overrides if you need to pin it.
+**Assets are versioned by the path, not by a `?v=` query, and by the commit, not by `__version__`.** Both halves of that were learned the hard way.
+
+`__version__` sat at `2.0.0` across every deploy, so `?v=2.0.0` never changed and browsers kept serving assets from *before* a release. `ASSET_VERSION` still overrides if you need to pin it.
+
+Versioning the query string then fixed only the entry point. The page hands the browser `main.js?v=<sha>`, but the `./heatmap.js` it imports resolves **relative to that URL** and comes out unversioned, so the browser goes on serving whatever it cached the first time it saw the page. The result is a page with new markup, new CSS and a new `main.js` driving months-old modules — which renders *wrong*, not stale: the calendar stopped paging and the climate chart never drew, because the modules were building markup the stylesheet no longer had rules for. Serving from `/static/<version>/…` fixes it at the root, because a relative import inherits the directory, so the whole graph is versioned with no build step. The plain `/static` mount stays for anything holding an old link; the page is `no-store`, so it always hands out the current prefix.
+
+`tests/test_api.py::TestDashboard::test_every_module_the_page_loads_is_versioned` walks that import graph the way the browser does and fails if any module resolves unversioned. Adding a module needs nothing — it is reached through the graph.
 
 **`GET /healthz` reports the commit the running container was built from.** That is how to tell a stalled deploy from a fresh one: the version string moves rarely, so without it the two look identical from outside. The Dockerfile takes it as `GIT_SHA` and both workflows pass `${{ github.sha }}`; it reads `unknown` outside a built image.
 
