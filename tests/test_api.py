@@ -666,6 +666,16 @@ class TestInstallable:
         assert response.status_code == 200
         assert response.content[:8] == b"\x89PNG\r\n\x1a\n"
 
+    def test_the_explainer_cannot_be_wider_than_the_page(self):
+        """It is an inline-block, and shrink-to-fit floors at the content's
+        minimum width — so a table too wide to compress made the whole page
+        scroll sideways at 390px instead of the table scrolling inside its
+        own wrapper. Measured: 397px of page for a 390px phone."""
+        css = (Path(__file__).resolve().parent.parent / "app" / "static"
+               / "css" / "dashboard.css").read_text()
+        note = css.split(".prediction-note {", 1)[1].split("}", 1)[0]
+        assert "max-width: min(82ch, 100%)" in note, note
+
     def test_a_wide_screen_grows_the_charts_and_not_the_calendar(self):
         """The hover grow on a day cell is measured against a ~117px cell.
 

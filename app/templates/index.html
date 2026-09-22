@@ -339,7 +339,7 @@
 
                     <h4>{{ t('What is driving the number right now') }}</h4>
                     <p>
-                        {{ t('Every weight below is in log-odds, which is the unit the model actually adds in. The starting point plus all ten weights is the number the sigmoid squashes, so this table is the prediction rather than a picture of it.') }}
+                        {{ t('Two different numbers, and the difference matters. The weight is the fitted coefficient — what one standard deviation of this signal is worth in log-odds, the same at every hour. The effect is that weight times how unusual the reading is right now, so a big weight on a signal sitting at its average moves nothing. The starting point plus all ten effects is the number the sigmoid squashes, which makes this table the prediction rather than a picture of it.') }}
                     </p>
                     <div class="table-scroll">
                         <table class="deep-table feature-table" id="deep-features">
@@ -348,7 +348,8 @@
                                     <th>{{ t('Signal') }}</th>
                                     <th class="numeric">{{ t('Now') }}</th>
                                     <th class="numeric" title="{{ t('Standard deviations from the training mean.') }}">{{ t('vs normal') }}</th>
-                                    <th class="numeric">{{ t('Weight') }}</th>
+                                    <th class="numeric" title="{{ t('Log-odds per standard deviation, as fitted. The same at every hour.') }}">{{ t('Weight') }}</th>
+                                    <th class="numeric" title="{{ t('Weight times how unusual the reading is: the log-odds this signal is adding right now.') }}">{{ t('Effect now') }}</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -357,17 +358,19 @@
                                     <td>{{ t(row.label) }}</td>
                                     <td class="numeric">{{ num(row.value, row.digits, sign=row.sign) }}{% if row.unit %} {{ row.unit }}{% endif %}</td>
                                     <td class="numeric">{{ num(row.standardised, 1, sign=True) }}</td>
-                                    <td class="numeric {% if row.weight > 0 %}weight-up{% elif row.weight < 0 %}weight-down{% endif %}">{{ num(row.weight, 2, sign=True) }}</td>
+                                    <td class="numeric">{{ num(row.coef, 2, sign=True) }}</td>
+                                    {#- Only the effect is coloured: it is the one that is happening. -#}
+                                    <td class="numeric {% if row.effect > 0 %}weight-up{% elif row.effect < 0 %}weight-down{% endif %}">{{ num(row.effect, 2, sign=True) }}</td>
                                 </tr>
                                 {%- endfor %}
                             </tbody>
                             <tfoot>
                                 <tr>
-                                    <td colspan="3">{{ t('Starting point, before any signal') }}</td>
+                                    <td colspan="4">{{ t('Starting point, before any signal') }}</td>
                                     <td class="numeric" data-cell="intercept">{{ num(nowcast.intercept, 2, sign=True) }}</td>
                                 </tr>
                                 <tr>
-                                    <td colspan="3">{{ t('Total, squashed to a probability') }}</td>
+                                    <td colspan="4">{{ t('Total, squashed to a probability') }}</td>
                                     <td class="numeric" data-cell="total"><strong>{{ num(nowcast.probability * 100) }} %</strong></td>
                                 </tr>
                             </tfoot>

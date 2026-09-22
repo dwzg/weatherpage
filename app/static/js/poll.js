@@ -367,8 +367,11 @@ function updateFeatureTable(nowcast) {
         appendCell(tr, t(row.label), '');
         appendCell(tr, value, 'numeric');
         appendCell(tr, signed(row.standardised, 1), 'numeric');
-        const direction = row.weight > 0 ? 'weight-up' : row.weight < 0 ? 'weight-down' : '';
-        appendCell(tr, signed(row.weight, 2), `numeric ${direction}`.trim());
+        appendCell(tr, signed(row.coef, 2), 'numeric');
+        // Only the effect is coloured: the coefficient does not change from
+        // one hour to the next, and this column is what is happening now.
+        const direction = row.effect > 0 ? 'weight-up' : row.effect < 0 ? 'weight-down' : '';
+        appendCell(tr, signed(row.effect, 2), `numeric ${direction}`.trim());
         body.appendChild(tr);
     }
 

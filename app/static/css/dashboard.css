@@ -123,7 +123,14 @@ header .subtitle { color: var(--text-secondary); font-size: 0.9rem; margin-top: 
    card's own handle. */
 .prediction-note {
     display: inline-block;
-    max-width: 82ch;
+    /* Both halves matter. 82ch is the reading measure. 100% is the phone:
+       an inline-block is sized shrink-to-fit, and shrink-to-fit floors at
+       the content's *minimum* width — so one table too wide to compress
+       makes this box wider than the page, and the page scrolls sideways
+       instead of the table scrolling inside its own .table-scroll. Capping
+       at the container hands the overflow back to the wrapper that is
+       there to take it. */
+    max-width: min(82ch, 100%);
     text-align: left;
     font-size: 0.8rem;
     color: var(--text-secondary);

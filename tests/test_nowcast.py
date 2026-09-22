@@ -117,11 +117,21 @@ class TestBreakdown:
     def model(self, tmp_path):
         return nowcast.load(write(tmp_path, MODEL))
 
-    def test_the_weights_and_the_intercept_are_the_logit(self, tmp_path):
+    def test_the_effects_and_the_intercept_are_the_logit(self, tmp_path):
         model = self.model(tmp_path)
         values = {"pct30": 0.75, "rh": 75.0}
-        total = model.intercept + sum(c.weight for c in model.contributions(values))
+        total = model.intercept + sum(c.effect for c in model.contributions(values))
         assert total == pytest.approx(model.logit(values))
+
+    def test_the_effect_is_the_coefficient_times_how_unusual_it_is(self, tmp_path):
+        """The two were one field called "weight", so the page printed the
+        product and headed the column with the name of the factor."""
+        model = self.model(tmp_path)
+        for c in model.contributions({"pct30": 0.75, "rh": 75.0}):
+            assert c.effect == pytest.approx(c.coef * c.standardised)
+        assert [c.coef for c in model.contributions({"pct30": 0.1, "rh": 40.0})] == \
+            [c.coef for c in model.contributions({"pct30": 0.9, "rh": 90.0})], \
+            "the coefficient is a fact about the model, not about the hour"
 
     def test_the_logit_squashes_to_the_prediction(self, tmp_path):
         model = self.model(tmp_path)
@@ -138,12 +148,15 @@ class TestBreakdown:
         model = self.model(tmp_path)
         at_mean = model.contributions({"pct30": 0.5, "rh": 60.0})
         assert [c.standardised for c in at_mean] == [0.0, 0.0]
-        assert [c.weight for c in at_mean] == [0.0, 0.0]
+        # A signal sitting exactly at its average adds nothing, whatever it
+        # is worth in general.
+        assert [c.effect for c in at_mean] == [0.0, 0.0]
+        assert all(c.coef for c in at_mean)
 
     def test_a_constant_feature_does_not_divide_by_zero(self, tmp_path):
         """scale 0 is what a feature that never varied comes out of training as."""
         model = nowcast.load(write(tmp_path, MODEL | {"scale": [0.0, 15.0]}))
-        assert all(math.isfinite(c.weight) for c in
+        assert all(math.isfinite(c.effect) for c in
                    model.contributions({"pct30": 0.9, "rh": 60.0}))
 
     def test_an_unknown_feature_still_gets_a_row(self, tmp_path):
@@ -288,7 +301,7 @@ class TestRenderedBreakdown:
     def test_each_row_carries_its_own_formatting(self, tmp_path):
         for row in self.payload(tmp_path)["contributions"]:
             assert set(row) >= {"label", "unit", "digits", "sign", "value",
-                                "standardised", "weight"}
+                                "standardised", "coef", "effect"}
             assert isinstance(row["digits"], int)
             assert isinstance(row["sign"], bool)
 
@@ -300,13 +313,14 @@ class TestRenderedBreakdown:
         assert row["unit"] == "%"
 
     def test_rows_are_ordered_by_influence(self, tmp_path):
-        weights = [abs(r["weight"]) for r in self.payload(tmp_path)["contributions"]]
-        assert weights == sorted(weights, reverse=True)
+        """By what each is doing now, not by what it is worth in general."""
+        effects = [abs(r["effect"]) for r in self.payload(tmp_path)["contributions"]]
+        assert effects == sorted(effects, reverse=True)
 
-    def test_the_intercept_and_weights_reach_the_quoted_probability(self, tmp_path):
+    def test_the_intercept_and_effects_reach_the_quoted_probability(self, tmp_path):
         """The table has to add up, or it is describing a different number."""
         payload = self.payload(tmp_path)
-        total = payload["intercept"] + sum(r["weight"] for r in payload["contributions"])
+        total = payload["intercept"] + sum(r["effect"] for r in payload["contributions"])
         assert total == pytest.approx(payload["logit"], abs=0.01)
         assert 1 / (1 + math.exp(-payload["logit"])) == pytest.approx(
             payload["probability"], abs=0.01)
@@ -342,7 +356,7 @@ class TestRenderedBreakdown:
         assert nowcast_payload is not None
         rows = nowcast_payload["contributions"]
         assert {r["name"] for r in rows} == set(services.NOWCAST_MODEL.features)
-        total = nowcast_payload["intercept"] + sum(r["weight"] for r in rows)
+        total = nowcast_payload["intercept"] + sum(r["effect"] for r in rows)
         assert total == pytest.approx(nowcast_payload["logit"], abs=0.01)
 
     async def test_the_page_renders_the_breakdown_it_was_given(self, client, db):

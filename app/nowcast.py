@@ -76,17 +76,23 @@ OVERCAST_PERCENT = 80
 class Contribution:
     """One feature's share of a single prediction.
 
-    ``weight`` is in log-odds, which is the unit the model actually adds in:
-    the intercept plus every weight is the logit the sigmoid squashes. That
-    makes the set of them an exact decomposition of one prediction rather
-    than an illustration of it, which is the only reason it is worth showing
-    on the page.
+    Two different numbers, which used to share the name ``weight``:
+
+    ``coef`` is the fitted coefficient — log-odds per standard deviation,
+    a fact about the model that is the same at every hour. ``effect`` is
+    that coefficient times how unusual this reading is, which is a fact
+    about right now, and it is what the model adds in: the intercept plus
+    every effect is the logit the sigmoid squashes. That makes the set of
+    them an exact decomposition of one prediction rather than an
+    illustration of it, which is the only reason it is worth showing on the
+    page.
     """
 
     name: str
     value: float        #: the feature as it was measured
     standardised: float #: standard deviations from the training mean
-    weight: float       #: log-odds this feature contributed
+    coef: float         #: log-odds per standard deviation, as fitted
+    effect: float       #: coef x standardised: log-odds contributed now
 
 
 @dataclass(frozen=True)
@@ -108,12 +114,12 @@ class Model:
             self.features, self.mean, self.scale, self.coef, strict=True
         ):
             z = (values[name] - mean) / (scale or 1.0)
-            out.append(Contribution(name, values[name], z, coef * z))
+            out.append(Contribution(name, values[name], z, coef, coef * z))
         return tuple(out)
 
     def logit(self, values: dict[str, float]) -> float:
-        """The log-odds of rain: the intercept plus every feature's weight."""
-        return self.intercept + sum(c.weight for c in self.contributions(values))
+        """The log-odds of rain: the intercept plus every feature's effect."""
+        return self.intercept + sum(c.effect for c in self.contributions(values))
 
     def predict(self, values: dict[str, float]) -> float:
         """Probability of rain, from a feature dict. Standardise, dot, squash.

@@ -115,9 +115,19 @@ summary`) precisely so the nested handle does not inherit the card's own.
   ladder is documentation, so nothing else would notice it drifting.
 - **The feature breakdown is the prediction, not an illustration of it.**
   `Model.predict()` is routed through `Model.contributions()`, so the
-  intercept plus the printed weights is exactly the logit being squashed.
-  Weights are in log-odds for that reason; don't "normalise" them to
-  percentages, which would stop them adding up.
+  intercept plus the printed effects is exactly the logit being squashed.
+  Everything in that table is in log-odds for that reason; don't
+  "normalise" it to percentages, which would stop it adding up.
+- **`coef` and `effect` are two different numbers**, and they were one field
+  called `weight` — so the table printed `coef x z` under the heading
+  "Weight", which is the name of the factor, not the product. `coef` is the
+  fitted coefficient, log-odds per standard deviation, the same at every
+  hour; `effect` is that times how unusual this reading is, and it is what
+  the model adds in. The page shows both columns because either alone
+  misleads: a large coefficient on a signal sitting at its average moves
+  nothing, and a large effect says nothing about which way the signal points
+  in general. Rows are sorted by `|effect|` — what is driving *this* number —
+  and only that column is coloured.
 - **The server picks the scale and the decimals.** `services.nowcast_breakdown()`
   sends each row's `value`, `digits`, `sign` and `unit` so the render and the
   poller print the same shape — the same rule the rest of the numbers follow.

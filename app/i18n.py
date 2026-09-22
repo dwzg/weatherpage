@@ -435,19 +435,34 @@ GERMAN: dict[str, str] = {
 
     "What is driving the number right now":
         "Was die Zahl gerade antreibt",
-    "Every weight below is in log-odds, which is the unit the model actually "
-    "adds in. The starting point plus all ten weights is the number the "
-    "sigmoid squashes, so this table is the prediction rather than a picture "
-    "of it.":
-        "Jedes Gewicht unten steht in Log-Odds, der Einheit, in der das "
-        "Modell tatsächlich addiert. Der Ausgangswert plus alle zehn Gewichte "
-        "ergibt die Zahl, die die Sigmoidfunktion zusammenstaucht — diese "
-        "Tabelle ist also die Vorhersage und nicht ein Bild davon.",
+    "Two different numbers, and the difference matters. The weight is the "
+    "fitted coefficient — what one standard deviation of this signal is "
+    "worth in log-odds, the same at every hour. The effect is that weight "
+    "times how unusual the reading is right now, so a big weight on a signal "
+    "sitting at its average moves nothing. The starting point plus all ten "
+    "effects is the number the sigmoid squashes, which makes this table the "
+    "prediction rather than a picture of it.":
+        "Zwei verschiedene Zahlen, und der Unterschied zählt. Das Gewicht "
+        "ist der gefittete Koeffizient — was eine Standardabweichung dieser "
+        "Größe in Log-Odds wert ist, zu jeder Stunde gleich. Der Effekt ist "
+        "dieses Gewicht mal der Ungewöhnlichkeit des aktuellen Messwerts; ein "
+        "großes Gewicht auf einer Größe, die genau im Mittel liegt, bewegt "
+        "also nichts. Der Ausgangswert plus alle zehn Effekte ergibt die "
+        "Zahl, die die Sigmoidfunktion zusammenstaucht — diese Tabelle ist "
+        "also die Vorhersage und nicht ein Bild davon.",
     "Signal": "Größe",
     "Now": "Jetzt",
     "vs normal": "vs. normal",
     "Standard deviations from the training mean.":
         "Standardabweichungen vom Trainingsmittelwert.",
+    "Effect now": "Effekt jetzt",
+    "Log-odds per standard deviation, as fitted. The same at every hour.":
+        "Log-Odds je Standardabweichung, wie gefittet. Zu jeder Stunde "
+        "gleich.",
+    "Weight times how unusual the reading is: the log-odds this signal is "
+    "adding right now.":
+        "Gewicht mal Ungewöhnlichkeit des Messwerts: die Log-Odds, die diese "
+        "Größe gerade beiträgt.",
     "Weight": "Gewicht",
     "Starting point, before any signal": "Ausgangswert, vor allen Größen",
     "Total, squashed to a probability":

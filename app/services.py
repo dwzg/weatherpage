@@ -421,9 +421,14 @@ def nowcast_breakdown(model: nowcast.Model, features: dict[str, float]) -> list[
             "sign": fmt.sign,
             "value": round(c.value * fmt.factor, 6),
             "standardised": round(c.standardised, 2),
-            "weight": round(c.weight, 3),
+            # The fitted coefficient and what it is doing to this hour. Both,
+            # because either alone is misleading: a large coefficient on a
+            # signal sitting at its average moves nothing, and a large effect
+            # says nothing about which way the signal points in general.
+            "coef": round(c.coef, 3),
+            "effect": round(c.effect, 3),
         })
     # Biggest movers first: the point of the table is which signals are
     # driving this number, and ten rows in training order does not say.
-    rows.sort(key=lambda r: abs(r["weight"]), reverse=True)
+    rows.sort(key=lambda r: abs(r["effect"]), reverse=True)
     return rows
