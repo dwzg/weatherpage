@@ -622,6 +622,19 @@ class TestInstallable:
         assert response.status_code == 200
         assert response.content[:8] == b"\x89PNG\r\n\x1a\n"
 
+    def test_a_wide_screen_grows_the_charts_and_not_the_calendar(self):
+        """The hover grow on a day cell is measured against a ~117px cell.
+
+        Widening the column for the charts would have inflated the cells
+        with it and quietly invalidated that measurement, so the grid is
+        capped inside the wider card.
+        """
+        css = (Path(__file__).resolve().parent.parent / "app" / "static"
+               / "css" / "dashboard.css").read_text()
+        wide = css.split("@media (min-width: 1240px) {", 1)[1].split("\n}", 1)[0]
+        assert ".container { max-width: 1180px; }" in wide
+        assert ".heatmap-grid { max-width: 860px" in wide
+
     async def test_theme_color_matches_the_stylesheet(self, client):
         """Two copies of a colour, in a template and a stylesheet, is exactly
         the sort of pair that drifts — a <meta> cannot read a CSS variable,

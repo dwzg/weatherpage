@@ -671,6 +671,19 @@ footer { text-align: center; padding: 16px; color: var(--text-secondary); font-s
 
 /* ── Responsive ───────────────────────────────────────────────────────── */
 
+/* The column stopped at 900px whatever the screen, so on a desktop the
+   charts got 858px of a 1920px display and read as a 4:1 strip. Width is
+   the axis a time series actually wants. Only the things that gain from it
+   grow: the prose keeps its own ch caps, and the calendar keeps the ~117px
+   cell the hover grow was measured against (see .heatmap-grid) rather than
+   inflating a day to the size of a card. */
+@media (min-width: 1240px) {
+    .container { max-width: 1180px; }
+    .chart-card canvas { max-height: 300px; }
+    .chart-card.climate canvas { max-height: 320px; }
+    .heatmap-grid { max-width: 860px; margin: 0 auto; }
+}
+
 @media (max-width: 600px) {
     .current-grid { grid-template-columns: 1fr; }
     .stats-grid { grid-template-columns: 1fr; }
