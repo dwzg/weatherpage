@@ -45,6 +45,35 @@ body {
 
 header { text-align: center; padding: 24px 0 16px; }
 header h1 { font-size: 1.8rem; font-weight: 700; }
+
+/* Out of the way but on the first screen: the reader this exists for is one
+   whose browser asked for the wrong language, and they should not have to
+   scroll to disagree. Absolutely positioned so it cannot shift the title,
+   which is centred; the header reserves the height it needs on a phone,
+   where the corner is not far enough from a centred h1. */
+header { position: relative; }
+.lang-switch {
+    position: absolute;
+    top: 0;
+    right: 0;
+    display: flex;
+    gap: 2px;
+    font-size: 0.72rem;
+    letter-spacing: 0.04em;
+}
+.lang-switch a {
+    color: var(--text-secondary);
+    text-decoration: none;
+    padding: 3px 7px;
+    border-radius: 6px;
+}
+.lang-switch a:hover { color: var(--text); background: var(--border); }
+.lang-switch a[aria-current] {
+    color: var(--bg);
+    background: var(--text);
+    font-weight: 600;
+}
+.lang-switch a:focus-visible { outline: 2px solid var(--accent-hum); outline-offset: 2px; }
 header .subtitle { color: var(--text-secondary); font-size: 0.9rem; margin-top: 4px; }
 
 /* ── Shared card chrome ───────────────────────────────────────────────── */

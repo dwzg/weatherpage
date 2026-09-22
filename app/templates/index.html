@@ -35,6 +35,14 @@
 <div class="container">
 
 <header>
+    {#- Plain links, because the server decides the language: no JavaScript
+        in the path, and the choice is remembered by the cookie the visit
+        sets. The codes are not translated — "EN" and "DE" name themselves,
+        and each carries hreflang so it is announced in its own language. -#}
+    <nav class="lang-switch" aria-label="{{ t('Language') }}">
+        <a href="?lang=en" hreflang="en" lang="en"{% if lang == 'en' %} aria-current="true"{% endif %}>EN</a>
+        <a href="?lang=de" hreflang="de" lang="de"{% if lang == 'de' %} aria-current="true"{% endif %}>DE</a>
+    </nav>
     <h1>🌤️ {{ t('Balcony Weather') }}</h1>
     <p class="subtitle">{{ t('Live from the balcony') }}</p>
 </header>

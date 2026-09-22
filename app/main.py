@@ -205,6 +205,7 @@ def create_app() -> FastAPI:
         lang = i18n.negotiate(
             request.headers.get("accept-language"),
             request.query_params.get("lang"),
+            request.cookies.get(i18n.LANGUAGE_COOKIE),
         )
         t = i18n.translator(lang)
         version = get_settings().asset_version
@@ -257,13 +258,22 @@ def create_app() -> FastAPI:
 
         The language comes from the browser's ``Accept-Language``, which is
         what a German-language OS sets, with ``?lang=en`` / ``?lang=de`` as an
-        explicit override. The same choice is handed to the browser in
-        ``i18n`` so the poller rewrites the elements in the language they
-        were rendered in.
+        explicit override — the switch in the header is a link to exactly
+        that. The same choice is handed to the browser in ``i18n`` so the
+        poller rewrites the elements in the language they were rendered in.
+
+        An explicit choice is remembered in a cookie, because a reader whose
+        browser asks for the other language would otherwise have to say so on
+        every visit. Only an explicit one: the negotiated language is never
+        written back, so the cookie always records something a person did
+        rather than something this code guessed, which is also what keeps it
+        a preference rather than something to ask consent for.
         """
+        chosen = request.query_params.get("lang")
         lang = i18n.negotiate(
             request.headers.get("accept-language"),
-            request.query_params.get("lang"),
+            chosen,
+            request.cookies.get(i18n.LANGUAGE_COOKIE),
         )
         context = await services.build_page_context()
         response = templates.TemplateResponse(
@@ -319,8 +329,18 @@ def create_app() -> FastAPI:
         )
         # The page embeds live readings; never let a proxy hold on to it.
         response.headers["Cache-Control"] = "no-store"
-        # Belt and braces next to no-store: the markup varies by language.
-        response.headers["Vary"] = "Accept-Language"
+        # Belt and braces next to no-store: the markup varies by language,
+        # and the cookie is now one of the things that decides which.
+        response.headers["Vary"] = "Accept-Language, Cookie"
+        if i18n.chosen_language(chosen) is not None:
+            response.set_cookie(
+                i18n.LANGUAGE_COOKIE,
+                lang,
+                max_age=i18n.LANGUAGE_COOKIE_MAX_AGE,
+                path="/",
+                httponly=True,
+                samesite="lax",
+            )
         return response
 
     return application

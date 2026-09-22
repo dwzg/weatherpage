@@ -237,10 +237,24 @@ The rules in `app/weather.py` were fitted offline against observed hourly precip
 
 ## Languages
 
-The page is English and German, and nothing else. German is served when the
-browser asks for it in `Accept-Language`, which is what a German-language OS
-sets; `?lang=de` / `?lang=en` overrides it, for testing and for a reader whose
-OS disagrees with them.
+The page is English and German, and nothing else. The language is decided
+once, server-side, in this order: `?lang=` on the URL, then the `lang`
+cookie a previous `?lang=` set, then `Accept-Language`, then English.
+
+- **The header is a guess, and it is wrong more often than it looks.**
+  `Accept-Language` is not built from the OS *display* language but from the
+  browser's preferred-languages list, which the OS **region** seeds: an
+  English Windows set to Germany asks for German. That is the case the
+  precedence above exists for, and the EN/DE switch in the page header is
+  just a link to `?lang=`.
+- **Only an explicit choice is remembered.** The visit that carries `?lang=`
+  sets the cookie (a year, `Path=/`, `HttpOnly`, `SameSite=Lax`); a
+  negotiated language is never written back. So the cookie always records
+  something a person did rather than something this code guessed — which is
+  also what keeps it a preference rather than something to ask consent for.
+  `i18n.chosen_language()` is what tells the two apart, and `?lang=fr` sets
+  nothing at all. The page's `Vary` names `Cookie` alongside
+  `Accept-Language` because the cookie now helps decide the markup.
 
 - **The message id is the English string.** `app/i18n.py` holds one catalogue,
   `GERMAN`, keyed by the English text, so English needs no table and a missing

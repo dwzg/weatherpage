@@ -61,6 +61,26 @@ class TestNegotiation:
     def test_malformed_quality_does_not_raise(self):
         assert i18n.negotiate("de;q=banana,en") == "en"
 
+    def test_a_remembered_choice_beats_the_browser(self):
+        """The case this exists for: a browser asking for German because the
+        OS *region* is Germany, read by someone who wants English."""
+        assert i18n.negotiate("de-DE,de;q=0.9,en;q=0.8", remembered="en") == "en"
+        assert i18n.negotiate("en-US,en;q=0.9", remembered="de") == "de"
+
+    def test_the_url_still_beats_what_was_remembered(self):
+        assert i18n.negotiate("de-DE", "de", remembered="en") == "de"
+
+    def test_a_remembered_language_we_do_not_speak_is_ignored(self):
+        assert i18n.negotiate("de-DE,de;q=0.9", remembered="fr") == "de"
+        assert i18n.negotiate(None, remembered="") == "en"
+
+    @pytest.mark.parametrize("value,expected", [
+        ("en", "en"), ("de-AT", "de"), ("DE", "de"),
+        ("fr", None), ("", None), (None, None),
+    ])
+    def test_what_counts_as_a_choice(self, value, expected):
+        assert i18n.chosen_language(value) == expected
+
     def test_override_wins(self):
         assert i18n.negotiate("de-DE,de;q=0.9", "en") == "en"
         assert i18n.negotiate("en-GB", "de") == "de"
@@ -366,6 +386,63 @@ class TestGermanPage:
     async def test_the_default_is_english(self, client):
         await seed(client)
         assert 'lang="en"' in (await client.get("/")).text
+
+    async def test_choosing_a_language_is_remembered(self, client):
+        """A browser can ask for German because the OS region is Germany.
+
+        Saying "English" once should be enough; saying it on every visit is
+        not a preference, it is a chore.
+        """
+        await seed(client)
+        chosen = await client.get("/?lang=en", headers=GERMAN_HEADERS)
+        assert 'lang="en"' in chosen.text
+        assert chosen.cookies[i18n.LANGUAGE_COOKIE] == "en"
+
+        # The same German browser, now with the cookie it was handed, and no
+        # query parameter at all.
+        again = await client.get(
+            "/", headers={**GERMAN_HEADERS, "Cookie": f"{i18n.LANGUAGE_COOKIE}=en"}
+        )
+        assert 'lang="en"' in again.text
+        assert "Balcony Weather" in again.text
+
+    async def test_a_negotiated_language_is_never_written_back(self, client):
+        """Only a choice is remembered. A guess stored as a preference is a
+        guess that can never be corrected by fixing the browser."""
+        await seed(client)
+        guessed = await client.get("/", headers=GERMAN_HEADERS)
+        assert 'lang="de"' in guessed.text
+        assert i18n.LANGUAGE_COOKIE not in guessed.cookies
+
+    async def test_a_language_we_do_not_speak_is_not_remembered(self, client):
+        await seed(client)
+        response = await client.get("/?lang=fr", headers=GERMAN_HEADERS)
+        assert 'lang="de"' in response.text, "unchanged by a language we lack"
+        assert i18n.LANGUAGE_COOKIE not in response.cookies
+
+    async def test_the_url_overrides_what_was_remembered(self, client):
+        await seed(client)
+        response = await client.get(
+            "/?lang=de", headers={"Accept-Language": "en",
+                                  "Cookie": f"{i18n.LANGUAGE_COOKIE}=en"}
+        )
+        assert 'lang="de"' in response.text
+        assert response.cookies[i18n.LANGUAGE_COOKIE] == "de", "and replaces it"
+
+    async def test_the_page_varies_by_the_cookie_that_decides_it(self, client):
+        await seed(client)
+        vary = (await client.get("/")).headers["vary"]
+        assert "Cookie" in vary and "Accept-Language" in vary
+
+    async def test_the_switch_links_to_both_languages(self, client):
+        await seed(client)
+        text = (await client.get("/", headers=GERMAN_HEADERS)).text
+        assert 'href="?lang=en"' in text
+        assert 'href="?lang=de"' in text
+        # The one showing is marked, for a screen reader and for the eye.
+        marked = re.findall(r'href="\?lang=([a-z]{2})" hreflang="[a-z]{2}" '
+                            r'lang="[a-z]{2}" aria-current', text)
+        assert marked == ["de"], marked
 
     async def test_the_query_override_wins(self, client):
         await seed(client)

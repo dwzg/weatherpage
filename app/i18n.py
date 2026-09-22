@@ -55,6 +55,7 @@ GERMAN: dict[str, str] = {
     "Balcony Weather Station": "Balkon-Wetterstation",
     "Balcony Weather": "Balkon-Wetter",
     "Live from the balcony": "Live vom Balkon",
+    "Language": "Sprache",
     "Live temperature, humidity and pressure from a balcony weather station.":
         "Live-Temperatur, -Luftfeuchtigkeit und -Luftdruck einer Balkon-Wetterstation.",
 
@@ -612,19 +613,37 @@ GERMAN: dict[str, str] = {
 CATALOGUES: dict[str, dict[str, str]] = {"en": {}, "de": GERMAN}
 
 
-def negotiate(header: str | None, override: str | None = None) -> str:
-    """Pick a language from an ``Accept-Language`` header.
+#: How long an explicit choice is remembered for, in seconds.
+LANGUAGE_COOKIE = "lang"
+LANGUAGE_COOKIE_MAX_AGE = 365 * 24 * 60 * 60
 
-    ``override`` wins when it names a language we speak; it is what ``?lang=``
-    on the URL sets, so the page can be read in the other language without
-    changing an OS setting, and so tests can ask for one directly.
+
+def negotiate(
+    header: str | None,
+    override: str | None = None,
+    remembered: str | None = None,
+) -> str:
+    """Pick a language: what was asked for, then what was chosen, then the browser.
+
+    ``override`` is ``?lang=`` on the URL and wins outright. ``remembered``
+    is the cookie that same parameter set on a previous visit, and beats the
+    header — a reader who has said "English" has said it, and saying it again
+    every visit is not a preference, it is a chore.
+
+    The header comes last because it is a guess about a person made from an
+    OS setting. It is a good guess and usually right, but on Windows
+    ``Accept-Language`` is built from the *preferred languages* list, which
+    the region seeds: set the region to Germany with an English display
+    language and the browser asks for German. That is the case this
+    precedence exists for.
 
     Only the primary subtag matters — ``de-AT`` and ``de-CH`` are German here.
     Quality values are honoured, so a browser configured for French first and
     German second gets German rather than the English fallback.
     """
-    if override and (tag := _primary(override)) in LANGUAGES:
-        return tag
+    explicit = chosen_language(override) or chosen_language(remembered)
+    if explicit:
+        return explicit
     if not header:
         return DEFAULT_LANGUAGE
 
@@ -643,6 +662,19 @@ def negotiate(header: str | None, override: str | None = None) -> str:
         if best is None or rank > best:
             best, chosen = rank, language
     return chosen
+
+
+def chosen_language(value: str | None) -> str | None:
+    """The language ``value`` names, or ``None`` if this page does not speak it.
+
+    What tells "the reader asked for German" apart from "the reader typed
+    something": only the first is worth remembering, so the caller that sets
+    the cookie asks this rather than asking what the page ended up rendering.
+    """
+    if not value:
+        return None
+    tag = _primary(value)
+    return tag if tag in LANGUAGES else None
 
 
 def _primary(tag: str) -> str:
