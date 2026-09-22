@@ -1,5 +1,6 @@
 """End-to-end tests through the ASGI app."""
 
+import itertools
 import re
 from datetime import timedelta
 from pathlib import Path
@@ -236,6 +237,23 @@ class TestDashboard:
         assert "Average temperature" in card
         assert "20.0" in card, "the mean of 10, 20 and 30"
         assert "Readings" in card
+
+    async def test_the_headings_step_down_one_level_at_a_time(self, client):
+        """A screen reader reads the outline; h1 straight to h3 loses a rung.
+
+        Run against a page with enough history to render every card, since
+        the sections that were skipping a level are the conditional ones.
+        """
+        for hours in range(48, -1, -1):
+            moment = clock.now() - timedelta(hours=hours)
+            await client.post("/api/weather", json={
+                **READING, "timestamp": moment.strftime("%Y-%m-%dT%H:00:00"),
+            })
+
+        levels = [int(m) for m in re.findall(r"<h([1-6])[ >]", (await client.get("/")).text)]
+        assert levels and levels[0] == 1, levels
+        for previous, current in itertools.pairwise(levels):
+            assert current <= previous + 1, (previous, current, levels)
 
     async def test_the_calendar_asks_for_the_archive_it_has(self, client):
         """A fixed months=24 would have dropped the oldest page silently on

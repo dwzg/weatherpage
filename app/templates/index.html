@@ -60,7 +60,10 @@
     Both are server-rendered, then replaced in place by the poller. -#}
 <div class="predictions" id="predictions">
     <details class="prediction-note">
-        <summary>{{ t('How these two predictions work') }}</summary>
+        {#- The card's heading is its handle, which is why it is a heading
+            inside the summary rather than beside it: h1 jumped straight
+            to the h3s in here otherwise. -#}
+        <summary><h2>{{ t('How these two predictions work') }}</h2></summary>
         <div class="prediction-note-body">
             <dl>
                 <dt>{{ t('☀️ The outlook') }}</dt>
@@ -479,7 +482,7 @@
     {'id': 'chart-pres', 'emoji': '📊', 'title': 'Pressure'}
 ] %}
 <div class="card chart-card">
-    <h3 class="card-title">{{ chart.emoji }} {{ t(chart.title) }}</h3>
+    <h2 class="card-title">{{ chart.emoji }} {{ t(chart.title) }}</h2>
     <canvas id="{{ chart.id }}"></canvas>
     <p class="chart-fallback"></p>
     <p class="chart-note"></p>
@@ -511,7 +514,7 @@
 <div class="stats-grid">
     {% if extremes_today %}
     <div class="card stats-card">
-        <h3 class="card-title">{{ t("📅 Today's Records") }}</h3>
+        <h2 class="card-title">{{ t("📅 Today's Records") }}</h2>
         {{ extreme_row("Hottest", extremes_today.temperature.max, 1, "°C", "hi") }}
         {{ extreme_row("Coldest", extremes_today.temperature.min, 1, "°C", "lo") }}
         {{ extreme_row("Most humid", extremes_today.humidity.max, 0, "%") }}
@@ -531,7 +534,7 @@
 
     {% if extremes_all %}
     <div class="card stats-card">
-        <h3 class="card-title">{{ t('🏆 All-Time Records') }}</h3>
+        <h2 class="card-title">{{ t('🏆 All-Time Records') }}</h2>
         {{ extreme_row("Hottest", extremes_all.temperature.max, 1, "°C", "hi", "date") }}
         {{ extreme_row("Coldest", extremes_all.temperature.min, 1, "°C", "lo", "date") }}
         {{ extreme_row("Highest pressure", extremes_all.pressure.max, 0, " hPa", "", "date") }}
@@ -567,7 +570,7 @@
 {% for entry in climate.yearly %}{% set _ = yearly_by_year.update({entry.year: entry}) %}{% endfor %}
 
 <div class="card chart-card climate">
-    <h3 class="card-title">📊 {{ t('Climate') }}</h3>
+    <h2 class="card-title">📊 {{ t('Climate') }}</h2>
 
     {#- The year is turned here and the chart below follows it, so the nav
         reads as the chart's own title rather than a control for something
@@ -612,7 +615,7 @@
 
 <!-- ── Calendar ───────────────────────────────────────────────────────── -->
 <div class="card heatmap-card">
-    <h3 class="card-title">📆 {{ t('Temperature Calendar') }}</h3>
+    <h2 class="card-title">📆 {{ t('Temperature Calendar') }}</h2>
     <div class="pager-nav heatmap-nav">
         <button type="button" id="heatmap-prev" aria-label="{{ t('Previous month') }}" disabled>&#8249;</button>
         <span class="pager-label heatmap-month-label" id="heatmap-label" aria-live="polite">&nbsp;</span>

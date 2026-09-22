@@ -135,6 +135,10 @@ header .subtitle { color: var(--text-secondary); font-size: 0.9rem; margin-top: 
     border-radius: 12px;
     list-style: none;
 }
+/* The handle is the card's heading, so it holds an <h2>. Inline and at
+   the summary's own size, or the browser's h2 defaults would turn a
+   12.8px pill into a 19px block. */
+.prediction-note > summary h2 { display: inline; font: inherit; }
 .prediction-note > summary::-webkit-details-marker { display: none; }
 .prediction-note > summary::before { content: "ⓘ "; }
 .prediction-note > summary:hover { color: var(--text); }
