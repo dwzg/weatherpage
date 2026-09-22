@@ -356,6 +356,70 @@ class TestLearnedLadder:
             else:
                 assert emoji != weather.DEFAULT_FORECAST_EMOJI, phrase
 
+    def test_the_sky_rungs_can_be_thresholds_instead(self):
+        """The live shape today: a rain model, and no sky model.
+
+        The ladder printed must be the one that ran. Printing model bands
+        while thresholds decided would be the explainer describing a
+        calculation the page did not perform.
+        """
+        rungs = weather.learned_ladder(self.THRESHOLD, sky=False)
+        phrases = [tier.phrase for tier in rungs]
+        assert phrases[:4] == [
+            "Rain likely", "Thunderstorm possible",
+            "Rain possible", "Fog or drizzle possible",
+        ]
+        assert set(phrases[4:]) == {
+            "Unsettled", "Overcast and humid", "Fair and settled", "Little change",
+        }
+        assert not any("Sky model" in tier.condition for tier in rungs)
+
+    #: Inside each threshold-sky rung, and outside the rungs above it.
+    #: (rain probability, percentile, humidity, temperature, dew point)
+    SKYLESS_CASES: ClassVar[dict] = {
+        "Rain likely": (0.90, 0.50, 70.0, 12.0, 6.0),
+        "Rain possible": (0.30, 0.50, 70.0, 12.0, 6.0),
+        "Unsettled": (0.05, 0.20, 60.0, 12.0, 2.0),
+        "Overcast and humid": (0.05, 0.50, 90.0, 12.0, 11.0),
+        "Fair and settled": (0.05, 0.80, 55.0, 12.0, 2.0),
+        "Little change": (0.05, 0.50, 60.0, 12.0, 2.0),
+    }
+
+    @pytest.mark.parametrize("phrase", list(SKYLESS_CASES), ids=lambda p: p)
+    def test_each_threshold_sky_rung_produces_its_phrase(self, phrase):
+        rain, percentile, humidity, temperature, dew = self.SKYLESS_CASES[phrase]
+        assert weather.compose_forecast(
+            rain, self.THRESHOLD, None, humidity, temperature, dew, None,
+            TestForecast.WINTER_NIGHT, pressure_percentile=percentile,
+        ) == phrase
+
+    def test_every_threshold_sky_rung_has_a_worked_case(self):
+        printed = {tier.phrase for tier in weather.learned_ladder(self.THRESHOLD, sky=False)}
+        # Thunderstorm and fog are covered by the model-sky cases above; they
+        # are the same hand-made rungs in both ladders.
+        assert printed - set(self.SKYLESS_CASES) == {
+            "Thunderstorm possible", "Fog or drizzle possible",
+        }
+
+    def test_the_threshold_sky_rungs_agree_with_the_old_ladder(self):
+        """Where the rain model declines, the phrase must be what the rule
+        ladder would have said — these rungs are not new behaviour, they are
+        the behaviour that was already there, reached by a different route."""
+        for percentile in (0.1, 0.3, 0.5, 0.7, 0.9):
+            for humidity in (40.0, 60.0, 75.0, 90.0):
+                composed = weather.compose_forecast(
+                    0.01, self.THRESHOLD, None, humidity, 12.0, 2.0, None,
+                    TestForecast.WINTER_NIGHT, pressure_percentile=percentile,
+                )
+                laddered = weather.compute_forecast(
+                    percentile, humidity, 12.0, 2.0, None, TestForecast.WINTER_NIGHT,
+                )
+                # The ladder's own rain rungs are the one place they differ:
+                # the model has declined, so those cannot fire here.
+                if "Rain" in laddered:
+                    continue
+                assert composed == laddered, (percentile, humidity)
+
     def test_settled_but_humid_is_reachable_too(self):
         """Not a rung of its own — a humid variant of the clear band — but it
         is a phrase the function can return, so it needs an emoji as well."""

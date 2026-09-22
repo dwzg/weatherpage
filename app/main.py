@@ -281,11 +281,15 @@ def create_app() -> FastAPI:
                 # probabilities, and showing the wrong one would describe
                 # reasoning the page did not do.
                 "ladder": (
-                    weather.learned_ladder(context["nowcast"]["threshold"])
+                    weather.learned_ladder(
+                        context["nowcast"]["threshold"],
+                        sky=bool(context.get("sky_is_learned")),
+                    )
                     if context.get("outlook_is_learned")
                     else weather.RULE_LADDER
                 ),
                 "outlook_is_learned": bool(context.get("outlook_is_learned")),
+                "sky_is_learned": bool(context.get("sky_is_learned")),
                 "calibration": weather.CALIBRATION,
                 # Static between deploys — written weekly by ml/train.py —
                 # so the render carries it and the poller leaves it alone.

@@ -98,10 +98,15 @@
             <details class="prediction-deep">
                 <summary>{{ t('The technical details') }}</summary>
                 <div class="prediction-deep-body">
-                    {%- if outlook_is_learned %}
+                    {%- if outlook_is_learned and sky_is_learned %}
                     <h3>{{ t('☀️ The outlook: two models and two rules') }}</h3>
                     <p>
                         {{ t('Tested in order, and the first rung that matches wins. Four of these rungs read a fitted probability — one model for rain, one for cloud, both from the same ten measurements. Two of them do not, and cannot: see below.') }}
+                    </p>
+                    {%- elif outlook_is_learned %}
+                    <h3>{{ t('☀️ The outlook: one model and a ladder') }}</h3>
+                    <p>
+                        {{ t('Tested in order, and the first rung that matches wins. The rain rungs read the fitted probability shown on the pill above — the same number, so the two cannot disagree. Below them the ladder falls back to where the pressure sits and how humid the air is, because no cloud model has cleared its gates yet; when one does, those rungs become measurements too.') }}
                     </p>
                     {%- else %}
                     <h3>{{ t('☀️ The outlook: a ladder of thresholds') }}</h3>

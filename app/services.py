@@ -85,14 +85,22 @@ async def build_status() -> dict | None:
     smooth_dew = weather.compute_dew_point(smooth_t, smooth_h)
     rain, sky = run_nowcast(features), run_sky(features)
 
-    # Composed from both fitted models where both are available, and from the
-    # threshold ladder where they are not. The two paths agree on the rungs
-    # no label exists for — fog and the convective afternoon are hand-made in
-    # either — and differ on the ones that now have evidence behind them.
-    if rain is not None and sky is not None:
+    # Gated on the rain model alone, because only the rain rungs need it.
+    #
+    # This used to require the sky model too, and the sky model has never
+    # shipped — it has to clear its gates and on a short archive it correctly
+    # refuses. So every request fell through to the threshold ladder for the
+    # banner while the pill beside it came from the rain model, and the two
+    # disagreed in public: "Rain possible" next to "Rain nearby not expected
+    # · 9%". The page's own skill table says which to believe, and it is not
+    # the ladder. compose_forecast() reads the sky rungs from thresholds when
+    # no sky model is loaded, which is what the ladder did there anyway.
+    if rain is not None:
         forecast = weather.compose_forecast(
-            rain["probability"], rain["threshold"], sky["probability"],
+            rain["probability"], rain["threshold"],
+            sky["probability"] if sky else None,
             smooth_h, smooth_t, smooth_dew, humidity_trend,
+            pressure_percentile=percentile,
         )
     else:
         forecast = weather.compute_forecast(
@@ -109,9 +117,12 @@ async def build_status() -> dict | None:
         "forecast_emoji": weather.forecast_emoji(forecast),
         "nowcast": rain,
         "sky": sky,
-        # Which of the two paths produced the phrase above. The explainer
-        # prints a different ladder for each, so it has to be told.
-        "outlook_is_learned": rain is not None and sky is not None,
+        # Which path produced the phrase above, and how much of it was
+        # fitted. The explainer prints a different ladder for each, so it has
+        # to be told both: whether the rain rungs are a model, and whether
+        # the sky rungs are.
+        "outlook_is_learned": rain is not None,
+        "sky_is_learned": sky is not None,
         "frost_warning": weather.is_frost_risk(temperature),
         "yesterday": yesterday,
         "stale": is_stale(current["timestamp"]),

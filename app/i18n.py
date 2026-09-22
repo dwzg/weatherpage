@@ -129,6 +129,27 @@ GERMAN: dict[str, str] = {
     # The outlook, in full
     "☀️ The outlook: a ladder of thresholds":
         "☀️ Die Aussicht: eine Leiter aus Schwellenwerten",
+    "☀️ The outlook: one model and a ladder":
+        "☀️ Die Aussicht: ein Modell und eine Leiter",
+    "Tested in order, and the first rung that matches wins. The rain rungs "
+    "read the fitted probability shown on the pill above — the same number, "
+    "so the two cannot disagree. Below them the ladder falls back to where "
+    "the pressure sits and how humid the air is, because no cloud model has "
+    "cleared its gates yet; when one does, those rungs become measurements "
+    "too.":
+        "Der Reihe nach geprüft; die erste zutreffende Sprosse gewinnt. Die "
+        "Regensprossen lesen die angepasste Wahrscheinlichkeit, die oben auf "
+        "der Plakette steht — dieselbe Zahl, die beiden können sich also "
+        "nicht widersprechen. Darunter greift die Leiter auf den Stand des "
+        "Luftdrucks und die Luftfeuchtigkeit zurück, denn noch hat kein "
+        "Wolkenmodell seine Hürden genommen; sobald eines das schafft, "
+        "werden auch diese Sprossen zu Messungen.",
+    # The threshold-sky rungs, printed while no cloud model has shipped.
+    "Pressure in the lowest {pct}% of 30 days":
+        "Luftdruck in den untersten {pct} % von 30 Tagen",
+    "Humidity above {rh}%": "Feuchte über {rh} %",
+    "threshold: no sky model has cleared its gates yet":
+        "Schwellenwert: noch hat kein Wolkenmodell seine Hürden genommen",
     "Two inputs, tested in order. The first rung that matches wins, so the "
     "ladder reads top to bottom. Both inputs are medians over {minutes} "
     "minutes rather than the latest sample — the rungs sit close enough "

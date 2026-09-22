@@ -427,19 +427,49 @@ class TestSkyModel:
 class TestOutlookSelection:
     """Which of the two ladders produced the phrase, and when."""
 
-    async def test_without_a_sky_model_the_status_falls_back(self, client, db):
-        """This is today's state: no sky_model.json has shipped yet."""
-        await stock(db)
-        body = (await client.get("/api/weather/status")).json()
-        assert "sky" in body
-        if body["sky"] is None:
-            assert body["outlook_is_learned"] is False
+    async def test_the_rain_model_alone_is_enough_to_lead(self, client, db):
+        """Today's state: no sky_model.json has ever cleared its gates.
 
-    async def test_the_flag_matches_what_the_payload_carries(self, client, db):
+        The outlook is still learned, because the rain rungs only ever needed
+        the rain model. Requiring both was what put "Rain possible" on the
+        banner beside "Rain nearby not expected" in the pill.
+        """
         await stock(db)
         body = (await client.get("/api/weather/status")).json()
-        expected = body["nowcast"] is not None and body["sky"] is not None
-        assert body["outlook_is_learned"] is expected
+        assert body["sky"] is None
+        assert body["nowcast"] is not None
+        assert body["outlook_is_learned"] is True
+        assert body["sky_is_learned"] is False
+
+    async def test_the_flags_match_what_the_payload_carries(self, client, db):
+        await stock(db)
+        body = (await client.get("/api/weather/status")).json()
+        assert body["outlook_is_learned"] is (body["nowcast"] is not None)
+        assert body["sky_is_learned"] is (body["sky"] is not None)
+
+    async def test_the_banner_and_the_pill_cannot_disagree(self, client, db):
+        """The whole point of composing: one decision, read twice.
+
+        The phrase comes from nowcast.describe() on the same probability the
+        pill prints, so a pill saying rain is not expected can no longer sit
+        beside a banner saying rain is possible.
+        """
+        from app import nowcast as nowcast_module
+
+        await stock(db)
+        body = (await client.get("/api/weather/status")).json()
+        assert body["nowcast"] is not None
+
+        word = nowcast_module.describe(
+            body["nowcast"]["probability"], body["nowcast"]["threshold"]
+        )
+        says_rain = "Rain" in body["forecast"] or "Thunder" in body["forecast"]
+        if word in ("not expected", "unlikely"):
+            # A convective afternoon may still raise a thunderstorm, which is
+            # hand-made and outranks the model on purpose.
+            assert not says_rain or "Thunder" in body["forecast"], body["forecast"]
+        if word == "likely":
+            assert body["forecast"] == "Rain likely"
 
     async def test_the_forecast_is_always_a_phrase_either_way(self, client, db):
         await stock(db)

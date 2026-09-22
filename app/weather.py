@@ -401,23 +401,54 @@ def sky_band(probability: float) -> str:
     return SKY_MIXED
 
 
+def _sky_without_a_model(f: ForecastInputs) -> str:
+    """The sky rungs as the ladder has always read them, from pressure and humidity.
+
+    Reached when no sky model has shipped — which, so far, is always: the
+    candidate has to clear its gates, and on a short archive it correctly
+    refuses. The rain rungs above have already declined and fog has been
+    ruled out, so what is left is "what is the air doing", which is exactly
+    the question :func:`compute_forecast` answers here. Same answers as that
+    function gives, in the same order, minus the rain rungs the model now owns.
+    """
+    if f.percentile is not None and f.percentile < RAIN_POSSIBLE_PERCENTILE:
+        return "Unsettled"
+    if f.humidity > HUMIDITY_MUGGY:
+        return "Overcast and humid"
+    if f.percentile is not None and f.percentile > SETTLED_PERCENTILE:
+        return "Fair and settled" if f.humidity < HUMIDITY_WET else "Settled but humid"
+    return "Little change"
+
+
 def compose_forecast(
     rain_probability: float,
     rain_threshold: float,
-    sky_probability: float,
+    sky_probability: float | None,
     humidity: float,
     temperature: float | None = None,
     dew_point: float | None = None,
     humidity_trend: dict | None = None,
     moment: datetime | None = None,
+    *,
+    pressure_percentile: float | None = None,
 ) -> str:
     """The outlook, composed from both fitted models plus the unlabelled rungs.
 
-    Used in place of :func:`compute_forecast` whenever both models are loaded
-    and the feature vector is complete. When either is missing — a young
-    database, or an image built before the sky model was first fitted — the
-    caller falls back to the threshold ladder, which is what the outlook has
-    always been and remains fully tested.
+    Used in place of :func:`compute_forecast` whenever the **rain** model is
+    loaded and the feature vector is complete. ``sky_probability`` may be
+    ``None``, and normally is: the sky model ships only once a candidate
+    clears its gates, which on a short archive it correctly refuses to do.
+    The sky rungs then fall back to :func:`_sky_without_a_model`, the
+    pressure-and-humidity thresholds the ladder has always used there.
+
+    Gating the whole thing on *both* models was a mistake worth naming. It
+    meant that until the sky model shipped, the banner came from the
+    threshold ladder while the pill beside it came from the rain model — two
+    answers to one question, from the same page, disagreeing in public
+    ("Rain possible" next to "Rain nearby not expected · 9%"). The page's own
+    skill table says which to believe: the model beats the ladder on Brier,
+    AUC, CSI and KSS alike. The rain rungs need only the rain model, so they
+    now use it.
 
     The rain bands are :func:`app.nowcast.describe`'s, so the phrase on the
     banner and the word printed beside the percentage are the same decision
@@ -431,7 +462,7 @@ def compose_forecast(
     from .nowcast import describe
 
     f = ForecastInputs.build(
-        None, humidity, temperature, dew_point, humidity_trend, moment
+        pressure_percentile, humidity, temperature, dew_point, humidity_trend, moment
     )
     rain = describe(rain_probability, rain_threshold)
 
@@ -451,6 +482,9 @@ def compose_forecast(
     if f.near_saturation and f.humidity_rising:
         return "Fog or drizzle possible"
 
+    if sky_probability is None:
+        return _sky_without_a_model(f)
+
     band = sky_band(sky_probability)
     if band == SKY_OVERCAST:
         return "Overcast and humid" if f.humidity > HUMIDITY_MUGGY else "Cloudy"
@@ -459,16 +493,81 @@ def compose_forecast(
     return "Little change"
 
 
-def learned_ladder(rain_threshold: float) -> tuple[Tier, ...]:
+def learned_ladder(rain_threshold: float, *, sky: bool = True) -> tuple[Tier, ...]:
     """The composed ladder, for the explainer to print.
 
-    A function rather than a constant because one of its cut points is not a
-    constant: the rain threshold is fitted, and arrives in model.json. Same
-    contract as :data:`RULE_LADDER` — generated from the numbers
-    :func:`compose_forecast` actually reads, so retuning a band moves the page
-    with it, and ``tests/test_weather.py`` drives the function to check the
-    two still agree.
+    A function rather than a constant because its cut points are not
+    constants: the rain threshold is fitted and arrives in model.json, and
+    whether the sky rungs are a model or a threshold depends on whether a sky
+    model has shipped. Same contract as :data:`RULE_LADDER` — generated from
+    the numbers :func:`compose_forecast` actually reads, so retuning a band
+    moves the page with it, and ``tests/test_weather.py`` drives the function
+    to check the two still agree.
+
+    ``sky=False`` is the live case today and prints the pressure-and-humidity
+    rungs, because that is the reasoning the page did. Printing the model
+    bands while the thresholds ran would be the explainer describing a
+    calculation that did not happen.
     """
+    sky_rungs = (
+        (
+            Tier(
+                "Cloudy",
+                "Sky model above {pct}%",
+                {"pct": round(SKY_OVERCAST_PROBABILITY * 100)},
+                None,
+                note="fitted against observed cloud cover",
+            ),
+            Tier(
+                "Little change",
+                "Sky model between {low}% and {high}%",
+                {
+                    "low": round(SKY_CLEAR_PROBABILITY * 100),
+                    "high": round(SKY_OVERCAST_PROBABILITY * 100),
+                },
+                None,
+                note="fitted against observed cloud cover",
+            ),
+            Tier(
+                "Fair and settled",
+                "Sky model below {pct}%, humidity below {rh}%",
+                {"pct": round(SKY_CLEAR_PROBABILITY * 100), "rh": HUMIDITY_WET},
+                None,
+                note="fitted against observed cloud cover",
+            ),
+        )
+        if sky
+        else (
+            Tier(
+                "Unsettled",
+                "Pressure in the lowest {pct}% of 30 days",
+                {"pct": RAIN_POSSIBLE_PERCENTILE * 100},
+                None,
+                note="threshold: no sky model has cleared its gates yet",
+            ),
+            Tier(
+                "Overcast and humid",
+                "Humidity above {rh}%",
+                {"rh": HUMIDITY_MUGGY},
+                None,
+                note="threshold: no sky model has cleared its gates yet",
+            ),
+            Tier(
+                "Fair and settled",
+                "Pressure above the {pct}th percentile, humidity below {rh}%",
+                {"pct": SETTLED_PERCENTILE * 100, "rh": HUMIDITY_WET},
+                None,
+                note="threshold: no sky model has cleared its gates yet",
+            ),
+            Tier(
+                "Little change",
+                "Pressure in the middle of its range, {low}% to {high}%",
+                {"low": RAIN_POSSIBLE_PERCENTILE * 100, "high": SETTLED_PERCENTILE * 100},
+                None,
+                note="threshold: no sky model has cleared its gates yet",
+            ),
+        )
+    )
     return (
         Tier(
             "Rain likely",
@@ -503,30 +602,7 @@ def learned_ladder(rain_threshold: float) -> tuple[Tier, ...]:
             None,
             note="hand-made: the archive records no fog at all",
         ),
-        Tier(
-            "Cloudy",
-            "Sky model above {pct}%",
-            {"pct": round(SKY_OVERCAST_PROBABILITY * 100)},
-            None,
-            note="fitted against observed cloud cover",
-        ),
-        Tier(
-            "Little change",
-            "Sky model between {low}% and {high}%",
-            {
-                "low": round(SKY_CLEAR_PROBABILITY * 100),
-                "high": round(SKY_OVERCAST_PROBABILITY * 100),
-            },
-            None,
-            note="fitted against observed cloud cover",
-        ),
-        Tier(
-            "Fair and settled",
-            "Sky model below {pct}%, humidity below {rh}%",
-            {"pct": round(SKY_CLEAR_PROBABILITY * 100), "rh": HUMIDITY_WET},
-            None,
-            note="fitted against observed cloud cover",
-        ),
+        *sky_rungs,
     )
 
 
