@@ -44,9 +44,28 @@ class TestHeatIndex:
 
 
 class TestFrost:
-    @pytest.mark.parametrize("temp,expected", [(-5.0, True), (1.9, True), (2.0, False), (10.0, False)])
-    def test_threshold(self, temp, expected):
-        assert weather.is_frost_risk(temp) is expected
+    @pytest.mark.parametrize("temp,direction,expected", [
+        # Cold enough now, whatever it is doing.
+        (-5.0, "falling", weather.FROST_NOW),
+        (1.9, "rising", weather.FROST_NOW),
+        # The watch: close, and still going down.
+        (2.0, "falling", weather.FROST_SOON),
+        (3.9, "falling", weather.FROST_SOON),
+        # Close, but not going down — an evening that has levelled off at
+        # 3 °C is not a night heading for frost.
+        (3.9, "steady", None),
+        (3.9, "rising", None),
+        (3.9, None, None),
+        (4.0, "falling", None),
+        (10.0, "falling", None),
+    ])
+    def test_two_stages(self, temp, direction, expected):
+        assert weather.frost_alert(temp, direction) == expected
+
+    def test_the_warning_still_fires_without_a_trend(self):
+        """An archive too short to measure a trend is not a reason to stay
+        quiet about a reading that is already below freezing."""
+        assert weather.frost_alert(-1.0) == weather.FROST_NOW
 
 
 class TestForecast:

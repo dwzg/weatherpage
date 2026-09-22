@@ -128,7 +128,9 @@ async def build_status() -> dict | None:
         # the sky rungs are.
         "outlook_is_learned": rain is not None,
         "sky_is_learned": sky is not None,
-        "frost_warning": weather.is_frost_risk(temperature),
+        "frost_warning": weather.frost_alert(
+            temperature, temp_trend["direction"] if temp_trend else None
+        ),
         "yesterday": yesterday,
         "stale": is_stale(current["timestamp"]),
         "age_seconds": age_seconds(current["timestamp"]),

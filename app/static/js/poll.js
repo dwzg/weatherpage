@@ -190,9 +190,17 @@ function applyStatus(status) {
     setBanner('label-forecast', forecast, 'banner');
     updateNowcast(status.nowcast);
     updateDeepDive(status);
-    setBanner('label-frost',
-        status.frost_warning ? t('❄️ Frost warning — protect your plants!') : '',
-        'banner banner-alert');
+    /* Two stages, and two tones: the alert is for a balcony that is already
+       freezing, the warn for one that will be. The API sends the stage in
+       English, like every other phrase, and it is translated here. */
+    const frost = {
+        Frost: ['❄️ Frost warning — protect your plants!', 'banner banner-alert'],
+        'Frost likely': [
+            '❄️ Frost likely in a few hours — cover the plants while you can',
+            'banner banner-warn',
+        ],
+    }[status.frost_warning];
+    setBanner('label-frost', frost ? t(frost[0]) : '', frost ? frost[1] : '');
     setBanner('label-stale',
         status.stale ? t('⚠️ No new readings — the sensor feed may be down') : '',
         'banner banner-warn');

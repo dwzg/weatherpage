@@ -86,6 +86,9 @@ GERMAN: dict[str, str] = {
     # ── Alert banners ──────────────────────────────────────────────────────
     "❄️ Frost warning — protect your plants!":
         "❄️ Frostwarnung — Pflanzen schützen!",
+    "❄️ Frost likely in a few hours — cover the plants while you can":
+        "❄️ Frost in einigen Stunden wahrscheinlich — Pflanzen "
+        "abdecken, solange es geht",
     "⚠️ No new readings — the sensor feed may be down":
         "⚠️ Keine neuen Messwerte — der Sensor meldet sich möglicherweise nicht",
     "⚠️ Not reachable — these readings may be out of date":

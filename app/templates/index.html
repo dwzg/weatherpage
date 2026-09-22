@@ -380,9 +380,14 @@
     </details>
 </div>
 
+{#- Two stages, because they are two pieces of news: one says the balcony
+    is freezing, the other that it is going to be while there is still time
+    to do something about it. -#}
 <div class="banner-row" id="label-frost">
-    {%- if frost_warning %}
+    {%- if frost_warning == 'Frost' %}
     <span class="banner banner-alert">{{ t('❄️ Frost warning — protect your plants!') }}</span>
+    {%- elif frost_warning == 'Frost likely' %}
+    <span class="banner banner-warn">{{ t('❄️ Frost likely in a few hours — cover the plants while you can') }}</span>
     {%- endif %}
 </div>
 

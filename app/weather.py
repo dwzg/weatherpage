@@ -38,6 +38,17 @@ TREND_SIGNIFICANT = 1.0
 #: Below this temperature the plants on the balcony are at risk.
 FROST_WARNING_C = 2.0
 
+#: And below this, with the temperature still falling, they are about to be.
+#: A warning that first appears at 2 °C is a warning you read while it is
+#: already happening; on a clear night the air keeps dropping for hours after
+#: it passes 4 °C, so this is the one with time to act on it left in it.
+FROST_WATCH_C = 4.0
+
+#: What :func:`frost_alert` answers with. Identifiers, like the forecast
+#: phrases: the API stays English and the page translates them.
+FROST_NOW = "Frost"
+FROST_SOON = "Frost likely"
+
 #: The heat index is only meaningful in warm air; below this it is not shown.
 HEAT_INDEX_MIN_C = 27.0
 
@@ -86,9 +97,20 @@ def compute_heat_index(temp_c: float, humidity: float) -> float | None:
     return round((hi - 32) * 5 / 9, 1)
 
 
-def is_frost_risk(temp_c: float) -> bool:
-    """Whether the current temperature warrants a frost warning."""
-    return temp_c < FROST_WARNING_C
+def frost_alert(temp_c: float, direction: str | None = None) -> str | None:
+    """Frost now, frost coming, or nothing.
+
+    Two stages because they are two different pieces of news. Below
+    :data:`FROST_WARNING_C` is a statement about the reading on the card, so
+    it reads the reading itself. The watch is a claim about the next few
+    hours, so it reads the smoothed 3-hour trend instead: a single cold
+    sample is not a night getting colder.
+    """
+    if temp_c < FROST_WARNING_C:
+        return FROST_NOW
+    if temp_c < FROST_WATCH_C and direction == "falling":
+        return FROST_SOON
+    return None
 
 
 # ── Forecast ───────────────────────────────────────────────────────────────

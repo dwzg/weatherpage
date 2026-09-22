@@ -238,6 +238,30 @@ class TestDashboard:
         assert "20.0" in card, "the mean of 10, 20 and 30"
         assert "Readings" in card
 
+    async def test_frost_is_announced_while_there_is_still_time(self, client):
+        """At 2 °C the warning is news you read while it is happening.
+
+        A night falling through 4 °C is the one you can still act on, so the
+        watch fires there — and only while the temperature is still going
+        down.
+        """
+        # Four hours falling from 8 °C to 3 °C, on the 5-minute grid.
+        steps = 4 * 12
+        for i in range(steps + 1):
+            await client.post("/api/weather", json=at(
+                5 * (steps - i), temperature=f"{8 - 5 * i / steps:.1f}"
+            ))
+
+        status = (await client.get("/api/weather/status")).json()
+        assert status["frost_warning"] == "Frost likely", status["frost_warning"]
+        assert "Frost likely in a few hours" in (await client.get("/")).text
+
+        # Through the floor: the same page now says it plainly.
+        await client.post("/api/weather", json=at(0, temperature="1.0"))
+        status = (await client.get("/api/weather/status")).json()
+        assert status["frost_warning"] == "Frost", status["frost_warning"]
+        assert "Frost warning" in (await client.get("/")).text
+
     async def test_the_headings_step_down_one_level_at_a_time(self, client):
         """A screen reader reads the outline; h1 straight to h3 loses a rung.
 
