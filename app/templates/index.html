@@ -192,6 +192,13 @@
                               high=num(calibration.fixed_csi_high, 2),
                               days=percentile_days) }}
                     </p>
+                    {%- if stats_all is defined and stats_all.count %}
+                    <p>
+                        {{ t("The reading itself is whatever the sensor reports. This app never reduces it to sea level and cannot tell whether the sensor already has: across the archive it averages {avg} hPa, where sea-level pressure averages about 1013. So read it as this balcony's own barometer rather than as the figure a forecast quotes — and note that nothing here reads it as an absolute, which is exactly what the percentile is for.",
+                              avg=num(stats_all.pressure.avg, 0)) }}
+                    </p>
+                    {%- endif %}
+
                     <p>
                         {{ t('Taken as a yes/no rain forecast the ladder scores CSI {csi} and KSS {kss}, against {old} for what it replaced.',
                               csi=num(calibration.csi, 2), kss=num(calibration.kss, 2, sign=True),
@@ -434,6 +441,13 @@
         <div class="label">{{ t('Pressure') }}</div>
         <div class="value" id="val-pres">{{ num(current.pressure) }}<span class="unit">hPa</span></div>
         <div class="detail" id="detail-pres-trend">{{ trend_arrow(pressure_trend, 1, ' hPa') }}</div>
+        {#- An hPa reading means nothing on its own unless you already know
+            this station: whether it is reduced to sea level, and what it
+            normally does here. The rank answers both without claiming
+            either. It is the same number the outlook reads. -#}
+        <div class="detail" id="detail-pres-rank" data-days="{{ percentile_days }}">
+            {%- if pressure_percentile is defined and pressure_percentile is not none %}{{ t('Higher than {pct}% of the last {days} days', pct=num(pressure_percentile * 100, 0), days=percentile_days) }}{% endif %}
+        </div>
         <div class="sparkline-wrap"><canvas class="sparkline" id="spark-pres" aria-hidden="true"></canvas></div>
     </div>
 </div>

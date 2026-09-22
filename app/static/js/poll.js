@@ -169,6 +169,19 @@ function applyStatus(status) {
     setTrend('detail-hum-trend', status.humidity_trend, 0, '%');
     setTrend('detail-pres-trend', status.pressure_trend, 1, ' hPa');
 
+    /* The rank the outlook reads, on the card the reading is on: an hPa
+       number is only interpretable against this station's own history. */
+    const rank = document.getElementById('detail-pres-rank');
+    if (rank) {
+        rank.textContent = status.pressure_percentile == null ? '' : t(
+            'Higher than {pct}% of the last {days} days',
+            {
+                pct: formatNumber(status.pressure_percentile * 100, 0),
+                days: rank.dataset.days,
+            },
+        );
+    }
+
     /* The API stays in English — the forecast phrase is the same identifier
        app.weather.forecast_emoji() matches on — so the translation happens
        here, against the catalogue the server rendered the page from. */

@@ -169,6 +169,23 @@ GERMAN: dict[str, str] = {
         "etwa doppelt so oft wie im Mittel, was auch immer das Barometer sagt",
     "Right now the pressure ranks at {pct}% of its last {days} days.":
         "Derzeit liegt der Luftdruck auf Rang {pct} % seiner letzten {days} Tage.",
+    "Higher than {pct}% of the last {days} days":
+        "Höher als {pct} % der letzten {days} Tage",
+    "The reading itself is whatever the sensor reports. This app never "
+    "reduces it to sea level and cannot tell whether the sensor already "
+    "has: across the archive it averages {avg} hPa, where sea-level "
+    "pressure averages about 1013. So read it as this balcony's own "
+    "barometer rather than as the figure a forecast quotes — and note "
+    "that nothing here reads it as an absolute, which is exactly what the "
+    "percentile is for.":
+        "Der Messwert ist das, was der Sensor meldet. Diese App rechnet ihn "
+        "nie auf Meereshöhe um und kann nicht erkennen, ob der Sensor das "
+        "bereits tut: über das gesamte Archiv liegt er im Mittel bei {avg} "
+        "hPa, während der Luftdruck auf Meereshöhe im Mittel etwa 1013 "
+        "beträgt. Lies ihn also als das Barometer dieses Balkons und nicht "
+        "als den Wert, den eine Wettervorhersage nennt — und beachte, dass "
+        "hier ohnehin nichts den absoluten Wert liest, wofür genau das "
+        "Perzentil da ist.",
     "The rightmost column is how often measurable rain actually followed "
     "within {hours} hours, over the {days} days these rungs were fitted on. "
     "It is the whole claim being made: a phrase is worth showing only if the "

@@ -226,6 +226,31 @@ class TestDashboard:
         assert "20.0" in card, "the mean of 10, 20 and 30"
         assert "Readings" in card
 
+    async def test_the_pressure_card_ranks_the_reading(self, client):
+        """1013 hPa says nothing unless you already know this station.
+
+        The rank is what the outlook reads, and the poller has to keep it:
+        a stale percentile beside a live reading is a wrong statement, not
+        an old one.
+        """
+        # A rank needs a week of readings behind it before it means anything,
+        # and it ranks the hours: the window is one reading per :00.
+        top = clock.now().replace(minute=0, second=0, microsecond=0)
+        for hours in range(8 * 24, -1, -1):
+            moment = top - timedelta(hours=hours)
+            await client.post("/api/weather", json={
+                **READING,
+                "timestamp": moment.strftime("%Y-%m-%dT%H:00:00"),
+                "pressure": f"{1000 + (hours + 12) % 24:.1f}",
+            })
+
+        page = (await client.get("/")).text
+        card = page.split('id="detail-pres-rank"', 1)[1].split("</div>", 1)[0]
+        assert re.search(r"Higher than \d+% of the last 30 days", card), card
+        poller = (Path(__file__).resolve().parent.parent / "app" / "static"
+                  / "js" / "poll.js").read_text()
+        assert "detail-pres-rank" in poller
+
     async def test_all_three_cards_carry_a_trend_arrow(self, client):
         """Temperature and humidity had a trend computed and not shown.
 
