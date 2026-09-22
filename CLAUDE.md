@@ -18,6 +18,7 @@ Dynamic weather dashboard ("Balcony Weather Station") served by a FastAPI app in
                                             ├── GET    /api/weather/stats?period=...
                                             ├── GET    /api/weather/daily?months=...  ← calendar heatmap
                                             ├── GET    /api/weather/export     ← raw archive, paged (API key)
+                                            ├── GET    /api/weather/predictions ← the prediction log, paged (API key)
                                             ├── GET    /healthz                ← container healthcheck
                                             └── GET    /                       ← serves UI
 ```
@@ -31,6 +32,7 @@ Dynamic weather dashboard ("Balcony Weather Station") served by a FastAPI app in
 | `app/weather.py` | Pure derived values — dew point, heat index, the forecast rules engine, forecast emoji. No I/O. |
 | `app/nowcast.py` | Loads `app/model.json` and evaluates it. Pure arithmetic — no ML dependency in the image. |
 | `app/model.json` | The fitted nowcast, written by CI. Data, not code: treat it as something that might be wrong. |
+| `app/verification.json` | How the *deployed* model has actually done, scored weekly from the prediction log. Absent until there is a record to make a claim about. |
 | `ml/train.py` | The retraining job. Runs in CI only; the one thing in this project that fetches anything. |
 | `app/database.py` | All SQLite access: connection pool, migrations, queries, the daily rollup. |
 | `app/cache.py` | Memoisation for the aggregates, dropped on every write. |
@@ -182,6 +184,19 @@ A `GITHUB_TOKEN` push does not start another workflow, so the retraining job
 cannot deploy by committing — it calls `deploy.yml` through
 `workflow_dispatch` explicitly. Remove that trigger and retrained models will
 sit on `main` undeployed.
+
+### Verifying it against what actually happened
+
+Everything above scores a *candidate* walk-forward against a held-out past. That says the method works. It does not say the model **already deployed** has been right about this station's weather, and until now nothing could answer that.
+
+- **`prediction_log`** records what the page showed, hour by hour, written at the time: the rain probability, the sky probability, the phrase from the ladder, and `model_trained_at`. Keyed on `(timestamp, utc_offset)` like the readings, so the repeated autumn hour holds both of its predictions.
+- **It cannot be reconstructed afterwards**, which is the whole reason it is a table rather than a query. The features are a pure function of the readings, so a replay could recompute them — but it would credit every past hour to *today's* model, and the model is refitted weekly; a backfill changes the inputs a replay would see; and the container may lag `main`. The `model_trained_at` column is what a replay could never supply.
+- **Written on the ingest path, on the hour only**, because the observations it is scored against are hourly — a row every five minutes is twelve times the rows and not one extra scoreable hour. Skipped for a reading that is not the newest, since `build_status()` describes *now* and a backfill would file today's prediction under last week.
+- **What is logged comes back through `build_status()`**, not from recomputing anything, so the row is by construction what `/status` served and the page rendered. A log that can disagree with the page is worse than no log.
+- **A failure to log is a warning, never a 500.** The reading is the irreplaceable thing and is committed first; handing the relay an error would make Home Assistant retry a reading that was already stored.
+- **`ml/train.py` scores it** against the same Open-Meteo observations that label the training data — no extra fetching — and writes `app/verification.json` **outside the shipping decision**, every run. Refusing to ship is normal, and a verification that went stale behind a declined candidate would be most misleading exactly when it mattered.
+- **The bins live in `app/nowcast.py`**, not in the trainer that writes them: the page renders them, and as pure arithmetic they are testable in the ordinary suite without numpy. A bin below `RELIABILITY_MIN_BIN` hours is shown, dimmed, with its count — hidden thin bins are how a reliability curve flatters itself.
+- The page renders it in the technical details and **the poller never touches it**: it changes weekly, in CI, and a new image is what carries it.
 
 ### Calibrating the forecast
 

@@ -287,6 +287,9 @@ def create_app() -> FastAPI:
                 ),
                 "outlook_is_learned": bool(context.get("outlook_is_learned")),
                 "calibration": weather.CALIBRATION,
+                # Static between deploys — written weekly by ml/train.py —
+                # so the render carries it and the poller leaves it alone.
+                "verification": services.VERIFICATION,
                 "percentile_days": database.PERCENTILE_DAYS,
                 "smoothing_minutes": database.SMOOTHING_WINDOW_MINUTES,
                 "date": i18n.date_formatter(lang),

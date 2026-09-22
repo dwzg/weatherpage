@@ -312,6 +312,44 @@ GERMAN: dict[str, str] = {
     "This model": "Dieses Modell",
     "The ladder above": "Die Leiter oben",
     "Always saying {pct}%": "Immer {pct} % sagen",
+    # ── The live verification ──────────────────────────────────────────────
+    "And has it been right?": "Und hatte es recht?",
+    "Every hour, what the page was showing is written down. Once the weather "
+    "has happened those are scored against the same observations the model "
+    "was trained on. This is the deployed model's own record — not a fit to a "
+    "held-out past, but the thing you were actually shown.":
+        "Stündlich wird festgehalten, was die Seite gerade anzeigte. Sobald "
+        "das Wetter eingetreten ist, wird das gegen dieselben Beobachtungen "
+        "bewertet, mit denen das Modell trainiert wurde. Das ist die "
+        "Bilanz des ausgelieferten Modells — keine Anpassung an eine "
+        "zurückgehaltene Vergangenheit, sondern das, was tatsächlich zu "
+        "sehen war.",
+    "{hours} hours logged, {from_date} to {to_date}, of which {wet}% saw "
+    "rain. A calibrated probability matches its own claim: in the rows where "
+    "it said 40%, it should have rained about 40% of the time.":
+        "{hours} Stunden protokolliert, {from_date} bis {to_date}, davon "
+        "{wet} % mit Regen. Eine kalibrierte Wahrscheinlichkeit hält, was "
+        "sie sagt: In den Zeilen, in denen 40 % stand, sollte es in etwa "
+        "40 % der Fälle geregnet haben.",
+    "When it said": "Angesagt",
+    "It rained": "Geregnet",
+    "Hours": "Stunden",
+    "Over those hours the deployed model scored Brier {brier}, a skill of "
+    "{bss} over climatology, AUC {auc}. The threshold ladder, scored on "
+    "exactly the same hours, managed CSI {rules_csi} against the model's "
+    "{model_csi}.":
+        "Über diese Stunden erreichte das ausgelieferte Modell Brier "
+        "{brier}, eine Güte von {bss} gegenüber der Klimatologie, AUC "
+        "{auc}. Die Schwellenwert-Leiter kam auf denselben Stunden auf CSI "
+        "{rules_csi}, das Modell auf {model_csi}.",
+    "Those hours span {n} retrained models, because the model is refitted "
+    "weekly. That is why this is logged rather than replayed: replaying the "
+    "archive would credit every past hour to the model shipped today.":
+        "Diese Stunden umfassen {n} neu trainierte Modelle, denn das Modell "
+        "wird wöchentlich neu angepasst. Deshalb wird protokolliert statt "
+        "nachgerechnet: Ein Nachspielen des Archivs würde jede vergangene "
+        "Stunde dem heute ausgelieferten Modell zuschreiben.",
+
     "Scored walk-forward with weekly refits, never on hours it was fitted on. "
     "A retrained model only ships if it clears all three gates: skill over "
     "climatology, ranking at least as well as the ladder, and no sharp "

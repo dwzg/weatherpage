@@ -27,6 +27,12 @@ NOWCAST_MODEL = nowcast.load()
 #: absent the outlook is exactly what it always was — the threshold ladder.
 SKY_MODEL = nowcast.load(nowcast.SKY_MODEL_PATH)
 
+#: How the deployed model has actually done, from the prediction log. Loaded
+#: once at import like the models: it changes weekly, in CI, and a new image
+#: is what carries it — so it belongs in the page render and not in /status,
+#: which the poller refetches every minute for numbers that move.
+VERIFICATION = nowcast.load_verification()
+
 #: Windows the nowcast's features are measured over. They must match the
 #: ones ml/train.py replays, which it guarantees by calling this module.
 NOWCAST_PRESSURE_HOURS = (6, 12)

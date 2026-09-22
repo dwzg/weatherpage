@@ -63,20 +63,28 @@ jobs:
       # Two models come out of one run and are gated separately, so either,
       # both or neither may have moved. Anything that changed is committed
       # together; nothing changing is a normal outcome.
-      - name: Did either model change?
+      #
+      # app/verification.json is in this list but is NOT gated: it scores the
+      # model already deployed against the prediction log, so it moves on
+      # almost every run — including the runs where no candidate ships, which
+      # is exactly when a stale verification would be most misleading.
+      - name: Did anything change?
         id: changed
         run: |
           # `git status`, not `git diff`: the first sky model ever fitted is
           # an untracked file, and git diff cannot see those. Detecting it
           # with diff would report "no change", skip the commit and throw the
-          # model away — on that run and on every run after it.
-          if [ -z "$(git status --porcelain -- app/model.json app/sky_model.json)" ]; then
+          # model away — on that run and on every run after it. The same is
+          # true of the first verification.
+          if [ -z "$(git status --porcelain -- $TRACKED)" ]; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
-            echo "No candidate cleared its gates, or both matched what is shipped."
+            echo "No candidate cleared its gates, and the verification is unchanged."
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
-            git status --short -- app/model.json app/sky_model.json
+            git status --short -- $TRACKED
           fi
+        env:
+          TRACKED: app/model.json app/sky_model.json app/verification.json
 
       # A model is data the app trusts, so it goes through the same checks a
       # human's change would before it is allowed anywhere near production.
@@ -101,12 +109,16 @@ jobs:
             echo "walk-forward; the scores and the baselines they were compared"
             echo "against are in each file under metadata."
             echo
+            echo "app/verification.json is refreshed every run regardless: it"
+            echo "scores the model already deployed against the prediction log,"
+            echo "which is a different question from whether to ship a new one."
+            echo
             sed -n '/walk-forward/,$p' training.log | head -n 24
           } > "$RUNNER_TEMP/commit-message.txt"
           # `git add` is fatal on a path that does not exist, and a run
           # before the sky model has ever cleared its gates has only one file.
-          for model in app/model.json app/sky_model.json; do
-            [ -e "$model" ] && git add "$model"
+          for artefact in app/model.json app/sky_model.json app/verification.json; do
+            [ -e "$artefact" ] && git add "$artefact"
           done
           git commit --file "$RUNNER_TEMP/commit-message.txt"
           git push origin HEAD:main

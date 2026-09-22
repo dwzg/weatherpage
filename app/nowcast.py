@@ -40,6 +40,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -54,6 +55,12 @@ MODEL_PATH = Path(__file__).parent / "model.json"
 #: not: until ``ml/train.py`` has shipped one, the outlook falls back to the
 #: threshold ladder in :mod:`app.weather`, which is what it always was.
 SKY_MODEL_PATH = Path(__file__).parent / "sky_model.json"
+
+#: How the deployed model has actually done, written weekly by ml/train.py
+#: from the prediction log. Absent until there are enough scored hours, and
+#: absent is the honest state — a verification is a claim about a record, and
+#: for the first months there is no record to make a claim about.
+VERIFICATION_PATH = Path(__file__).parent / "verification.json"
 
 #: How far ahead the model predicts, and what counts as rain. Both are baked
 #: into the training labels; they are here so the UI can say what it means.
@@ -155,6 +162,74 @@ def load(path: Path | None = None) -> Model | None:
         log.warning("nowcast model at %s has mismatched feature arrays; skipping", path)
         return None
     return model
+
+
+#: Width of a reliability bin. Ten over [0, 1]: fine enough to show a curve
+#: bending, coarse enough that each holds a countable number of hours.
+RELIABILITY_BIN = 0.1
+
+#: A bin thinner than this is shown with its count rather than hidden — the
+#: reader can see how little is behind it — but nothing is inferred from it.
+RELIABILITY_MIN_BIN = 5
+
+
+def reliability_bins(pairs: Sequence[tuple[float, float]]) -> list[dict]:
+    """Predicted probability against observed frequency, in bins.
+
+    ``pairs`` is ``(probability, outcome)`` per scored hour, outcome being 1
+    or 0. This is the whole question a probability makes of itself: when it
+    said 40%, did it rain about 40% of the time?
+
+    Lives here rather than in ``ml/train.py``, which is what writes it, for
+    two reasons. It is the shape the page renders, so the page's own package
+    should define it; and it is pure arithmetic, so it is testable in the
+    ordinary suite without numpy or scikit-learn, which the image
+    deliberately does not carry.
+
+    Empty bins are dropped rather than reported as zeroes, which would draw
+    a curve through hours that never happened.
+    """
+    bins = []
+    count = round(1.0 / RELIABILITY_BIN)
+    for index in range(count):
+        low = index * RELIABILITY_BIN
+        high = low + RELIABILITY_BIN
+        inside = [
+            (p, y) for p, y in pairs
+            # The top bin takes 1.0 itself, so a certain forecast is counted.
+            if p >= low and (p < high if index < count - 1 else p <= high)
+        ]
+        if not inside:
+            continue
+        bins.append({
+            "from": round(low, 2),
+            "to": round(high, 2),
+            "hours": len(inside),
+            "predicted": round(sum(p for p, _ in inside) / len(inside), 3),
+            "observed": round(sum(y for _, y in inside) / len(inside), 3),
+            "thin": len(inside) < RELIABILITY_MIN_BIN,
+        })
+    return bins
+
+
+def load_verification(path: Path | None = None) -> dict | None:
+    """The live verification, or ``None`` if there isn't a usable one.
+
+    Treated exactly like the model file: written by automation, so read as
+    data that might be wrong or missing rather than as something that must be
+    there. A malformed one costs the page a section, not the page.
+    """
+    path = path or VERIFICATION_PATH
+    try:
+        loaded = json.loads(path.read_text())
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError):
+        log.warning("verification at %s could not be read; skipping", path, exc_info=True)
+        return None
+    if not isinstance(loaded, dict) or not loaded.get("hours"):
+        return None
+    return loaded
 
 
 def describe(probability: float, threshold: float) -> str:

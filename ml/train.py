@@ -186,6 +186,37 @@ def fetch_readings(app_url: str, api_key: str | None = None) -> list[dict]:
     return rows
 
 
+def fetch_predictions(app_url: str, api_key: str | None = None) -> list[dict]:
+    """Every prediction the page has logged, walked page by page.
+
+    Same cursor and the same key as the readings export, for the same
+    reasons. Returns an empty list rather than failing if the endpoint is
+    not there: an older container has no log to hand over, and a run that
+    cannot verify should still be able to train.
+    """
+    base = f"{app_url.rstrip('/')}/api/weather/predictions"
+    headers = {"X-API-Key": api_key} if api_key else {}
+    rows: list[dict] = []
+    cursor: dict | None = None
+
+    while True:
+        query = urllib.parse.urlencode(cursor) if cursor else ""
+        try:
+            payload = fetch_json(f"{base}?{query}" if query else base, headers=headers)
+        except Exception as error:
+            print(f"  (no prediction log available: {error})")
+            return []
+        rows.extend(payload["predictions"])
+        cursor = payload.get("next")
+        if not cursor:
+            break
+
+    for row in rows:
+        row["dt"] = datetime.strptime(row["timestamp"], TS_FORMAT)
+    rows.sort(key=lambda r: (r["dt"], -row_offset(r)))
+    return rows
+
+
 def row_offset(row: dict) -> int:
     """A reading's UTC offset, defaulting for a row that predates the column."""
     value = row.get("utc_offset")
@@ -616,6 +647,99 @@ def ship(evaluation: dict, out: Path, extra: dict, force: bool) -> bool:
     return True
 
 
+# ── Verifying what was actually shown ──────────────────────────────────────
+#
+# Everything above scores a candidate walk-forward against a held-out past.
+# That is the right way to decide whether to ship, and it says nothing about
+# whether the model *already deployed* has been right about this station's
+# weather since it was deployed.
+#
+# This scores the prediction log — what the page actually said, hour by hour,
+# written at the time — against the same observations that label the training
+# data. It cannot be reconstructed by replay: the log spans however many
+# weekly models were deployed across the window, and a replay would attribute
+# every hour of it to today's.
+
+#: The bins and their shape live in app/nowcast.py: it is the page that
+#: renders them, and keeping the definition there makes it pure arithmetic
+#: the ordinary test suite can check without numpy.
+from app.nowcast import reliability_bins  # noqa: E402
+
+
+def verify(predictions: list[dict], rain: dict[datetime, float]) -> dict | None:
+    """Score the logged predictions against what the weather actually did."""
+    scored = [
+        (row, label_rain(rain, row["dt"]))
+        for row in predictions
+        if row["dt"] in rain or window(rain, row["dt"]) is not None
+    ]
+    scored = [(row, label) for row, label in scored if label is not None]
+    if not scored:
+        print("\nNothing in the prediction log can be scored yet.")
+        return None
+
+    rows = [row for row, _ in scored]
+    truth = np.array([label for _, label in scored], dtype=float)
+    result: dict = {
+        "scored_at": datetime.now().strftime("%Y-%m-%d"),
+        "from": rows[0]["dt"].strftime("%Y-%m-%d"),
+        "to": rows[-1]["dt"].strftime("%Y-%m-%d"),
+        "hours": len(rows),
+        "base_rate": round(float(truth.mean()), 3),
+        # However many weekly models the window spans. A replay could not
+        # produce this, and it is the reason the log exists.
+        "models": sorted({row["model_trained_at"] for row in rows
+                          if row.get("model_trained_at")}),
+        "horizon_hours": HORIZON_HOURS,
+        "rain_mm": RAIN_MM,
+    }
+
+    have_model = np.array([row.get("rain_probability") is not None for row in rows])
+    if have_model.any() and len(set(truth[have_model].tolist())) > 1:
+        probabilities = np.array(
+            [row["rain_probability"] for row, keep in zip(rows, have_model, strict=True) if keep],
+            dtype=float,
+        )
+        model_truth = truth[have_model]
+        # The threshold the shipped model fires at, so the yes/no figures
+        # describe the call the page was actually making.
+        shipped = REPO / "app" / "model.json"
+        threshold = (
+            json.loads(shipped.read_text()).get("threshold", 0.5)
+            if shipped.exists() else 0.5
+        )
+        result["model"] = score(probabilities, model_truth, threshold)
+        result["model"]["hours"] = int(have_model.sum())
+        result["model"]["base_rate"] = round(float(model_truth.mean()), 3)
+        result["reliability"] = reliability_bins(
+            list(zip(probabilities.tolist(), model_truth.tolist(), strict=True))
+        )
+
+    # The ladder is scored over every logged hour, including the ones before
+    # the model had enough history to say anything, because the phrase was on
+    # the banner for all of them.
+    says_rain = np.array([
+        float(any(word in (row.get("forecast") or "") for word in ("Rain", "Thunder")))
+        for row in rows
+    ])
+    result["rules"] = score(says_rain, truth, 0.5)
+    result["rules"]["hours"] = len(rows)
+
+    print(f"\nlive verification over {result['hours']} logged hours "
+          f"({result['from']} .. {result['to']}, base rate "
+          f"{result['base_rate'] * 100:.1f}%)")
+    if "model" in result:
+        m = result["model"]
+        print(f"  model  Brier {m['brier']}  BSS {m['bss']:+.3f}  AUC {m['auc']}  "
+              f"CSI {m['csi']:.3f}  over {m['hours']} hours")
+        for row in result.get("reliability", []):
+            print(f"    said {row['from']:.0%}-{row['to']:.0%}: "
+                  f"observed {row['observed']:.0%} over {row['hours']} hours")
+    r = result["rules"]
+    print(f"  rules  CSI {r['csi']:.3f}  KSS {r['kss']:+.3f}  over {r['hours']} hours")
+    return result
+
+
 def cross_check(evaluation: dict, fine: dict[datetime, float]) -> dict | None:
     """Score the rain model's own probabilities against the 2 km series.
 
@@ -647,6 +771,9 @@ def main() -> int:
                         help="key for /api/weather/export; defaults to $API_KEY")
     parser.add_argument("--out", type=Path, default=REPO / "app" / "model.json")
     parser.add_argument("--sky-out", type=Path, default=REPO / "app" / "sky_model.json")
+    parser.add_argument("--verification-out", type=Path,
+                        default=REPO / "app" / "verification.json",
+                        help="where the live verification of the deployed model goes")
     parser.add_argument("--readings", type=Path, help="a local readings JSON, instead of fetching")
     parser.add_argument("--rainfall", type=Path,
                         help="a local Open-Meteo archive JSON, instead of fetching")
@@ -740,6 +867,19 @@ def main() -> int:
                 },
                 args.force,
             )
+
+    # Deliberately outside the shipping decision, and written every run.
+    # This does not describe the candidate; it describes the model that has
+    # been deployed over the scoring window, which is a different question
+    # and the one the page could not answer before. Refusing to ship is a
+    # normal outcome, and the verification must not go stale behind it.
+    if not args.readings:
+        verification = verify(fetch_predictions(args.app_url, args.api_key), rain)
+        if verification is not None:
+            args.verification_out.write_text(
+                json.dumps(verification, indent=2) + "\n"
+            )
+            print(f"wrote {args.verification_out}")
 
     if not wrote:
         print("\nNothing shipped; every model on disk is left exactly as it is.")

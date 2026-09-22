@@ -8,7 +8,10 @@ is why this cannot be reconstructed afterwards and why the table exists.
 
 from __future__ import annotations
 
+import json
+import re
 from datetime import timedelta
+from pathlib import Path
 
 import pytest
 
@@ -223,6 +226,227 @@ class TestTheExportEndpoint:
             "timestamp", "utc_offset", "rain_probability", "sky_probability",
             "forecast", "model_trained_at",
         }
+
+
+class TestReliabilityBins:
+    """The arithmetic behind the table the page shows.
+
+    It lives in app/nowcast.py rather than in ml/train.py — which is what
+    writes it — precisely so it can be checked here, without numpy or
+    scikit-learn, which the image does not carry.
+    """
+
+    def test_a_perfectly_calibrated_run_lands_on_the_line(self):
+        from app import nowcast
+
+        # Ten hours in the 20-30% bin, two of which were wet.
+        pairs = [(0.25, 1.0), (0.25, 1.0)] + [(0.25, 0.0)] * 8
+        bins = nowcast.reliability_bins(pairs)
+        assert len(bins) == 1
+        assert bins[0] == {
+            "from": 0.2, "to": 0.3, "hours": 10,
+            "predicted": 0.25, "observed": 0.2, "thin": False,
+        }
+
+    def test_every_tenth_is_its_own_bin(self):
+        from app import nowcast
+
+        bins = nowcast.reliability_bins([(p / 100, 0.0) for p in range(0, 100, 5)])
+        assert [b["from"] for b in bins] == [round(i / 10, 2) for i in range(10)]
+
+    def test_certainty_is_counted_rather_than_dropped(self):
+        """1.0 is not less than the top bin's upper edge, so a naive
+        half-open test would silently discard it."""
+        from app import nowcast
+
+        bins = nowcast.reliability_bins([(1.0, 1.0)])
+        assert len(bins) == 1 and bins[0]["hours"] == 1
+        assert bins[0]["to"] == 1.0
+
+    def test_empty_bins_are_dropped_not_zeroed(self):
+        """A zero would draw the curve through hours that never happened."""
+        from app import nowcast
+
+        bins = nowcast.reliability_bins([(0.05, 0.0), (0.85, 1.0)])
+        assert [(b["from"], b["hours"]) for b in bins] == [(0.0, 1), (0.8, 1)]
+
+    def test_a_thin_bin_is_flagged_rather_than_hidden(self):
+        from app import nowcast
+
+        bins = nowcast.reliability_bins([(0.35, 1.0)] * 3 + [(0.55, 0.0)] * 40)
+        thin = {b["from"]: b["thin"] for b in bins}
+        assert thin == {0.3: True, 0.5: False}
+
+    def test_nothing_scored_yields_no_bins(self):
+        from app import nowcast
+
+        assert nowcast.reliability_bins([]) == []
+
+
+class TestLoadingTheVerification:
+    def test_a_missing_file_is_simply_absent(self, tmp_path):
+        from app import nowcast
+
+        assert nowcast.load_verification(tmp_path / "nope.json") is None
+
+    def test_a_malformed_file_costs_a_section_not_the_page(self, tmp_path):
+        from app import nowcast
+
+        broken = tmp_path / "verification.json"
+        broken.write_text("{ not json")
+        assert nowcast.load_verification(broken) is None
+
+    def test_an_empty_verification_is_not_shown(self, tmp_path):
+        """Zero scored hours is not a result, and rendering it as one would
+        put an empty table under a heading promising evidence."""
+        from app import nowcast
+
+        empty = tmp_path / "verification.json"
+        empty.write_text(json.dumps({"hours": 0}))
+        assert nowcast.load_verification(empty) is None
+
+    def test_a_real_one_loads(self, tmp_path):
+        from app import nowcast
+
+        path = tmp_path / "verification.json"
+        path.write_text(json.dumps({"hours": 900, "base_rate": 0.21}))
+        assert nowcast.load_verification(path)["hours"] == 900
+
+
+VERIFICATION = {
+    "scored_at": "2026-12-15", "from": "2026-09-22", "to": "2026-12-14",
+    "hours": 2600, "base_rate": 0.208,
+    "models": ["2026-09-21", "2026-11-23"],
+    "horizon_hours": 6, "rain_mm": 0.2,
+    "model": {"brier": 0.147, "bss": 0.109, "auc": 0.812, "csi": 0.398,
+              "kss": 0.441, "hours": 2600, "base_rate": 0.208},
+    "reliability": [
+        {"from": 0.0, "to": 0.1, "hours": 539, "predicted": 0.05,
+         "observed": 0.07, "thin": False},
+        {"from": 0.4, "to": 0.5, "hours": 191, "predicted": 0.44,
+         "observed": 0.39, "thin": False},
+        {"from": 0.8, "to": 0.9, "hours": 1, "predicted": 0.85,
+         "observed": 1.0, "thin": True},
+    ],
+    "rules": {"csi": 0.344, "kss": 0.372, "hours": 2600},
+}
+
+
+#: The catalogue the render embeds is keyed by the English source strings, so
+#: it contains every English phrase by construction. Strip it before asking
+#: whether English leaked onto a German page.
+CATALOGUE_BLOB = re.compile(
+    r'<script id="i18n-data".*?</script>', re.DOTALL
+)
+
+
+def visible(markup: str) -> str:
+    return CATALOGUE_BLOB.sub("", markup)
+
+
+@pytest.fixture
+def with_a_nowcast(monkeypatch):
+    """A page with a working model, without growing 30 days of pressure.
+
+    The verification table sits inside the rain model's own section, so it
+    needs a nowcast to be there at all — and the real feature vector needs a
+    month of history behind its pressure ranks.
+    """
+    model = services.NOWCAST_MODEL
+    if model is None:
+        pytest.skip("no model shipped in this checkout")
+
+    async def vector():
+        return dict.fromkeys(model.features, 0.0) | {"rh": 90.0, "temp": 12.0}
+
+    monkeypatch.setattr(services, "nowcast_features", vector)
+    monkeypatch.setattr(services, "VERIFICATION", VERIFICATION)
+
+
+class TestTheReliabilityTableOnThePage:
+    async def test_it_is_absent_until_there_is_something_to_show(
+        self, client, monkeypatch
+    ):
+        """Absent is the honest state. An empty table under a heading
+        promising evidence would be worse than no heading."""
+        monkeypatch.setattr(services, "VERIFICATION", None)
+        await client.post("/api/weather", json=at(clock.now()))
+        assert "reliability-table" not in (await client.get("/")).text
+
+    async def test_it_renders_a_row_per_bin(self, client, with_a_nowcast):
+        await client.post("/api/weather", json=at(clock.now()))
+
+        markup = (await client.get("/")).text
+        assert "reliability-table" in markup
+        assert "And has it been right?" in visible(markup)
+        # The thin bin is flagged rather than dropped.
+        assert 'class="is-thin"' in markup
+        rows = re.findall(r"<tr[^>]*>\s*<td>(\d+)", markup)
+        assert {"0", "40", "80"} <= set(rows), rows
+
+    async def test_it_is_translated(self, client, with_a_nowcast):
+        await client.post("/api/weather", json=at(clock.now()))
+
+        markup = visible(
+            (await client.get("/", headers={"Accept-Language": "de"})).text
+        )
+        assert "Und hatte es recht?" in markup
+        assert "And has it been right?" not in markup
+        # Dates and numbers go through the same formatters as the rest.
+        assert "22.09.2026" in markup
+        assert "0,147" in markup
+
+    async def test_the_poller_leaves_it_alone(self, client, with_a_nowcast):
+        """It changes weekly, in CI, and a new image is what carries it — so
+        it belongs in the render and not in /status, which the poller
+        refetches every minute for numbers that actually move."""
+        await client.post("/api/weather", json=at(clock.now()))
+        assert "verification" not in (await client.get("/api/weather/status")).json()
+
+
+class TestTheTrainerScoresTheLog:
+    """ml/train.py must read the log, and must not reinvent the bins.
+
+    Parsed rather than imported: the trainer needs numpy and scikit-learn,
+    which the image deliberately does not carry, so the ordinary suite cannot
+    import it — the same reason the binning itself lives in app/nowcast.py.
+    """
+
+    SOURCE = Path(__file__).resolve().parent.parent / "ml" / "train.py"
+
+    def test_it_reads_the_prediction_log(self):
+        assert "/api/weather/predictions" in self.SOURCE.read_text()
+
+    def test_it_uses_the_app_s_binning(self):
+        """A second copy of the bin edges would eventually disagree with the
+        table the page draws from them."""
+        source = self.SOURCE.read_text()
+        assert "from app.nowcast import reliability_bins" in source
+
+    def test_verification_is_written_outside_the_shipping_decision(self):
+        """Refusing to ship is a normal outcome. If the verification were
+        written only when a model shipped, it would go stale behind a run
+        that correctly declined."""
+        import ast
+
+        tree = ast.parse(self.SOURCE.read_text())
+        main = next(node for node in ast.walk(tree)
+                    if isinstance(node, ast.FunctionDef) and node.name == "main")
+        calls_verify = [
+            node for node in ast.walk(main)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+            and node.func.id == "verify"
+        ]
+        assert calls_verify, "main() should verify the log"
+        ships = [
+            node for node in ast.walk(main)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+            and node.func.id == "ship"
+        ]
+        # The verify call must not sit inside any branch guarded by a ship().
+        for call in calls_verify:
+            for shipped in ships:
+                assert shipped not in ast.walk(call)
 
 
 class TestItDoesNotDisturbTheReadings:

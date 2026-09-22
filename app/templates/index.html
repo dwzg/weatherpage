@@ -255,6 +255,61 @@
                     </p>
                     {%- endif %}
 
+                    {#- The table above scores candidates against a held-out
+                        past, which says the method works. This one scores
+                        what the page actually said, logged hour by hour as it
+                        said it, against what the weather then did. Absent
+                        until there are enough scored hours, and absent is the
+                        honest state rather than a gap to be filled. -#}
+                    {%- if verification and verification.reliability %}
+                    <h4>{{ t('And has it been right?') }}</h4>
+                    <p>
+                        {{ t("Every hour, what the page was showing is written down. Once the weather has happened those are scored against the same observations the model was trained on. This is the deployed model's own record — not a fit to a held-out past, but the thing you were actually shown.") }}
+                    </p>
+                    <p>
+                        {{ t('{hours} hours logged, {from_date} to {to_date}, of which {wet}% saw rain. A calibrated probability matches its own claim: in the rows where it said 40%, it should have rained about 40% of the time.',
+                              hours=num(verification.hours, 0, grouping=True),
+                              from_date=date(verification['from']),
+                              to_date=date(verification.to),
+                              wet=num(verification.base_rate * 100)) }}
+                    </p>
+                    <div class="table-scroll">
+                        <table class="deep-table reliability-table">
+                            <thead>
+                                <tr>
+                                    <th>{{ t('When it said') }}</th>
+                                    <th class="numeric">{{ t('It rained') }}</th>
+                                    <th class="numeric">{{ t('Hours') }}</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {%- for bucket in verification.reliability %}
+                                <tr{% if bucket.thin %} class="is-thin"{% endif %}>
+                                    <td>{{ num(bucket['from'] * 100) }}–{{ num(bucket.to * 100) }} %</td>
+                                    <td class="numeric">{{ num(bucket.observed * 100) }} %</td>
+                                    <td class="numeric">{{ num(bucket.hours, 0, grouping=True) }}</td>
+                                </tr>
+                                {%- endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    {%- if verification.model %}
+                    <p>
+                        {{ t("Over those hours the deployed model scored Brier {brier}, a skill of {bss} over climatology, AUC {auc}. The threshold ladder, scored on exactly the same hours, managed CSI {rules_csi} against the model's {model_csi}.",
+                              brier=num(verification.model.brier, 3),
+                              bss=num(verification.model.bss, 3, sign=True),
+                              auc=num(verification.model.auc, 3) if verification.model.auc else '—',
+                              rules_csi=num(verification.rules.csi, 3),
+                              model_csi=num(verification.model.csi, 3)) }}
+                    </p>
+                    {%- endif %}
+                    {%- if verification.models | length > 1 %}
+                    <p>
+                        {{ t('Those hours span {n} retrained models, because the model is refitted weekly. That is why this is logged rather than replayed: replaying the archive would credit every past hour to the model shipped today.', n=verification.models | length) }}
+                    </p>
+                    {%- endif %}
+                    {%- endif %}
+
                     <h4>{{ t('Why the percentage means rain in the area') }}</h4>
                     <p>
                         {{ t('The labels it learned from are a {km} km reanalysis — "did it rain around here", not "did it rain on this balcony". That is deliberate, and it was measured: trained and judged on a 2 km series instead, the same features manage AUC {auc} against {auc_good} on the reanalysis. Point rain is a few percent of hours and turns on convective detail a barometer cannot see; the synoptic question is the one these sensors can answer.', km=25, auc=num(0.715, 3), auc_good=num(0.831, 3)) }}

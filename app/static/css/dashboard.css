@@ -242,6 +242,13 @@ header .subtitle { color: var(--text-secondary); font-size: 0.9rem; margin-top: 
 }
 .deep-table th[title] { cursor: help; }
 
+/* A reliability bin holding only a handful of hours is shown rather than
+   hidden — the Hours column says how few — but it is dimmed so it does not
+   read with the same weight as a bin backed by several hundred.
+   Opacity rather than a colour: `.deep-table td` already sets the colour on
+   the cell, so a rule on the row would lose the cascade and do nothing. */
+.reliability-table tr.is-thin td { opacity: 0.55; }
+
 /* The rung the outlook is standing on, and the model's own row. */
 .deep-table .is-active { background: var(--row-highlight); }
 .deep-table .is-active td,
