@@ -214,6 +214,18 @@ class TestDashboard:
         assert response.status_code == 200
         assert "Waiting for first weather reading" in response.text
 
+    async def test_todays_card_reports_the_averages_it_queried(self, client):
+        """get_stats("today") was being fetched, cached and thrown away,
+        while the card it belongs on stopped after four rows."""
+        for minutes, temp in ((30, "10"), (25, "20"), (20, "30")):
+            await client.post("/api/weather", json=at(minutes, temperature=temp))
+
+        page = (await client.get("/")).text
+        card = page.split("Today&#39;s Records", 1)[1].split("All-Time Records", 1)[0]
+        assert "Average temperature" in card
+        assert "20.0" in card, "the mean of 10, 20 and 30"
+        assert "Readings" in card
+
     async def test_all_three_cards_carry_a_trend_arrow(self, client):
         """Temperature and humidity had a trend computed and not shown.
 

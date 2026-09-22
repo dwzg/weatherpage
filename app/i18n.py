@@ -498,6 +498,8 @@ GERMAN: dict[str, str] = {
     "Coldest day (avg)": "Kältester Tag (Ø)",
     "Most humid day (avg)": "Feuchtester Tag (Ø)",
     "Least humid day (avg)": "Trockenster Tag (Ø)",
+    "Average temperature": "Durchschnittstemperatur",
+    "Average humidity": "Durchschnittliche Luftfeuchtigkeit",
     "Readings": "Messwerte",
     "at {time}": "um {time}",
 

@@ -484,6 +484,16 @@
 </div>
 {% endmacro %}
 
+{#- A record with no time to give: today's averages, which are a different
+    fact from its extremes rather than a restatement of them. -#}
+{% macro plain_row(label, value, digits, unit, grouping=False) %}
+<div class="stat-row">
+    <span class="stat-label">{{ t(label) }}</span>
+    <span class="stat-spacer"></span>
+    <span class="stat-val">{{ num(value, digits, grouping=grouping) }}{{ unit }}</span>
+</div>
+{% endmacro %}
+
 <div class="stats-grid">
     {% if extremes_today %}
     <div class="card stats-card">
@@ -492,6 +502,16 @@
         {{ extreme_row("Coldest", extremes_today.temperature.min, 1, "°C", "lo") }}
         {{ extreme_row("Most humid", extremes_today.humidity.max, 0, "%") }}
         {{ extreme_row("Least humid", extremes_today.humidity.min, 0, "%") }}
+        {{ extreme_row("Highest pressure", extremes_today.pressure.max, 0, " hPa") }}
+        {{ extreme_row("Lowest pressure", extremes_today.pressure.min, 0, " hPa") }}
+        {#- The averages and the count come from a query the page was already
+            running for the charts and then discarding. Partial in the same
+            way every other row on this card is: the day is not over. -#}
+        {% if stats_today.count %}
+        {{ plain_row("Average temperature", stats_today.temperature.avg, 1, "°C") }}
+        {{ plain_row("Average humidity", stats_today.humidity.avg, 0, "%") }}
+        {{ plain_row("Readings", stats_today.count, 0, "", True) }}
+        {% endif %}
     </div>
     {% endif %}
 
