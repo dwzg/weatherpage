@@ -166,6 +166,26 @@ class TestReadEndpoints:
         }
         assert body["bucketed"] is False
 
+    async def test_history_carries_the_dew_point_it_implies(self, client):
+        """Plotted beside the temperature, and derived here rather than in the
+        browser: a second copy of the Magnus formula in JavaScript is one
+        that can drift from the cards."""
+        from app import weather
+
+        await client.post("/api/weather", json=at(0, temperature="21.5", humidity="55"))
+        point = (await client.get("/api/weather/history?period=24h")).json()["readings"][0]
+        assert point["dew_point"] == weather.compute_dew_point(21.5, 55.0)
+
+    async def test_a_bucketed_series_carries_it_too(self, client):
+        """The 30-day chart is averaged, and a line that vanishes when the
+        chart downsamples is worse than one that was never there."""
+        for hours in range(0, 24 * 40, 6):
+            await client.post("/api/weather", json=at(hours * 60))
+
+        body = (await client.get("/api/weather/history?period=30d")).json()
+        assert body["bucketed"] is True
+        assert all(r["dew_point"] is not None for r in body["readings"])
+
     @pytest.mark.parametrize("period", ["3h", "24h", "7d", "30d", "today", "all"])
     async def test_every_period_is_accepted(self, client, period):
         await client.post("/api/weather", json=at(0))

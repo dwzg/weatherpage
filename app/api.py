@@ -216,10 +216,11 @@ async def get_history(period: str = PeriodQuery) -> dict:
     Long periods are averaged into fixed-width buckets so the response stays
     small; ``interval_seconds`` reports the spacing and ``bucketed`` says
     whether the points are averages. Bucketed points carry ``*_min`` and
-    ``*_max`` alongside the average.
+    ``*_max`` alongside the average. Every point also carries the
+    ``dew_point`` its temperature and humidity imply, so the browser never
+    has to hold a second copy of the formula.
     """
-    series = await database.get_history_series(period)
-    return series.as_dict()
+    return await services.history_payload(period)
 
 
 @router.get("/stats")

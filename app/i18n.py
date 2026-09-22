@@ -468,6 +468,7 @@ GERMAN: dict[str, str] = {
     "Humidity": "Luftfeuchtigkeit",
     "Pressure": "Luftdruck",
     "Feels like {value}°C": "Gefühlt {value} °C",
+    "Dew point": "Taupunkt",
     "Dew point {value}°C": "Taupunkt {value} °C",
     "vs {hours}h ago: {delta}°C": "vs. vor {hours} h: {delta} °C",
     "vs {hours}h ago: {delta}%": "vs. vor {hours} h: {delta} %",
@@ -489,6 +490,7 @@ GERMAN: dict[str, str] = {
     # can carry: which measurement, over what, and how far it ranged.
     "{metric} over {period}: {min} to {max} {unit}":
         "{metric} über {period}: {min} bis {max} {unit}",
+    "{metric}: {min} to {max} {unit}": "{metric}: {min} bis {max} {unit}",
     "{metric} chart, no readings": "{metric}-Diagramm, keine Messwerte",
     "Monthly average, minimum and maximum temperature for {year}: {min} to {max} °C":
         "Monatliche Durchschnitts-, Tiefst- und Höchsttemperatur für {year}: "

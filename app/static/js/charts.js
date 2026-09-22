@@ -64,6 +64,9 @@ function withoutThinBuckets(series) {
             blanked[metric.key] = NaN;
             blanked[`${metric.key}_min`] = NaN;
             blanked[`${metric.key}_max`] = NaN;
+            // Derived from the two above, so it is exactly as thin as they
+            // are and must break with them.
+            if (metric.companion) blanked[metric.companion.key] = NaN;
         }
         return blanked;
     });
@@ -142,6 +145,10 @@ function makeChartConfig(metric, series, period) {
         );
     }
 
+    // The band datasets, which have nothing to say in a legend or a tooltip
+    // that the line they wrap does not say better.
+    const bands = datasets.length;
+
     datasets.push({
         label: metric.label,
         data: toTimeData(readings, metric.key, gap),
@@ -155,6 +162,26 @@ function makeChartConfig(metric, series, period) {
         spanGaps: false,
     });
 
+    // Boolean, not the value: Chart.js reads `display: undefined` as true,
+    // which would put an empty legend under the other two charts.
+    const companion = Boolean(
+        metric.companion && readings.some((r) => r[metric.companion.key] != null),
+    );
+    if (companion) {
+        datasets.push({
+            label: metric.companion.label,
+            data: toTimeData(readings, metric.companion.key, gap),
+            borderColor: metric.companion.color,
+            borderDash: metric.companion.dash,
+            borderWidth: 1.5,
+            fill: false,
+            pointRadius: 0,
+            pointHoverRadius: 4,
+            tension: 0.3,
+            spanGaps: false,
+        });
+    }
+
     return {
         type: 'line',
         data: { datasets },
@@ -164,10 +191,21 @@ function makeChartConfig(metric, series, period) {
             maintainAspectRatio: false,
             animation: false,
             plugins: {
-                legend: { display: false },
+                // Two lines on one axis need saying which is which; one does
+                // not, and the card title already says it.
+                legend: {
+                    display: companion,
+                    position: 'bottom',
+                    labels: {
+                        boxWidth: 18,
+                        color: style.tickColor,
+                        font: { size: 10 },
+                        filter: (item) => item.datasetIndex >= bands,
+                    },
+                },
                 tooltip: {
                     // The band datasets would just repeat the average's tooltip.
-                    filter: (item) => item.datasetIndex === datasets.length - 1,
+                    filter: (item) => item.datasetIndex >= bands,
                     callbacks: {
                         title: (items) => (items.length
                             ? dateFormat(fmt.tooltip).format(items[0].parsed.x) : ''),
@@ -270,22 +308,38 @@ function label(canvas, text) {
     canvas.setAttribute('aria-label', text);
 }
 
+const usable = (values) =>
+    values.filter((v) => v !== null && v !== undefined && !Number.isNaN(v));
+
 /** "Temperature over 7 Days: 3.1 to 21.4 °C", for a screen reader. */
 function describeChart(metric, series, period) {
-    const values = series.readings
+    const values = usable(series.readings
         .map((r) => (r[`${metric.key}_min`] ?? r[metric.key]))
-        .concat(series.readings.map((r) => r[`${metric.key}_max`] ?? r[metric.key]))
-        .filter((v) => v !== null && v !== undefined && !Number.isNaN(v));
+        .concat(series.readings.map((r) => r[`${metric.key}_max`] ?? r[metric.key])));
     if (!values.length) return t('{metric} chart, no readings', { metric: metric.label });
 
     const button = document.querySelector(`.period-btn[data-period="${period}"]`);
-    return t('{metric} over {period}: {min} to {max} {unit}', {
+    const described = t('{metric} over {period}: {min} to {max} {unit}', {
         metric: metric.label,
         period: button ? button.textContent.trim() : period,
         min: formatNumber(Math.min(...values), metric.digits),
         max: formatNumber(Math.max(...values), metric.digits),
         unit: metric.unit,
     });
+
+    /* A second line is drawn, so the alternative has to carry it too —
+       otherwise the reader who cannot see the chart is told about half of
+       it. */
+    const second = metric.companion
+        ? usable(series.readings.map((r) => r[metric.companion.key]))
+        : [];
+    if (!second.length) return described;
+    return `${described}. ${t('{metric}: {min} to {max} {unit}', {
+        metric: metric.companion.label,
+        min: formatNumber(Math.min(...second), metric.digits),
+        max: formatNumber(Math.max(...second), metric.digits),
+        unit: metric.unit,
+    })}`;
 }
 
 /** The series already fetched for a period, or undefined.

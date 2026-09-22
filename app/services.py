@@ -223,6 +223,29 @@ def is_stale(timestamp: str, reference: datetime | None = None) -> bool:
     return ref - latest > timedelta(minutes=STALE_AFTER_MINUTES)
 
 
+async def history_payload(period: str) -> dict:
+    """The chart series, with the dew point each point implies.
+
+    Derived here rather than in the browser so the Magnus formula keeps one
+    home: a second copy in JavaScript is a formula that can drift from the
+    one the cards are computed with.
+
+    On a bucketed series this is the dew point *of* the bucket's mean
+    temperature and mean humidity, not the mean of the dew points — the raw
+    rows that would need were averaged away. Over a bucket's spread the two
+    differ by hundredths of a degree, well inside the line's own width.
+    """
+    payload = (await database.get_history_series(period)).as_dict()
+    for row in payload["readings"]:
+        temperature, humidity = row.get("temperature"), row.get("humidity")
+        row["dew_point"] = (
+            weather.compute_dew_point(temperature, humidity)
+            if temperature is not None and humidity is not None
+            else None
+        )
+    return payload
+
+
 async def build_page_context() -> dict:
     """The full server-rendered page context, including history aggregates."""
     status = await build_status()

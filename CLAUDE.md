@@ -79,7 +79,7 @@ These are implicit across the codebase and easy to break:
 
   Splitting on those seams would move the two rules most easily broken — *migrations run before the pool opens* and *every write path refreshes the rollup inside the lock* — into separate files, where nothing but a comment connects them. Right now they are enforced by proximity: you cannot add a write without `_refresh_rollup` being on the same screen. That is worth more than a smaller file. Revisit if the reads section grows its own subsystem; until then the section banners are the navigation.
 
-- `get_history_series()` downsamples: a period whose raw series would exceed `TARGET_CHART_POINTS` is averaged into buckets, and each point then carries `*_min`/`*_max` for the range band. `/api/weather/history` returns `{readings, interval_seconds, bucketed}` — not a bare array.
+- `get_history_series()` downsamples: a period whose raw series would exceed `TARGET_CHART_POINTS` is averaged into buckets, and each point then carries `*_min`/`*_max` for the range band. `/api/weather/history` returns `{readings, interval_seconds, bucketed, expected_samples}` — not a bare array. The route goes through `services.history_payload()`, which adds each point's `dew_point`: the temperature chart plots it as a second line, and deriving it server-side keeps the Magnus formula in `weather.py` alone rather than growing a JavaScript twin that can drift from the cards. On a bucketed point it is the dew point of the bucket's mean temperature and mean humidity — the raw rows a mean-of-dew-points would need are exactly what bucketing discarded, and the difference is hundredths of a degree.
 
 ## The two predictions
 

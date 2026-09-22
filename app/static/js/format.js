@@ -17,9 +17,19 @@ export const COLORS = {
     pres: { line: '#38a169', bg: 'rgba(56,161,105,0.08)', band: 'rgba(56,161,105,0.13)' },
 };
 
+/* The dew point rides on the temperature chart rather than getting one of
+   its own: it is a temperature, in the same units, on the same axis, and
+   the distance between the two lines is the reading — close means muggy,
+   and a crossing is condensation. Blue because it is the moisture side of
+   the pair, dashed because it is derived rather than measured. The server
+   computes it (services.history_payload) so the formula has one home. */
+export const DEW_POINT = {
+    key: 'dew_point', label: t('Dew point'), color: COLORS.hum.line, dash: [5, 4],
+};
+
 /** The three metrics, in the order they appear on the page. */
 export const METRICS = [
-    { key: 'temperature', canvas: 'chart-temp', spark: 'spark-temp', label: t('Temperature'), color: COLORS.temp, digits: 1, unit: '°C' },
+    { key: 'temperature', canvas: 'chart-temp', spark: 'spark-temp', label: t('Temperature'), color: COLORS.temp, digits: 1, unit: '°C', companion: DEW_POINT },
     { key: 'humidity',    canvas: 'chart-hum',  spark: 'spark-hum',  label: t('Humidity'),    color: COLORS.hum,  digits: 0, unit: '%' },
     { key: 'pressure',    canvas: 'chart-pres', spark: 'spark-pres', label: t('Pressure'),    color: COLORS.pres, digits: 0, unit: 'hPa' },
 ];
