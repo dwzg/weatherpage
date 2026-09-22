@@ -339,6 +339,8 @@ header .subtitle { color: var(--text-secondary); font-size: 0.9rem; margin-top: 
 .trend-rising { color: var(--accent-temp); }
 .trend-falling { color: var(--accent-hum); }
 .trend-steady { color: var(--text-secondary); }
+/* The window the arrow measured over, recessive beside the number. */
+.trend-window { color: var(--text-secondary); font-size: 0.92em; }
 
 /* Chart.js sizes a responsive canvas from its parent, so the parent carries
    the dimensions. Sizing the canvas directly does not work: Chart.js writes

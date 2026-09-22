@@ -78,6 +78,8 @@ GERMAN: dict[str, str] = {
     "not expected": "nicht zu erwarten",
     "Rain nearby": "Regen in der Nähe",
     "in {hours} h": "in {hours} Std.",
+    # Suffix on each card's trend arrow: "+1.2 °C /3h".
+    "/{hours}h": "/{hours} Std.",
     "Learned from this station's own history":
         "Aus der eigenen Messreihe dieser Station gelernt",
 

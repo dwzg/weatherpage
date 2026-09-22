@@ -1138,10 +1138,22 @@ async def _pressure_at(hours: float, cycle: dict[int, float]) -> float | None:
     return _median([_detide(row, cycle) for row in rows])
 
 
-def _direction(delta: float) -> str:
-    if delta > 0.5:
+#: Below this a trend reads "steady". One per metric, because they are in
+#: different units and a deadband that suits hPa says nothing about percent:
+#: 0.5 hPa is a quarter of a typical day's pressure swing, 0.5 % of humidity
+#: is noise. Display only — nothing predictive reads these, and the note in
+#: app.weather about barometric tendency is why.
+TREND_DEADBAND: dict[str, float] = {
+    "pressure": 0.5,     # over TREND_WINDOW_HOURS
+    "temperature": 0.5,  # over the 3 h card window
+    "humidity": 2.0,     # the noisiest of the three, so the widest band
+}
+
+
+def _direction(delta: float, deadband: float = 0.5) -> str:
+    if delta > deadband:
         return "rising"
-    return "falling" if delta < -0.5 else "steady"
+    return "falling" if delta < -deadband else "steady"
 
 
 def _consistency(pressures: Iterable[float], direction: str) -> float:
@@ -1201,10 +1213,15 @@ async def get_recent_trend(column: str, hours: int = 3) -> dict | None:
     current_val = round(_median([row["value"] for row in recent]), 1)
     earlier = await _median_at(column, hours)
     prev_val = round(earlier, 1) if earlier is not None else current_val
+    delta = round(current_val - prev_val, 1)
     return {
         "current": current_val,
         "previous": prev_val,
-        "delta": round(current_val - prev_val, 1),
+        "delta": delta,
+        # So the temperature and humidity cards can carry the same arrow the
+        # pressure card has, from a trend that was already being computed.
+        "direction": _direction(delta, TREND_DEADBAND[column]),
+        "hours": hours,
     }
 
 

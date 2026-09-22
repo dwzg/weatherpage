@@ -89,8 +89,12 @@ function setBanner(id, html, className) {
     el.appendChild(span);
 }
 
-function updatePressureTrend(trend) {
-    const el = document.getElementById('detail-pres-trend');
+/* The arrow on a current-conditions card. The template's trend_arrow macro
+   builds the same markup from the same fields — including the window, which
+   comes off the trend rather than from either side's own constant, so the
+   three cards do not start disagreeing about how far back they looked. */
+function setTrend(id, trend, digits, unit) {
+    const el = document.getElementById(id);
     if (!el) return;
     el.textContent = '';
     if (!trend) return;
@@ -98,7 +102,11 @@ function updatePressureTrend(trend) {
     const arrow = { rising: '↑', falling: '↓' }[trend.direction] || '→';
     const span = document.createElement('span');
     span.className = `trend-${trend.direction}`;
-    span.textContent = `${arrow} ${signed(trend.delta, 1)} hPa`;
+    span.textContent = `${arrow} ${signed(trend.delta, digits)}${unit} `;
+    const over = document.createElement('span');
+    over.className = 'trend-window';
+    over.textContent = t('/{hours}h', { hours: trend.hours });
+    span.appendChild(over);
     el.appendChild(span);
 }
 
@@ -157,7 +165,9 @@ function applyStatus(status) {
     setComparison('detail-hum-24h',
         past ? current.humidity - past.humidity : null, 0, '%', hours, true);
 
-    updatePressureTrend(status.pressure_trend);
+    setTrend('detail-temp-trend', status.temperature_trend, 1, '°C');
+    setTrend('detail-hum-trend', status.humidity_trend, 0, '%');
+    setTrend('detail-pres-trend', status.pressure_trend, 1, ' hPa');
 
     /* The API stays in English — the forecast phrase is the same identifier
        app.weather.forecast_emoji() matches on — so the translation happens

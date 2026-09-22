@@ -112,6 +112,11 @@ async def build_status() -> dict | None:
         "dew_point": dew_point,
         "heat_index": weather.compute_heat_index(temperature, humidity),
         "pressure_trend": pressure_trend,
+        # Already computed above to smooth the forecast inputs, and until now
+        # thrown away: the pressure card carried an arrow and the other two
+        # did not, from the same three queries.
+        "temperature_trend": temp_trend,
+        "humidity_trend": humidity_trend,
         "pressure_percentile": percentile,
         "forecast": forecast,
         "forecast_emoji": weather.forecast_emoji(forecast),

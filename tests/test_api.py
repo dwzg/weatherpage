@@ -214,6 +214,26 @@ class TestDashboard:
         assert response.status_code == 200
         assert "Waiting for first weather reading" in response.text
 
+    async def test_all_three_cards_carry_a_trend_arrow(self, client):
+        """Temperature and humidity had a trend computed and not shown.
+
+        And the poller has to rewrite all three: an arrow the render puts
+        there and the poll leaves alone freezes sixty seconds later, beside
+        two that keep moving.
+        """
+        for minutes in range(4 * 60, -1, -5):
+            await client.post("/api/weather", json=at(
+                minutes, temperature=f"{10 + (4 * 60 - minutes) / 30:.1f}"
+            ))
+
+        page = (await client.get("/")).text
+        poller = (Path(__file__).resolve().parent.parent / "app" / "static"
+                  / "js" / "poll.js").read_text()
+        for cell in ("detail-temp-trend", "detail-hum-trend", "detail-pres-trend"):
+            arrow = page.split(f'id="{cell}"', 1)[1].split("</div>", 1)[0]
+            assert "trend-" in arrow, cell
+            assert cell in poller, cell
+
     async def test_page_is_not_cached(self, client):
         assert (await client.get("/")).headers["cache-control"] == "no-store"
 

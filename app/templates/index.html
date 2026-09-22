@@ -390,6 +390,20 @@
 
 {% if current %}
 
+{#- One arrow, three cards. The pressure card had this and the other two
+    did not, from trends that were already being computed. -#}
+{#- The window comes off the trend itself, not from a separate context
+    variable, so the poller can print the same suffix from the same field. -#}
+{% macro trend_arrow(trend, digits, unit) %}
+{%- if trend %}
+<span class="trend-{{ trend.direction }}">
+    {%- if trend.direction == 'rising' %}↑{% elif trend.direction == 'falling' %}↓{% else %}→{% endif %}
+    {{ num(trend.delta, digits, sign=True) }}{{ unit }}
+    <span class="trend-window">{{ t('/{hours}h', hours=trend.hours) }}</span>
+</span>
+{%- endif %}
+{% endmacro %}
+
 <!-- ── Current conditions ─────────────────────────────────────────────── -->
 <div class="current-grid">
     <div class="card current-card temp">
@@ -397,6 +411,7 @@
         <div class="value" id="val-temp">{{ num(current.temperature, 1) }}<span class="unit">°C</span></div>
         <div class="detail" id="detail-heat">{% if heat_index is not none %}{{ t('Feels like {value}°C', value=num(heat_index, 1)) }}{% endif %}</div>
         <div class="detail" id="detail-dew">{% if dew_point is not none %}{{ t('Dew point {value}°C', value=num(dew_point, 1)) }}{% endif %}</div>
+        <div class="detail" id="detail-temp-trend">{{ trend_arrow(temperature_trend, 1, '°C') }}</div>
         {% set temp_delta = (current.temperature - yesterday.temperature) if yesterday else none %}
         <div class="detail detail-compare{% if temp_delta is not none %}{% if temp_delta > 0 %} delta-up{% elif temp_delta < 0 %} delta-down{% endif %}{% endif %}" id="detail-temp-24h">
             {%- if temp_delta is not none %}{{ t('vs {hours}h ago: {delta}°C', hours=comparison_hours, delta=num(temp_delta, 1, sign=True)) }}{% endif %}
@@ -407,6 +422,7 @@
     <div class="card current-card hum">
         <div class="label">{{ t('Humidity') }}</div>
         <div class="value" id="val-hum">{{ num(current.humidity) }}<span class="unit">%</span></div>
+        <div class="detail" id="detail-hum-trend">{{ trend_arrow(humidity_trend, 0, '%') }}</div>
         {% set hum_delta = (current.humidity - yesterday.humidity) if yesterday else none %}
         <div class="detail detail-compare{% if hum_delta is not none %}{% if hum_delta > 0 %} delta-up-hum{% elif hum_delta < 0 %} delta-down-hum{% endif %}{% endif %}" id="detail-hum-24h">
             {%- if hum_delta is not none %}{{ t('vs {hours}h ago: {delta}%', hours=comparison_hours, delta=num(hum_delta, 0, sign=True)) }}{% endif %}
@@ -417,14 +433,7 @@
     <div class="card current-card pres">
         <div class="label">{{ t('Pressure') }}</div>
         <div class="value" id="val-pres">{{ num(current.pressure) }}<span class="unit">hPa</span></div>
-        <div class="detail" id="detail-pres-trend">
-            {%- if pressure_trend %}
-            <span class="trend-{{ pressure_trend.direction }}">
-                {%- if pressure_trend.direction == 'rising' %}↑{% elif pressure_trend.direction == 'falling' %}↓{% else %}→{% endif %}
-                {{ num(pressure_trend.delta, 1, sign=True) }} hPa
-            </span>
-            {%- endif %}
-        </div>
+        <div class="detail" id="detail-pres-trend">{{ trend_arrow(pressure_trend, 1, ' hPa') }}</div>
         <div class="sparkline-wrap"><canvas class="sparkline" id="spark-pres" aria-hidden="true"></canvas></div>
     </div>
 </div>
