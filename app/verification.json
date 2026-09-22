@@ -1,0 +1,23 @@
+{
+  "scored_at": "2026-09-22",
+  "from": "2026-09-22",
+  "to": "2026-09-22",
+  "hours": 7,
+  "base_rate": 0.0,
+  "models": [
+    "2026-09-21"
+  ],
+  "horizon_hours": 6,
+  "rain_mm": 0.2,
+  "rules": {
+    "brier": 0.0,
+    "bss": 0.0,
+    "auc": null,
+    "csi": 0.0,
+    "kss": 0.0,
+    "pod": 0.0,
+    "far": 0.0,
+    "fires": 0.0,
+    "hours": 7
+  }
+}
