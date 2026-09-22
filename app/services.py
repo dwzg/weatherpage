@@ -235,10 +235,12 @@ async def build_page_context() -> dict:
     )
 
     daily_extremes = climate = None
+    archive_months = 0
     if stats_all.get("count"):
-        daily_extremes, climate = await asyncio.gather(
+        daily_extremes, climate, archive_months = await asyncio.gather(
             database.get_daily_extremes(),
             database.get_climate_stats(),
+            database.get_archive_months(),
         )
 
     return {
@@ -249,6 +251,11 @@ async def build_page_context() -> dict:
         "extremes_all": extremes_all,
         "daily_extremes": daily_extremes,
         "climate": climate,
+        # What the calendar should ask for, and what it will actually get:
+        # the second is the first until the archive is ten years old, at
+        # which point the card says the calendar starts later than the data.
+        "archive_months": archive_months,
+        "calendar_months": min(archive_months, database.MAX_CALENDAR_MONTHS) or 1,
         "now": clock.now(),
     }
 

@@ -618,13 +618,22 @@
         <span class="pager-label heatmap-month-label" id="heatmap-label" aria-live="polite">&nbsp;</span>
         <button type="button" id="heatmap-next" aria-label="{{ t('Next month') }}" disabled>&#8250;</button>
     </div>
+    {#- The span to ask the server for lives on the element, like the
+        percentile window does: a literal in the module would start hiding
+        the oldest month the day the archive outgrew it. -#}
     <div class="pager-track heatmap-track" id="heatmap-track" tabindex="0" role="group"
+         data-months="{{ calendar_months }}"
          aria-label="{{ t('Temperature calendar, one month per page') }}"></div>
     <div class="heatmap-legend">
         <span>{{ t('Cold') }}</span>
         <div class="heatmap-legend-bar"></div>
         <span>{{ t('Hot') }}</span>
     </div>
+    {%- if archive_months > calendar_months %}
+    <p class="heatmap-truncated">
+        {{ t('The calendar pages back {n} months; the archive starts earlier. The records and the climate card still read all of it.', n=calendar_months) }}
+    </p>
+    {%- endif %}
 </div>
 
 {% else %}

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from app import clock
+from app import clock, database
 
 READING = {"temperature": "21.5", "humidity": "55", "pressure": "1013",
            "timestamp": "2026-06-20T21:00:00"}
@@ -174,8 +174,19 @@ class TestReadEndpoints:
     async def test_unknown_period_is_rejected(self, client):
         assert (await client.get("/api/weather/history?period=99y")).status_code == 422
 
-    @pytest.mark.parametrize("months,status", [(0, 422), (1, 200), (24, 200), (25, 422)])
+    @pytest.mark.parametrize("months,status", [
+        (0, 422),
+        (1, 200),
+        (24, 200),
+        (database.MAX_CALENDAR_MONTHS, 200),
+        (database.MAX_CALENDAR_MONTHS + 1, 422),
+    ])
     async def test_daily_months_bounds(self, client, months, status):
+        """The ceiling is the calendar's own bound, not a second number.
+
+        A lower one here would truncate the request the page makes rather
+        than guarding anything.
+        """
         assert (await client.get(f"/api/weather/daily?months={months}")).status_code == status
 
     async def test_healthz(self, client):
@@ -225,6 +236,33 @@ class TestDashboard:
         assert "Average temperature" in card
         assert "20.0" in card, "the mean of 10, 20 and 30"
         assert "Readings" in card
+
+    async def test_the_calendar_asks_for_the_archive_it_has(self, client):
+        """A fixed months=24 would have dropped the oldest page silently on
+        the first day of the twenty-fifth month."""
+        first = clock.now() - timedelta(days=400)
+        await client.post("/api/weather", json={
+            **READING, "timestamp": first.strftime("%Y-%m-%dT%H:%M:00"),
+        })
+        await client.post("/api/weather", json=at(0))
+
+        page = (await client.get("/")).text
+        span = (clock.now().year - first.year) * 12 + clock.now().month - first.month + 1
+        assert f'data-months="{span}"' in page
+        assert "the archive starts earlier" not in page
+
+    async def test_the_calendar_says_when_the_archive_outruns_it(self, client):
+        """Ten years is where the pager stops being the right tool. It stops
+        there out loud: the records and the climate card still read it all."""
+        first = clock.now() - timedelta(days=365 * 11)
+        await client.post("/api/weather", json={
+            **READING, "timestamp": first.strftime("%Y-%m-%dT%H:%M:00"),
+        })
+        await client.post("/api/weather", json=at(0))
+
+        page = (await client.get("/")).text
+        assert f'data-months="{database.MAX_CALENDAR_MONTHS}"' in page
+        assert "the archive starts earlier" in page
 
     async def test_the_pressure_card_ranks_the_reading(self, client):
         """1013 hPa says nothing unless you already know this station.

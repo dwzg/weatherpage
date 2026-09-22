@@ -636,6 +636,15 @@ header .subtitle { color: var(--text-secondary); font-size: 0.9rem; margin-top: 
 
 .heatmap-note { text-align: center; color: var(--text-secondary); padding: 20px; width: 100%; }
 
+/* Said once, under the legend, when the archive is older than the pager
+   goes. Quiet: it is a footnote about scope, not a warning. */
+.heatmap-truncated {
+    margin: 10px 0 0;
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+    text-align: center;
+}
+
 .heatmap-legend {
     display: flex;
     align-items: center;

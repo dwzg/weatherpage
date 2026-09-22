@@ -229,6 +229,13 @@ async def get_stats(period: str = PeriodQuery) -> dict:
 
 
 @router.get("/daily")
-async def get_daily(months: int = Query(3, ge=1, le=24)) -> list[dict]:
-    """Per-day summaries for the calendar heatmap."""
+async def get_daily(
+    months: int = Query(3, ge=1, le=database.MAX_CALENDAR_MONTHS)
+) -> list[dict]:
+    """Per-day summaries for the calendar heatmap.
+
+    The page asks for the span its archive actually has; the ceiling is the
+    same constant the calendar is bounded by, rather than a second number
+    that could drift below it and truncate the request instead.
+    """
     return await database.get_daily_summaries(months)

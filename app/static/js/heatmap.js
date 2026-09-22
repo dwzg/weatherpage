@@ -284,7 +284,10 @@ export async function buildHeatmap() {
     const legend = document.querySelector('.heatmap-legend-bar');
     if (legend) legend.style.background = legendGradient();
 
-    const daily = await fetchJSON('/api/weather/daily?months=24');
+    /* The render put the archive's own span on the track. Falling back to
+       two years only matters if the attribute is ever dropped. */
+    const months = Number(track.dataset.months) || 24;
+    const daily = await fetchJSON(`/api/weather/daily?months=${months}`);
     if (!daily || !daily.length) {
         track.innerHTML = '';
         const note = makeCell('heatmap-note');

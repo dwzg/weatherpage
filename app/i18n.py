@@ -535,6 +535,10 @@ GERMAN: dict[str, str] = {
     "Next month": "Nächster Monat",
     "Temperature calendar, one month per page":
         "Temperaturkalender, ein Monat pro Seite",
+    "The calendar pages back {n} months; the archive starts earlier. The "
+    "records and the climate card still read all of it.":
+        "Der Kalender reicht {n} Monate zurück; das Archiv beginnt früher. "
+        "Die Rekorde und die Klimakarte lesen weiterhin alles davon.",
     "Cold": "Kalt",
     "Hot": "Heiß",
     "Avg": "Ø",

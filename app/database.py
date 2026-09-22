@@ -73,6 +73,13 @@ TARGET_CHART_POINTS = 1500
 EXPORT_PAGE_SIZE = 10_000
 EXPORT_MAX_PAGE_SIZE = 50_000
 
+#: The longest span the calendar will page through. The panels are all built
+#: up front, so ten years is already some five thousand day cells; past that
+#: a pager is the wrong way to read an archive. It is a bound, not the
+#: request: the page asks for the months it actually has, and says so on the
+#: card when the archive starts earlier than the calendar does.
+MAX_CALENDAR_MONTHS = 120
+
 #: The window the pressure trend is measured over, in hours.
 TREND_WINDOW_HOURS = 6
 
@@ -1291,6 +1298,22 @@ async def get_reading_ago(hours: int = 24, tolerance_hours: float = 2.0) -> dict
         "hours": round(measured.total_seconds() / 3600, 1),
         "readings": len(rows),
     }
+
+
+@cached
+async def get_archive_months() -> int:
+    """Calendar months spanned by the rollup, counting both ends.
+
+    What the calendar should ask for. Asking for a fixed two years means
+    that in the twenty-fifth month the oldest page quietly stops existing,
+    which is the kind of silence this project tries not to have.
+    """
+    row = await _fetch_one("SELECT MIN(day) AS first FROM daily_rollup")
+    if not row or not row["first"]:
+        return 0
+    first = datetime.strptime(row["first"], clock.DATE_FORMAT)
+    today = clock.now()
+    return (today.year - first.year) * 12 + today.month - first.month + 1
 
 
 @cached

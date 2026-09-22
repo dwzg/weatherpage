@@ -374,6 +374,17 @@ class TestAggregates:
         assert days, "expected some daily summaries"
         assert days[0] >= clock.fmt_date(clock.months_ago(3))
 
+    async def test_archive_months_counts_both_ends(self, db):
+        now = clock.now().replace(second=0, microsecond=0, tzinfo=None)
+        assert await db.get_archive_months() == 0
+
+        await db.insert_reading(20.0, 50.0, 1013.0, ts(now))
+        assert await db.get_archive_months() == 1
+
+        first = clock.months_ago(5, now)
+        await db.insert_reading(20.0, 50.0, 1013.0, ts(first))
+        assert await db.get_archive_months() == 6
+
     async def test_daily_extremes_exclude_today(self, db):
         now = clock.now().replace(second=0, microsecond=0, tzinfo=None)
         await db.insert_reading(5.0, 50.0, 1013.0, ts(now - timedelta(days=1)))
