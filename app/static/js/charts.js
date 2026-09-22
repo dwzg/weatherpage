@@ -26,6 +26,50 @@ const charts = {};
 const sparkCharts = {};
 const historyCache = {};
 
+/* A bucket is the average of whatever readings survived inside its window,
+   and nothing about the shape of the line says how many that was. A day with
+   36 readings out of an expected 288 plots exactly like a complete one — on
+   a seeded outage, a bucket of 36 came back at 16.65 °C between neighbours at
+   20.5 and 22.8, a convincing 4 °C cold snap with its min/max band collapsed
+   to match.
+   That is the same failure "chart gaps are a real signal, don't interpolate"
+   exists to prevent, arriving by a quieter route: the gap is not left open,
+   it is filled by an average of the few readings either side of it. So a
+   bucket that thin is dropped, and the existing NaN machinery renders the
+   hole that was really there. */
+const MIN_BUCKET_COVERAGE = 0.5;
+
+/**
+ * The series with under-filled buckets blanked out.
+ *
+ * Returns the readings to draw and how many were dropped, so the chart note
+ * can say so rather than quietly showing a shorter line.
+ */
+function withoutThinBuckets(series) {
+    const expected = series.expected_samples || 1;
+    if (!series.bucketed || expected <= 1) {
+        return { readings: series.readings, dropped: 0 };
+    }
+
+    let dropped = 0;
+    const readings = series.readings.map((r) => {
+        // A response from before the server sent `samples` has nothing to
+        // judge, and a bucket is innocent until it can be shown thin.
+        if (r.samples === undefined || r.samples / expected >= MIN_BUCKET_COVERAGE) {
+            return r;
+        }
+        dropped += 1;
+        const blanked = { ...r };
+        for (const metric of METRICS) {
+            blanked[metric.key] = NaN;
+            blanked[`${metric.key}_min`] = NaN;
+            blanked[`${metric.key}_max`] = NaN;
+        }
+        return blanked;
+    });
+    return { readings, dropped };
+}
+
 /**
  * Build chart points, inserting a NaN break wherever consecutive readings sit
  * further apart than the expected interval. Outages then render as gaps of
@@ -69,6 +113,7 @@ function makeChartConfig(metric, series, period) {
     const style = chartStyle();
     const fmt = TIME_FORMATS[period] || TIME_FORMATS['24h'];
     const gap = series.interval_seconds * 1000 * GAP_INTERVAL_FACTOR;
+    const { readings } = withoutThinBuckets(series);
     const datasets = [];
 
     // When points are bucket averages, show the spread they hide.
@@ -76,7 +121,7 @@ function makeChartConfig(metric, series, period) {
         datasets.push(
             {
                 label: t('Min'),
-                data: toBandData(series.readings, metric.key, 'min', gap),
+                data: toBandData(readings, metric.key, 'min', gap),
                 borderColor: 'transparent',
                 backgroundColor: metric.color.band,
                 pointRadius: 0,
@@ -86,7 +131,7 @@ function makeChartConfig(metric, series, period) {
             },
             {
                 label: t('Max'),
-                data: toBandData(series.readings, metric.key, 'max', gap),
+                data: toBandData(readings, metric.key, 'max', gap),
                 borderColor: 'transparent',
                 backgroundColor: metric.color.band,
                 pointRadius: 0,
@@ -99,7 +144,7 @@ function makeChartConfig(metric, series, period) {
 
     datasets.push({
         label: metric.label,
-        data: toTimeData(series.readings, metric.key, gap),
+        data: toTimeData(readings, metric.key, gap),
         borderColor: metric.color.line,
         backgroundColor: series.bucketed ? 'transparent' : metric.color.bg,
         borderWidth: 2,
@@ -169,8 +214,19 @@ function describeSeries(series) {
     const interval = minutes >= 1440
         ? t('{n}-day', { n: minutes / 1440 })
         : minutes >= 60 ? t('{n}-hour', { n: minutes / 60 }) : t('{n}-minute', { n: minutes });
-    return t('Averaged into {interval} intervals · shaded band shows the range within each',
+    const note = t('Averaged into {interval} intervals · shaded band shows the range within each',
         { interval });
+
+    /* Say it rather than just drawing a shorter line: a reader who can see
+       the hole deserves to know it was an outage and not a missing sensor. */
+    const { dropped } = withoutThinBuckets(series);
+    if (!dropped) return note;
+    return `${note} · ${t(
+        dropped === 1
+            ? '{n} interval left out for having too few readings to average'
+            : '{n} intervals left out for having too few readings to average',
+        { n: formatNumber(dropped, 0, { grouping: true }) },
+    )}`;
 }
 
 export async function loadPeriod(period) {

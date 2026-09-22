@@ -765,12 +765,19 @@ class HistorySeries:
     interval_seconds: int
     #: True when points are bucket averages rather than individual readings.
     bucketed: bool
+    #: How many readings a complete bucket holds. The client cannot work this
+    #: out for itself: once bucketed, ``interval_seconds`` is the bucket width
+    #: and the 5-minute grid it was built from is no longer visible in the
+    #: response. Without it, a bucket averaged from an outage is
+    #: indistinguishable from a full one. 1 for an unbucketed series.
+    expected_samples: int = 1
 
     def as_dict(self) -> dict:
         return {
             "readings": self.readings,
             "interval_seconds": self.interval_seconds,
             "bucketed": self.bucketed,
+            "expected_samples": self.expected_samples,
         }
 
 
@@ -848,7 +855,10 @@ async def get_history_series(
     rows = await _fetch_all(
         _bucketed_sql(where, bucket), [bucket, bucket, *params, bucket]
     )
-    return HistorySeries(rows, bucket * 60, bucketed=True)
+    return HistorySeries(
+        rows, bucket * 60, bucketed=True,
+        expected_samples=bucket // READING_INTERVAL_MINUTES,
+    )
 
 
 async def get_history(period: str = "24h") -> list[dict]:

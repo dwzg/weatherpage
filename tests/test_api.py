@@ -146,7 +146,9 @@ class TestReadEndpoints:
     async def test_history_shape(self, client):
         await client.post("/api/weather", json=at(0))
         body = (await client.get("/api/weather/history?period=24h")).json()
-        assert set(body) == {"readings", "interval_seconds", "bucketed"}
+        assert set(body) == {
+            "readings", "interval_seconds", "bucketed", "expected_samples",
+        }
         assert body["bucketed"] is False
 
     @pytest.mark.parametrize("period", ["3h", "24h", "7d", "30d", "today", "all"])

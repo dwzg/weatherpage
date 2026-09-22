@@ -473,6 +473,10 @@ GERMAN: dict[str, str] = {
         "{min} bis {max} °C",
     "Monthly temperatures for {year}, no readings":
         "Monatstemperaturen für {year}, keine Messwerte",
+    "{n} interval left out for having too few readings to average":
+        "{n} Intervall ausgelassen: zu wenige Messwerte zum Mitteln",
+    "{n} intervals left out for having too few readings to average":
+        "{n} Intervalle ausgelassen: zu wenige Messwerte zum Mitteln",
     "Averaged into {interval} intervals · shaded band shows the range within each":
         "Gemittelt über {interval} · das schattierte Band zeigt die Spanne je Intervall",
     "{n}-day": "{n}-Tages-Intervalle",
