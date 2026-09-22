@@ -448,15 +448,18 @@ def labelled(samples: list[dict], target: str) -> list[dict]:
 
 
 def walk_forward(
-    samples: list[dict], target: str
+    samples: list[dict], target: str, features: tuple[str, ...] = FEATURES
 ) -> tuple[np.ndarray, np.ndarray, float, list[dict]]:
     """Out-of-sample probabilities: refit weekly, never look ahead.
 
     Returns the samples that were actually tested alongside the scores, so a
     baseline can be lined up against exactly the same hours instead of
     assuming they are the tail of the input.
+
+    ``features`` is a parameter only so :func:`ablations` can refit without
+    one of them; everything else passes the full set.
     """
-    X = np.array([[s["features"][f] for f in FEATURES] for s in samples])
+    X = np.array([[s["features"][f] for f in features] for s in samples])
     y = np.array([s["y"][target] for s in samples])
     moments = np.array([s["dt"] for s in samples])
 
@@ -516,6 +519,54 @@ def incumbent(samples: list[dict], target: str) -> np.ndarray:
         )
         for s in samples
     ])
+
+
+def ablations(samples: list[dict], target: str, skill: dict) -> list[dict]:
+    """What each feature is worth: the same walk-forward without it.
+
+    The question this answers is whether a feature is carrying weather or
+    carrying the calendar. ``temp`` is the one to watch — over a first
+    summer, "warm" and "July" are the same column, and a coefficient fitted
+    on that would be learning the season rather than the sky. A feature the
+    model can lose without getting worse is a feature it does not have
+    evidence for, whatever its coefficient says.
+
+    Out of sample and refit from scratch each time, because dropping a
+    column in-sample only ever looks bad: the point is generalisation, not
+    fit. Ten more walk-forwards over a few thousand rows costs under a
+    second, so this runs every week rather than when somebody wonders.
+    """
+    worth = []
+    for dropped in FEATURES:
+        kept = tuple(f for f in FEATURES if f != dropped)
+        probabilities, truth, threshold, _ = walk_forward(samples, target, kept)
+        if not len(probabilities):
+            continue
+        without = score(probabilities, truth, threshold)
+        worth.append({
+            "feature": dropped,
+            "brier": without["brier"],
+            "auc": without["auc"],
+            "bss": without["bss"],
+            # Positive means the model is worse without it, which is what
+            # "worth something" means here.
+            "brier_cost": round(without["brier"] - skill["brier"], 4),
+            "auc_cost": (
+                round(skill["auc"] - without["auc"], 3)
+                if skill["auc"] is not None and without["auc"] is not None
+                else None
+            ),
+        })
+    worth.sort(key=lambda row: row["brier_cost"], reverse=True)
+    if worth:
+        print("\nleave-one-out (positive = the model is worse without it)")
+        for row in worth:
+            auc = "" if row["auc_cost"] is None else (
+                f"  AUC {row['auc']} ({row['auc_cost']:+.3f})"
+            )
+            print(f"  without {row['feature']:<8} "
+                  f"Brier {row['brier']:.4f} ({row['brier_cost']:+.4f}){auc}")
+    return worth
 
 
 def baselines(tested: list[dict], truth: np.ndarray, target: str) -> dict:
@@ -597,6 +648,7 @@ def evaluate(samples: list[dict], target: str) -> dict | None:
         "threshold": threshold,
         "skill": candidate,
         "baselines": reference,
+        "ablations": ablations(usable, target, candidate),
     }
 
 
@@ -636,6 +688,7 @@ def ship(evaluation: dict, out: Path, extra: dict, force: bool) -> bool:
                     "horizon_hours": HORIZON_HOURS,
                     "skill": evaluation["skill"],
                     "baselines": evaluation["baselines"],
+                    "ablations": evaluation["ablations"],
                     **extra,
                 },
             },

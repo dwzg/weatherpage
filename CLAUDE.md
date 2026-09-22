@@ -131,6 +131,7 @@ summary`) precisely so the nested handle does not inherit the card's own.
 - **The server picks the scale and the decimals.** `services.nowcast_breakdown()`
   sends each row's `value`, `digits`, `sign` and `unit` so the render and the
   poller print the same shape — the same rule the rest of the numbers follow.
+- **Every retrain measures what each feature is worth, not just what it weighs.** `ml/train.py::ablations()` reruns the whole walk-forward once per feature with that feature dropped, and the model card carries the result; the explainer prints it under the same labels as the contribution table. A coefficient only says how hard a signal is being leaned on — this says whether leaning on it helps. `temp` is the row to watch: over a first summer "warm" and "July" are nearly the same column, so a temperature coefficient fitted on that may be learning the calendar. If a feature's Brier cost sits at zero across several weeks, that is the evidence for dropping it from `FEATURES` — the trainer measures, it never drops anything by itself. Ten extra walk-forwards cost well under a second. `tests/test_train.py` checks the measurement against synthetic hours where one feature carries the label and another is noise; it needs numpy and scikit-learn, so it skips in CI and runs for whoever is working on the model.
 - **The model card is metadata passed through**, not restated in the template,
   so a retrain updates the page without a code change. Anything `ml/train.py`
   did not write comes back `None` and the section is skipped.

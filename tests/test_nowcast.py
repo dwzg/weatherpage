@@ -338,6 +338,28 @@ class TestRenderedBreakdown:
         assert payload["baselines"]["rules"]["brier"] == 0.19
         assert payload["cross_check"]["bss"] == -0.25
 
+    def test_the_leave_one_out_table_is_passed_through_and_labelled(self, tmp_path):
+        """A coefficient says how hard a signal is leaned on, not whether
+        leaning on it helps. The trainer measures the second thing; the page
+        prints it under the same names as the breakdown."""
+        model = nowcast.load(write(tmp_path, self.MODEL_FILE | {"metadata": {
+            "ablations": [
+                {"feature": "rh", "brier": 0.21, "auc": 0.70,
+                 "bss": 0.05, "brier_cost": 0.02, "auc_cost": 0.09},
+                {"feature": "pct30", "brier": 0.19, "auc": 0.82,
+                 "bss": 0.14, "brier_cost": 0.0001, "auc_cost": 0.0},
+            ],
+        }}))
+        payload = services.run_nowcast({"pct30": 0.5, "rh": 60.0}, model)
+        rows = payload["ablations"]
+        assert [r["feature"] for r in rows] == ["rh", "pct30"]
+        assert rows[0]["label"] == nowcast.describe_feature("rh").label
+        assert rows[0]["brier_cost"] == 0.02
+
+    def test_an_older_model_without_one_simply_has_none(self, tmp_path):
+        model = nowcast.load(write(tmp_path, self.MODEL_FILE | {"metadata": {}}))
+        assert services.run_nowcast({"pct30": 0.5, "rh": 60.0}, model)["ablations"] is None
+
     def test_metadata_the_trainer_did_not_write_is_simply_absent(self, tmp_path):
         """An older model file must not take the explainer down with it."""
         model = nowcast.load(write(tmp_path, self.MODEL_FILE | {"metadata": {}}))

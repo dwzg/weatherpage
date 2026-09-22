@@ -270,6 +270,39 @@
                     </p>
                     {%- endif %}
 
+                    {#- A coefficient says how much a signal is being leaned
+                        on, not whether leaning on it helps. This is the
+                        measurement that can tell the difference, and it is
+                        run every week rather than when somebody wonders. -#}
+                    {%- if nowcast.ablations %}
+                    <h4>{{ t('What each signal is worth') }}</h4>
+                    <p>
+                        {{ t('The same walk-forward, refitted from scratch without each signal in turn. Positive means the model got worse without it — that is what having evidence for a signal looks like. A row near zero is a signal the model could lose without noticing, whatever weight it carries: over a first summer "warm" and "July" are nearly the same column, and a temperature coefficient fitted on that would be learning the calendar rather than the sky.') }}
+                    </p>
+                    <div class="table-scroll">
+                        <table class="deep-table skill-table">
+                            <thead>
+                                <tr>
+                                    <th>{{ t('Without') }}</th>
+                                    <th class="numeric">Brier</th>
+                                    <th class="numeric">AUC</th>
+                                    <th class="numeric" title="{{ t('How much worse the Brier score gets without this signal.') }}">{{ t('Cost of dropping it') }}</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {%- for row in nowcast.ablations %}
+                                <tr>
+                                    <th scope="row">{{ t(row.label) }}</th>
+                                    <td class="numeric">{{ num(row.brier, 3) }}</td>
+                                    <td class="numeric">{{ num(row.auc, 3) if row.auc is not none else '—' }}</td>
+                                    <td class="numeric {% if row.brier_cost > 0 %}weight-up{% elif row.brier_cost < 0 %}weight-down{% endif %}">{{ num(row.brier_cost, 4, sign=True) }}</td>
+                                </tr>
+                                {%- endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    {%- endif %}
+
                     {#- The table above scores candidates against a held-out
                         past, which says the method works. This one scores
                         what the page actually said, logged hour by hour as it

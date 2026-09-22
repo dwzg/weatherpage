@@ -366,6 +366,12 @@ def run_nowcast(
         "base_rate": meta.get("base_rate"),
         "baselines": meta.get("baselines"),
         "cross_check": meta.get("cross_check_2km"),
+        # What each feature is worth out of sample, labelled the way the
+        # breakdown labels them so the two tables name the same things.
+        "ablations": [
+            {**row, "label": nowcast.describe_feature(row.get("feature", "")).label}
+            for row in (meta.get("ablations") or [])
+        ] or None,
         "intercept": round(model.intercept, 3),
         "logit": round(model.logit(features), 3),
         "contributions": nowcast_breakdown(model, features),

@@ -433,6 +433,26 @@ GERMAN: dict[str, str] = {
         "antwortet. Das ist der ehrliche Preis dieser Entscheidung, und "
         "deshalb steht auf der Plakette „in der Nähe“.",
 
+    "What each signal is worth": "Was jede Größe wert ist",
+    "The same walk-forward, refitted from scratch without each signal in "
+    "turn. Positive means the model got worse without it — that is what "
+    "having evidence for a signal looks like. A row near zero is a signal "
+    "the model could lose without noticing, whatever weight it carries: over "
+    "a first summer \"warm\" and \"July\" are nearly the same column, and a "
+    "temperature coefficient fitted on that would be learning the calendar "
+    "rather than the sky.":
+        "Dieselbe Walk-forward-Prüfung, jeweils ohne eine Größe von Grund "
+        "auf neu gefittet. Positiv heißt: ohne sie wurde das Modell "
+        "schlechter — so sieht Evidenz für eine Größe aus. Eine Zeile nahe "
+        "null ist eine Größe, deren Verlust das Modell nicht bemerken "
+        "würde, welches Gewicht sie auch trägt: in einem ersten Sommer sind "
+        "„warm“ und „Juli“ fast dieselbe Spalte, und ein darauf gefitteter "
+        "Temperaturkoeffizient würde den Kalender lernen und nicht den "
+        "Himmel.",
+    "Without": "Ohne",
+    "Cost of dropping it": "Kosten des Weglassens",
+    "How much worse the Brier score gets without this signal.":
+        "Um wie viel schlechter der Brier-Score ohne diese Größe wird.",
     "What is driving the number right now":
         "Was die Zahl gerade antreibt",
     "Two different numbers, and the difference matters. The weight is the "
