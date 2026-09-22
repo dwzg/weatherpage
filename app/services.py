@@ -127,7 +127,18 @@ async def build_status() -> dict | None:
         "yesterday": yesterday,
         "stale": is_stale(current["timestamp"]),
         "age_seconds": age_seconds(current["timestamp"]),
-        "comparison_hours": COMPARISON_HOURS,
+        # The gap actually measured, not the one asked for. Inside a tolerance
+        # of two hours the nearest readings can be 22 or 26 hours old, and
+        # near sunrise that is several degrees — so the label says what was
+        # compared rather than what was intended. Falls back to the nominal
+        # figure only when there is nothing to compare against at all, where
+        # the caller renders no line anyway.
+        # Rounded to the hour, which is the granularity the label is written
+        # at; the point is not to claim 24 when it measured 22, not to print
+        # a decimal.
+        "comparison_hours": (
+            round(yesterday["hours"]) if yesterday else COMPARISON_HOURS
+        ),
     }
 
 

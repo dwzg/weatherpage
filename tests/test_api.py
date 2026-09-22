@@ -139,6 +139,20 @@ class TestReadEndpoints:
                                "yesterday", "stale", "comparison_hours"}
         assert status["stale"] is False
 
+    async def test_the_comparison_reports_the_gap_it_measured(self, client):
+        """"vs 24h ago" beside a reading 22 hours old is a claim the data
+        does not support — near sunrise that is several degrees."""
+        for minutes in range(0, 30, 5):
+            await client.post(
+                "/api/weather", json=at(22 * 60 - minutes, temperature="10")
+            )
+        await client.post("/api/weather", json=at(0, temperature="20"))
+
+        status = (await client.get("/api/weather/status")).json()
+        assert status["yesterday"] is not None
+        assert status["comparison_hours"] == 22, status["comparison_hours"]
+        assert "vs 22h ago" in (await client.get("/")).text
+
     async def test_status_flags_a_dead_feed(self, client):
         await client.post("/api/weather", json=at(minutes_ago=180))
         assert (await client.get("/api/weather/status")).json()["stale"] is True

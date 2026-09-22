@@ -296,6 +296,60 @@ class TestReadingAgo:
         await db.insert_reading(20.0, 50.0, 1013.0, ts(now))
         assert await db.get_reading_ago(24) is None
 
+    async def test_it_is_a_median_not_a_single_sample(self, db):
+        """Every other delta on the page is smoothed at both ends so one
+        noisy reading cannot move it. This one is on all three cards and was
+        the exception — two raw instantaneous readings, subtracted."""
+        now = clock.now().replace(second=0, microsecond=0, tzinfo=None)
+        target = now - timedelta(hours=24)
+        for offset in range(-10, 15, 5):
+            await db.insert_reading(
+                10.0, 50.0, 1013.0, ts(target + timedelta(minutes=offset))
+            )
+        # A spike exactly on the target instant, which a nearest-reading
+        # lookup would pick up and hand to all three cards.
+        await db.insert_reading(40.0, 50.0, 1013.0, ts(target))
+
+        ago = await db.get_reading_ago(24)
+        assert ago["temperature"] == 10.0, "the spike should not survive a median"
+
+    async def test_it_reports_the_gap_it_actually_measured(self, db):
+        """With a two-hour tolerance the nearest readings can be 22 or 26
+        hours old; calling that "24h ago" is a claim the data cannot support."""
+        now = clock.now().replace(second=0, microsecond=0, tzinfo=None)
+        for minutes in range(0, 30, 5):
+            await db.insert_reading(
+                10.0, 50.0, 1013.0,
+                ts(now - timedelta(hours=22) + timedelta(minutes=minutes)),
+            )
+        await db.insert_reading(20.0, 50.0, 1013.0, ts(now))
+
+        ago = await db.get_reading_ago(24)
+        assert ago is not None
+        assert 21.5 <= ago["hours"] <= 22.5, ago["hours"]
+        assert ago["readings"] >= 1
+
+    async def test_a_clean_run_still_reports_about_24_hours(self, db):
+        now = clock.now().replace(second=0, microsecond=0, tzinfo=None)
+        for minutes in range(-15, 20, 5):
+            await db.insert_reading(
+                12.0, 50.0, 1013.0, ts(now - timedelta(hours=24) + timedelta(minutes=minutes))
+            )
+        ago = await db.get_reading_ago(24)
+        assert round(ago["hours"]) == 24
+
+    async def test_every_metric_comes_back_smoothed(self, db):
+        now = clock.now().replace(second=0, microsecond=0, tzinfo=None)
+        target = now - timedelta(hours=24)
+        for i, minutes in enumerate(range(-10, 15, 5)):
+            await db.insert_reading(
+                10.0 + i, 50.0 + i, 1013.0 + i, ts(target + timedelta(minutes=minutes))
+            )
+        ago = await db.get_reading_ago(24)
+        assert ago["temperature"] == 12.0
+        assert ago["humidity"] == 52.0
+        assert ago["pressure"] == 1015.0
+
 
 class TestAggregates:
     async def test_stats_on_empty_database(self, db):

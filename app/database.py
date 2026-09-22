@@ -1223,22 +1223,57 @@ async def _median_at(column: str, hours: float) -> float | None:
 
 
 async def get_reading_ago(hours: int = 24, tolerance_hours: float = 2.0) -> dict | None:
-    """The reading closest to ``hours`` ago, or ``None`` if the data has a hole.
+    """What the station read about ``hours`` ago, smoothed, with when.
 
-    Without the tolerance an outage would silently compare "now" against a
-    reading days old and label it "vs 24h ago".
+    Every other delta on this page is a median over
+    :data:`SMOOTHING_WINDOW_MINUTES` at both ends, so that one noisy sample
+    cannot move it. This one — the "vs 24h ago" line on all three cards —
+    took two raw instantaneous readings and subtracted them, which is the
+    noisiest comparison on the page attached to the largest numbers.
+
+    It also reports the gap it actually measured. With a tolerance of two
+    hours the nearest readings can be 22 or 26 hours old, and near sunrise
+    that is several degrees; labelling it "vs 24h ago" regardless is a claim
+    the data does not support. ``hours`` comes back as the real distance so
+    the caller can say what it compared.
+
+    ``None`` when there is nothing inside the tolerance — an outage must not
+    silently become a comparison against whatever is nearest.
     """
     target = clock.now() - timedelta(hours=hours)
     window = timedelta(hours=tolerance_hours)
-    return await _fetch_one(
+    rows = await _fetch_all(
         f"""
         SELECT timestamp, {', '.join(METRICS)} FROM weather_readings
         WHERE timestamp BETWEEN ? AND ?
         ORDER BY ABS(strftime('%s', timestamp) - strftime('%s', ?)) ASC
-        LIMIT 1
+        LIMIT {SMOOTHING_READINGS}
         """,
-        (clock.fmt_ts(target - window), clock.fmt_ts(target + window), clock.fmt_ts(target)),
+        (clock.fmt_ts(target - window), clock.fmt_ts(target + window),
+         clock.fmt_ts(target)),
     )
+    if not rows:
+        return None
+
+    # The readings nearest the target, medianed — the same smoothing the
+    # trends use, over whichever readings the window actually holds.
+    smoothed = {
+        metric: round(_median([row[metric] for row in rows]), 1)
+        for metric in METRICS
+    }
+    # Report the middle of what was used, not the middle of what was asked
+    # for: those differ exactly when the archive has a hole here.
+    stamps = sorted(row["timestamp"] for row in rows)
+    middle = stamps[len(stamps) // 2]
+    measured = (
+        clock.now().replace(tzinfo=None) - datetime.strptime(middle, clock.TS_FORMAT)
+    )
+    return {
+        **smoothed,
+        "timestamp": middle,
+        "hours": round(measured.total_seconds() / 3600, 1),
+        "readings": len(rows),
+    }
 
 
 @cached
