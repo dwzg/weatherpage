@@ -374,6 +374,58 @@ class TestAggregates:
         assert days, "expected some daily summaries"
         assert days[0] >= clock.fmt_date(clock.months_ago(3))
 
+    @pytest.fixture
+    def noon(self, monkeypatch):
+        """Pin the clock: every one of these tests is about "so far today",
+        which is otherwise whatever time the suite happens to run at — and
+        at 00:30 there is no "today" to compare."""
+        pinned = datetime(2026, 9, 15, 12, 0)
+        monkeypatch.setattr(clock, "now", lambda: pinned)
+        return pinned
+
+    async def test_today_is_compared_against_the_same_hours(self, db, noon):
+        """Whole past days would say more about the hour than the weather:
+        by noon today's mean is a mean of night and morning."""
+        for day in range(1, 15):
+            past = noon - timedelta(days=day)
+            for hour in range(24):
+                # 10 °C up to noon, 30 °C for the rest of the day. Only the
+                # morning may be compared against today.
+                await db.insert_reading(
+                    10.0 if hour <= 12 else 30.0, 50.0, 1013.0,
+                    ts(past.replace(hour=hour)),
+                )
+        for hour in range(13):
+            await db.insert_reading(12.0, 50.0, 1013.0, ts(noon.replace(hour=hour)))
+
+        anomaly = await db.get_today_anomaly()
+        assert anomaly is not None
+        assert anomaly["normal"] == 10.0, "the afternoons must not count"
+        assert anomaly["delta"] == 2.0
+        assert anomaly["warmer_than"] == anomaly["days"] == 14
+
+    async def test_it_declines_without_enough_behind_it(self, db, noon):
+        for day in range(0, 3):
+            for hour in range(13):
+                moment = (noon - timedelta(days=day)).replace(hour=hour)
+                await db.insert_reading(15.0, 50.0, 1013.0, ts(moment))
+        assert await db.get_today_anomaly() is None
+
+    async def test_an_outage_day_is_not_compared_with_a_full_one(self, db, noon):
+        """Two readings of a morning have a mean for reasons that have
+        nothing to do with the weather."""
+        for day in range(1, 12):
+            past = noon - timedelta(days=day)
+            hours = range(13) if day > 1 else range(2)
+            for hour in hours:
+                await db.insert_reading(10.0, 50.0, 1013.0, ts(past.replace(hour=hour)))
+        for hour in range(13):
+            await db.insert_reading(10.0, 50.0, 1013.0, ts(noon.replace(hour=hour)))
+
+        anomaly = await db.get_today_anomaly()
+        assert anomaly is not None
+        assert anomaly["days"] == 10, "the outage day should have been dropped"
+
     async def test_archive_months_counts_both_ends(self, db):
         now = clock.now().replace(second=0, microsecond=0, tzinfo=None)
         assert await db.get_archive_months() == 0

@@ -105,6 +105,21 @@ PERCENTILE_MIN_READINGS = 7 * 24
 #: Fraction of a shorter window that must be populated for it to count.
 PERCENTILE_COVERAGE = 0.6
 
+#: How today is judged unusual or not: the same clock-hours on each of the
+#: last this-many days. Not "this date in other years", which an archive
+#: under a year old cannot answer at all and a two-year one answers from two
+#: samples. Recent days also carry the season with them, so the comparison
+#: is against what this week has been like rather than against an annual
+#: mean the reader would have to correct for themselves.
+ANOMALY_DAYS = 30
+#: Days needed before the comparison is worth printing, and the readings
+#: today needs before "today so far" means anything.
+ANOMALY_MIN_DAYS = 7
+ANOMALY_MIN_READINGS = 12
+#: A past day counts only if it covers most of the same window today does;
+#: an outage morning would otherwise be compared against a full one.
+ANOMALY_COVERAGE = 0.8
+
 #: Bucket widths (minutes) tried in order when downsampling.
 _BUCKET_LADDER: tuple[int, ...] = (
     READING_INTERVAL_MINUTES, 10, 15, 30, 60, 180, 360, 720, 1440,
@@ -1297,6 +1312,54 @@ async def get_reading_ago(hours: int = 24, tolerance_hours: float = 2.0) -> dict
         "timestamp": middle,
         "hours": round(measured.total_seconds() / 3600, 1),
         "readings": len(rows),
+    }
+
+
+@cached
+async def get_today_anomaly() -> dict | None:
+    """How today so far compares with the same hours on recent days.
+
+    "Is today unusual" is a question about the same slice of clock: at
+    09:00 today's mean is a mean of night and morning, and comparing it
+    with whole past days would say more about the hour than the weather.
+    So every day in the window is cut at the same time of day.
+
+    Returns ``None`` until there is enough of both — days behind it and
+    readings in today — for the answer to mean anything.
+    """
+    now = clock.now()
+    today = clock.fmt_date(now)
+    rows = await _fetch_all(
+        "SELECT substr(timestamp, 1, 10) AS day, "
+        "AVG(temperature) AS mean, COUNT(*) AS readings "
+        "FROM weather_readings "
+        "WHERE timestamp >= ? AND substr(timestamp, 12, 8) <= ? "
+        "GROUP BY day ORDER BY day ASC",
+        (clock.fmt_ts(now - timedelta(days=ANOMALY_DAYS)), now.strftime("%H:%M:%S")),
+    )
+    if not rows or rows[-1]["day"] != today:
+        return None
+
+    current = rows[-1]
+    if current["readings"] < ANOMALY_MIN_READINGS:
+        return None
+
+    past = [
+        row["mean"] for row in rows[:-1]
+        if row["readings"] >= current["readings"] * ANOMALY_COVERAGE
+    ]
+    if len(past) < ANOMALY_MIN_DAYS:
+        return None
+
+    # The median, not the mean: one heatwave day in thirty should not become
+    # what "normal" means.
+    normal = _median(past)
+    return {
+        "mean": round(current["mean"], 1),
+        "normal": round(normal, 1),
+        "delta": round(current["mean"] - normal, 1),
+        "warmer_than": sum(1 for mean in past if mean < current["mean"]),
+        "days": len(past),
     }
 
 

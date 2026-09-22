@@ -497,6 +497,7 @@ GERMAN: dict[str, str] = {
     "Min": "Min",
     "Max": "Max",
     "Average": "Mittel",
+    "All years, coldest to warmest": "Alle Jahre, kälteste bis wärmste",
     "The charting library did not load, so the graphs are missing.":
         "Die Diagrammbibliothek wurde nicht geladen, daher fehlen die Grafiken.",
 
@@ -535,6 +536,8 @@ GERMAN: dict[str, str] = {
     "Coldest day (avg)": "Kältester Tag (Ø)",
     "Most humid day (avg)": "Feuchtester Tag (Ø)",
     "Least humid day (avg)": "Trockenster Tag (Ø)",
+    "vs the last {days} days": "vs. die letzten {days} Tage",
+    "warmer than {n} of {days}": "wärmer als {n} von {days}",
     "Average temperature": "Durchschnittstemperatur",
     "Average humidity": "Durchschnittliche Luftfeuchtigkeit",
     "Readings": "Messwerte",

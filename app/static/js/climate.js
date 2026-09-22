@@ -20,11 +20,39 @@ const SERIES = [
 /* Headroom above and below the warmest and coldest month in the archive. */
 const AXIS_PADDING_C = 2;
 
+/* The archive's own range for each month, behind whichever year is showing:
+   the year's line inside it is an ordinary year, a line at its edge is the
+   record. Grey because it is context rather than a fourth measurement, and
+   drawn first because Chart.js paints datasets in order. */
+const NORM_FILL = 'rgba(113, 128, 150, 0.16)';
+
 let chart = null;
 let byYear = {};
+let norm = null;
+
+function bandDatasets() {
+    if (!norm) return [];
+    const empty = { borderColor: 'transparent', pointRadius: 0, tension: 0.3 };
+    return [
+        {
+            ...empty,
+            label: t('All years, coldest to warmest'),
+            data: norm.map((m) => m.temp_min),
+            backgroundColor: NORM_FILL,
+            fill: '+1',
+        },
+        {
+            ...empty,
+            // No label: one legend entry describes the pair, and the filter
+            // below drops this one.
+            data: norm.map((m) => m.temp_max),
+            fill: false,
+        },
+    ];
+}
 
 function datasets(months) {
-    return SERIES.map((series) => ({
+    return [...bandDatasets(), ...SERIES.map((series) => ({
         label: series.label,
         data: months.map((m) => m[series.key]),
         borderColor: series.color,
@@ -34,7 +62,7 @@ function datasets(months) {
         pointRadius: series.radius,
         pointHoverRadius: series.radius + 2,
         tension: 0.3,
-    }));
+    }))];
 }
 
 /**
@@ -45,7 +73,7 @@ function datasets(months) {
  * would compare nothing. Bounds come from the whole archive.
  */
 function sharedAxis() {
-    const values = Object.values(byYear).flat().flatMap(
+    const values = Object.values(byYear).flat().concat(norm || []).flatMap(
         (m) => [m.temp_min, m.temp_max]).filter((v) => v !== null && v !== undefined);
     if (!values.length) return {};
     return {
@@ -71,12 +99,23 @@ function buildChart(months) {
             plugins: {
                 legend: {
                     position: 'bottom',
-                    labels: { color: style.tickColor, font: { size: 10 }, boxWidth: 20, padding: 16 },
+                    labels: {
+                        color: style.tickColor,
+                        font: { size: 10 },
+                        boxWidth: 20,
+                        padding: 16,
+                        // The band's upper edge carries no label; its lower
+                        // edge speaks for both.
+                        filter: (item) => Boolean(item.text),
+                    },
                 },
                 tooltip: {
                     // Hovering anywhere in a month's column gives all three
                     // values, which is how the months are read now that there
-                    // is no table under the chart.
+                    // is no table under the chart. The band is context and
+                    // stays out of it — it would add two rows saying the
+                    // same thing about every month of every year.
+                    filter: (item) => item.datasetIndex >= (norm ? 2 : 0),
                     callbacks: {
                         label: (item) =>
                             `${item.dataset.label}: ${formatNumber(item.parsed.y, 1)} °C`,
@@ -135,6 +174,15 @@ export function initClimate() {
         byYear = JSON.parse(dataEl.textContent);
     } catch {
         return;
+    }
+
+    const normEl = document.getElementById('climate-norm');
+    if (normEl) {
+        try {
+            norm = JSON.parse(normEl.textContent);
+        } catch {
+            norm = null;
+        }
     }
 
     const labelEl = document.getElementById('climate-label');

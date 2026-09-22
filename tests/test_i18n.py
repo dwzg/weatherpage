@@ -582,7 +582,19 @@ class TestClimateFollowsTheYear:
     def test_the_render_embeds_every_year_not_the_pooled_average(self):
         markup = TEMPLATE.read_text()
         assert "climate.monthly_by_year | tojson" in markup
-        assert "monthly_all" not in markup
+        # The pooled climatology may appear only as the band drawn behind
+        # the year — never as a series the year label claims to describe.
+        pooled = re.findall(
+            r'id="([a-z-]+)" type="application/json">\{\{ climate\.monthly_all',
+            markup,
+        )
+        assert pooled in ([], ["climate-norm"]), pooled
+
+    def test_the_band_is_the_archive_behind_the_year(self):
+        source = (JS_DIR / "climate.js").read_text()
+        assert "climate-norm" in source
+        # Drawn first, so the year is on top of its own context.
+        assert "[...bandDatasets()" in source
 
     def test_the_month_table_is_gone_from_the_page(self):
         markup = TEMPLATE.read_text()

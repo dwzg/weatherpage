@@ -537,6 +537,16 @@
         {{ plain_row("Average humidity", stats_today.humidity.avg, 0, "%") }}
         {{ plain_row("Readings", stats_today.count, 0, "", True) }}
         {% endif %}
+        {#- Is today unusual? Against the same hours of the last month, so the
+            answer is about the weather rather than about the time of day. -#}
+        {% if today_anomaly %}
+        <div class="stat-row">
+            <span class="stat-label">{{ t('vs the last {days} days', days=today_anomaly.days) }}</span>
+            <span class="stat-spacer"></span>
+            <span class="stat-val {% if today_anomaly.delta > 0 %}hi{% elif today_anomaly.delta < 0 %}lo{% endif %}">{{ num(today_anomaly.delta, 1, sign=True) }}°C</span>
+            <span class="stat-time">{{ t('warmer than {n} of {days}', n=today_anomaly.warmer_than, days=today_anomaly.days) }}</span>
+        </div>
+        {% endif %}
     </div>
     {% endif %}
 
@@ -619,6 +629,14 @@
 {#- Every year's twelve months, for the chart to switch between without
     going back to the server. -#}
 <script id="climate-data" type="application/json">{{ climate.monthly_by_year | tojson }}</script>
+{#- The whole archive's range for each month, drawn behind the year on show
+    so a mild month can be seen to be mild. Embedded only with more than one
+    year in the archive: with one, the band *is* the line, and a band that
+    traces the line exactly reads as a drawing bug rather than as a year that
+    happens to be the only one. -#}
+{% if climate.years | length > 1 %}
+<script id="climate-norm" type="application/json">{{ climate.monthly_all | tojson }}</script>
+{% endif %}
 {% endif %}
 
 <!-- ── Calendar ───────────────────────────────────────────────────────── -->
