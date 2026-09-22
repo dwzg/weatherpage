@@ -578,7 +578,10 @@ header .subtitle { color: var(--text-secondary); font-size: 0.9rem; margin-top: 
    side against a 3px half-gap. It was 8%, which is 4.7px a side: enough to
    put a hovered day on top of both its neighbours. */
 .heatmap-cell:hover { transform: scale(1.04); z-index: 1; }
-.heatmap-cell .cell-day { font-size: 0.68rem; opacity: 0.8; }
+/* No opacity: it used to fade the day number to 80% over a background
+   already too close in luminance, costing contrast that heatmap.js now
+   works to provide. The size difference carries the hierarchy. */
+.heatmap-cell .cell-day { font-size: 0.68rem; }
 .heatmap-cell .cell-temp { font-size: 0.8rem; font-weight: 600; }
 .heatmap-cell.heatmap-empty { background: transparent; }
 .heatmap-cell.heatmap-empty:hover { transform: none; }
@@ -661,7 +664,7 @@ footer { text-align: center; padding: 16px; color: var(--text-secondary); font-s
 
 @media (max-width: 480px) {
     .heatmap-cell .cell-temp { display: none; }
-    .heatmap-cell .cell-day { font-size: 0.72rem; opacity: 1; }
+    .heatmap-cell .cell-day { font-size: 0.72rem; }
 }
 
 @media (prefers-reduced-motion: reduce) {

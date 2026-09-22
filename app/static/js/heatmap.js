@@ -11,17 +11,25 @@ import { createPager } from './pager.js';
 const SCALE_MIN = -10;
 const SCALE_MAX = 45;
 
+/* Three of these lightnesses are one to five points off the value they were
+   designed at, and the reason is arithmetic rather than taste. No ink reaches
+   4.5:1 against a background whose relative luminance falls between 0.183 and
+   0.209 — above that white fails, below it black does — and this ramp crossed
+   that window twice, around 0 °C and around 32 °C. The nudges step the two
+   offending bands around it; the hues, which are what actually carry
+   temperature here, are untouched. See cellInk() below. */
 const BANDS = [
-    { upTo:  0, hue: [240, 220], sat: 65, light: 55 },  // freezing
-    { upTo: 10, hue: [220, 170], sat: 60, light: 55 },  // cold
+    { upTo:  0, hue: [240, 220], sat: 65, light: 54 },  // freezing  (was 55)
+    { upTo: 10, hue: [220, 170], sat: 60, light: 58 },  // cold      (was 55)
     { upTo: 18, hue: [170, 100], sat: 55, light: 55 },  // cool
     { upTo: 25, hue: [100,  45], sat: 60, light: 53 },  // warm
     { upTo: 30, hue: [45,   20], sat: 70, light: 50 },  // hot
-    { upTo: 35, hue: [20,    5], sat: 75, light: 48 },  // very hot
+    { upTo: 35, hue: [20,    5], sat: 75, light: 43 },  // very hot  (was 48)
     { upTo: SCALE_MAX, hue: [5, 0], sat: 80, light: 44 }, // extreme
 ];
 
-export function tempToColor(temp) {
+/** Where a temperature sits on the scale, as HSL components. */
+function tempToHsl(temp) {
     const clamped = Math.max(SCALE_MIN, Math.min(SCALE_MAX, temp));
     let low = SCALE_MIN;
     for (const band of BANDS) {
@@ -29,11 +37,78 @@ export function tempToColor(temp) {
             const span = band.upTo - low || 1;
             const ratio = Math.min((clamped - low) / span, 1);
             const hue = band.hue[0] + (band.hue[1] - band.hue[0]) * ratio;
-            return `hsl(${Math.round(hue)},${band.sat}%,${band.light}%)`;
+            return { h: Math.round(hue), s: band.sat, l: band.light };
         }
         low = band.upTo;
     }
-    return `hsl(0,80%,44%)`;
+    return { h: 0, s: 80, l: 44 };
+}
+
+export function tempToColor(temp) {
+    const { h, s, l } = tempToHsl(temp);
+    return `hsl(${h},${s}%,${l}%)`;
+}
+
+/* ── Legible text on a scale that ignores the theme ──────────────────────
+ *
+ * The cell colours mean a temperature, so they are the same in light mode
+ * and dark. The day number on top of them was not: it came from
+ * --cell-text, which flips with the theme, so dark mode painted white at
+ * 70% over lime green. Measured across the scale, nothing reached AA in
+ * either mode, and dark mode was worst exactly where the calendar is
+ * greenest:
+ *
+ *     cell     light (black@.6)   dark (white@.7)
+ *     -10 °C       2.24               4.29
+ *       5 °C       4.05               1.95
+ *      20 °C       4.63               1.55
+ *      45 °C       2.62               3.39
+ *
+ * A single flat ink cannot fix it either — solid black is 12:1 at 22 °C and
+ * 3.7:1 at both ends. The colour has to come from the cell, which is the one
+ * thing that knows how light it is.
+ */
+const INK_DARK = '#10151c';
+const INK_LIGHT = '#ffffff';
+
+/** sRGB channel to its linear value, per WCAG. */
+const linearise = (channel) =>
+    channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+
+function hslLuminance({ h, s, l }) {
+    const sat = s / 100;
+    const light = l / 100;
+    const c = (1 - Math.abs(2 * light - 1)) * sat;
+    const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+    const m = light - c / 2;
+    const [r, g, b] = (
+        h < 60 ? [c, x, 0] : h < 120 ? [x, c, 0] : h < 180 ? [0, c, x]
+            : h < 240 ? [0, x, c] : h < 300 ? [x, 0, c] : [c, 0, x]
+    ).map((v) => linearise(v + m));
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+const contrast = (a, b) =>
+    (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+
+const INK_LUMINANCE = {
+    [INK_DARK]: hslLuminance({ h: 213, s: 28, l: 9 }),
+    [INK_LIGHT]: 1,
+};
+
+/**
+ * The ink for a cell, chosen from that cell's own colour.
+ *
+ * Whichever of the two inks contrasts better with the background it is going
+ * on, which clears AA across the whole scale and is the same answer in both
+ * themes — as it should be, since the cell is.
+ */
+export function cellInk(temp) {
+    const background = hslLuminance(tempToHsl(temp));
+    return contrast(background, INK_LUMINANCE[INK_DARK])
+        >= contrast(background, INK_LUMINANCE[INK_LIGHT])
+        ? INK_DARK
+        : INK_LIGHT;
 }
 
 function legendGradient(steps = 40) {
@@ -88,6 +163,8 @@ function renderMonthPanel(year, month, dayMap, todayKey) {
 
         if (info) {
             cell.style.backgroundColor = tempToColor(info.temp_avg);
+            // Chosen from this cell's own colour, not from the theme.
+            cell.style.color = cellInk(info.temp_avg);
             const parts = [
                 `${t('Min')}: ${formatNumber(info.temp_min, 1)}°C`,
                 `${t('Max')}: ${formatNumber(info.temp_max, 1)}°C`,
