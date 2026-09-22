@@ -114,6 +114,49 @@ async def build_status() -> dict | None:
     }
 
 
+async def record_prediction(timestamp: str, utc_offset: int) -> bool:
+    """Log what the page is showing, so it can be scored later. True if logged.
+
+    Called after a reading is stored, and it logs by going back through
+    :func:`build_status` rather than recomputing anything: what gets written
+    is then, by construction, exactly what ``/status`` serves and the page
+    renders. A second code path here would eventually disagree with the
+    first, and the whole point of the log is that it is a faithful record.
+
+    Two things it declines to log:
+
+    * anything but the top of the hour, because the observations these will
+      be scored against are hourly — a row every five minutes would be
+      twelve times the rows and not one extra scoreable hour;
+    * a reading that is not the newest, which means a backfill filling an
+      outage. ``build_status`` describes *now*, so attaching it to a
+      historical timestamp would file today's prediction under last week.
+    """
+    if not timestamp.endswith(database.PREDICTION_LOG_SUFFIX):
+        return False
+
+    status = await build_status()
+    if status is None or status["current"]["timestamp"] != timestamp:
+        return False
+
+    nowcast, sky = status["nowcast"], status["sky"]
+    forecast = status["forecast"]
+    # A young database has no model output yet but the ladder still speaks,
+    # so the rules start being scored before the model can be.
+    if nowcast is None and forecast in (None, weather.NO_DATA):
+        return False
+
+    await database.insert_prediction(
+        timestamp=timestamp,
+        utc_offset=utc_offset,
+        rain_probability=nowcast["probability"] if nowcast else None,
+        sky_probability=sky["probability"] if sky else None,
+        forecast=forecast,
+        model_trained_at=nowcast.get("trained_at") if nowcast else None,
+    )
+    return True
+
+
 def age_seconds(timestamp: str, reference: datetime | None = None) -> int | None:
     """How old the newest reading is, in seconds, or ``None`` if unparseable.
 

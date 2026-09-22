@@ -50,6 +50,25 @@ class TestSnapshot:
             con.close()
         assert days == 1
 
+    async def test_the_prediction_log_comes_with_it(self, db):
+        """It is the one table that cannot be rebuilt from the readings —
+        a replay would attribute every hour to today's model — so a backup
+        that dropped it would quietly lose the only record of what the page
+        actually said."""
+        await seed(db)
+        await db.insert_prediction(
+            "2026-06-20 12:00:00", 120, 0.42, None, "Rain possible", "2026-06-01"
+        )
+        written = await backup.take_snapshot("2026-06-20")
+        con = sqlite3.connect(written)
+        try:
+            rows = con.execute(
+                "SELECT timestamp, rain_probability, forecast FROM prediction_log"
+            ).fetchall()
+        finally:
+            con.close()
+        assert rows == [("2026-06-20 12:00:00", 0.42, "Rain possible")]
+
     async def test_it_does_not_overwrite_todays(self, db):
         """VACUUM INTO refuses an existing file, which is the behaviour we
         want: a restart should not rewrite a copy it already has."""

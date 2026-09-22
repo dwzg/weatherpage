@@ -48,6 +48,19 @@ async def post_reading(reading: ReadingIn) -> ReadingAccepted:
         timestamp=reading.timestamp,
         utc_offset=reading.utc_offset,
     )
+
+    # Record what the page now says, for later scoring against what the
+    # weather actually did. Never at the expense of the reading: the reading
+    # is the irreplaceable thing and is already committed above, so a failure
+    # to log is a warning, not a 500 handed back to the relay — which would
+    # make Home Assistant retry a reading that was in fact stored.
+    try:
+        if reading.utc_offset is not None:
+            await services.record_prediction(reading.timestamp, reading.utc_offset)
+    except Exception:
+        log.warning("could not log the prediction for %s", reading.timestamp,
+                    exc_info=True)
+
     return ReadingAccepted(timestamp=reading.timestamp)
 
 
@@ -143,6 +156,51 @@ async def export(
     last = readings[-1] if len(readings) == limit else None
     return {
         "readings": readings,
+        "next": (
+            {"after": last["timestamp"], "after_offset": last["utc_offset"]}
+            if last
+            else None
+        ),
+    }
+
+
+@router.get("/predictions", dependencies=[Depends(require_api_key)])
+async def predictions(
+    after: str | None = Query(None, description="exclusive cursor timestamp"),
+    after_offset: int | None = Query(None, description="that cursor's utc_offset"),
+    limit: int = Query(
+        database.EXPORT_PAGE_SIZE, ge=1, le=database.EXPORT_MAX_PAGE_SIZE
+    ),
+) -> dict:
+    """What the page said, hour by hour, for the retraining job to score.
+
+    Paged exactly like ``/export`` and behind the same key, for the same
+    reasons: the cursor is a ``(timestamp, utc_offset)`` pair because a
+    timestamp is not unique across the repeated autumn hour, and an
+    unbounded archive is a large response.
+
+    Carries no observations. Those belong to Open-Meteo, and the trainer
+    already fetches them for its labels — storing a second copy here would
+    be a cache of somebody else's data that could silently go stale.
+    """
+    if (after is None) != (after_offset is None):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="'after' and 'after_offset' must be given together",
+        )
+    try:
+        logged = await database.export_predictions(
+            after=(after, after_offset) if after is not None else None,
+            limit=limit,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
+
+    last = logged[-1] if len(logged) == limit else None
+    return {
+        "predictions": logged,
         "next": (
             {"after": last["timestamp"], "after_offset": last["utc_offset"]}
             if last

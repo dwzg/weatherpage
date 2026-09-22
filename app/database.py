@@ -231,6 +231,43 @@ _ORDER_INDEX = (
 )
 
 
+# ── The prediction log ─────────────────────────────────────────────────────
+#
+# What the page actually said, hour by hour, so it can be held against what
+# the weather actually did. Everything else about the models is scored at fit
+# time, walk-forward, against a held-out past — which says the method works,
+# not that the thing currently deployed has been right.
+#
+# This cannot be reconstructed after the fact, which is the whole reason for
+# the table. The features are a pure function of the readings, so a replay
+# could recompute them — but it would attribute every past hour to *today's*
+# model, and the model is refitted weekly. A backfill changes the inputs a
+# replay would see, too. Only a row written at the time records what was on
+# the page at the time.
+#
+# ``(timestamp, utc_offset)`` is the key for the same reason it is on the
+# readings: one repeated autumn hour holds two different hours of weather,
+# and the rest of the codebase already treats that pair as the identity of a
+# moment.
+_PREDICTION_SCHEMA = """
+CREATE TABLE IF NOT EXISTS prediction_log (
+    timestamp TEXT NOT NULL,
+    utc_offset INTEGER NOT NULL,
+    rain_probability REAL,
+    sky_probability REAL,
+    forecast TEXT,
+    model_trained_at TEXT,
+    logged_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (timestamp, utc_offset)
+);
+"""
+
+#: Predictions are logged on the hour, because the observations they will be
+#: scored against are hourly. A row per reading would be twelve times the
+#: rows and not one extra scoreable hour.
+PREDICTION_LOG_SUFFIX = ":00:00"
+
+
 # ── The daily rollup ───────────────────────────────────────────────────────
 #
 # Every aggregate that spans the whole archive used to scan every reading.
@@ -476,6 +513,7 @@ async def _migrate(db: aiosqlite.Connection) -> None:
     """
     await db.executescript(_SCHEMA)
     await db.executescript(_ROLLUP_SCHEMA)
+    await db.executescript(_PREDICTION_SCHEMA)
     await _add_utc_offset(db)
 
     # Only now can this be built: it names utc_offset, which the step above
@@ -551,6 +589,68 @@ async def insert_reading(
         await db.commit()
     invalidate_cache()
     return cursor.lastrowid
+
+
+async def insert_prediction(
+    timestamp: str,
+    utc_offset: int,
+    rain_probability: float | None,
+    sky_probability: float | None,
+    forecast: str | None,
+    model_trained_at: str | None,
+) -> None:
+    """Record what the page was showing at ``timestamp``.
+
+    Upserts, so re-posting an hour's reading corrects its prediction rather
+    than leaving the first attempt behind — the same contract ingestion has.
+
+    Deliberately does **not** touch the daily rollup or the cache. Those
+    summarise the readings, and nothing here changes a reading; the rule that
+    every write path must refresh the rollup is about ``weather_readings``.
+    """
+    async with _write_lock, acquire() as db:
+        await db.execute(
+            """
+            INSERT INTO prediction_log
+                (timestamp, utc_offset, rain_probability, sky_probability,
+                 forecast, model_trained_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(timestamp, utc_offset) DO UPDATE SET
+                rain_probability = excluded.rain_probability,
+                sky_probability  = excluded.sky_probability,
+                forecast         = excluded.forecast,
+                model_trained_at = excluded.model_trained_at,
+                logged_at        = excluded.logged_at
+            """,
+            (clock.normalise_ts(timestamp), int(utc_offset), rain_probability,
+             sky_probability, forecast, model_trained_at),
+        )
+        await db.commit()
+
+
+async def export_predictions(
+    after: tuple[str, int] | None = None,
+    limit: int = EXPORT_PAGE_SIZE,
+) -> list[dict]:
+    """Logged predictions, oldest first, paged like the readings export."""
+    where, params = ["1 = 1"], []
+    if after is not None:
+        timestamp, offset = clock.normalise_ts(after[0]), int(after[1])
+        where.append("(timestamp > ? OR (timestamp = ? AND utc_offset < ?))")
+        params += [timestamp, timestamp, offset]
+
+    return await _fetch_all(
+        "SELECT timestamp, utc_offset, rain_probability, sky_probability, "
+        "forecast, model_trained_at FROM prediction_log "
+        f"WHERE {' AND '.join(where)} {ORDER_OLDEST_FIRST} LIMIT ?",
+        (*params, limit),
+    )
+
+
+async def count_predictions() -> int:
+    """How many hours have been logged. Used to decide whether to score."""
+    row = await _fetch_one("SELECT COUNT(*) AS n FROM prediction_log")
+    return int(row["n"]) if row else 0
 
 
 async def export_readings(
