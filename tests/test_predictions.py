@@ -8,6 +8,7 @@ is why this cannot be reconstructed afterwards and why the table exists.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import re
 from datetime import timedelta
@@ -146,16 +147,12 @@ class TestTheLogIsNotReconstructable:
     async def test_each_row_records_which_model_produced_it(self, client, monkeypatch):
         """Without this column the log would be a series of numbers from an
         unknown sequence of models, and a replay could have produced it."""
-        from app import nowcast
-
         model = services.NOWCAST_MODEL
         if model is None:
             pytest.skip("no model shipped in this checkout")
 
-        stamped = nowcast.Model(
-            features=model.features, mean=model.mean, scale=model.scale,
-            coef=model.coef, intercept=model.intercept, threshold=model.threshold,
-            metadata={**model.metadata, "trained_at": "2026-01-02"},
+        stamped = dataclasses.replace(
+            model, metadata={**model.metadata, "trained_at": "2026-01-02"}
         )
         monkeypatch.setattr(services, "NOWCAST_MODEL", stamped)
 

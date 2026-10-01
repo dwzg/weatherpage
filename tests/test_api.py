@@ -824,6 +824,43 @@ class TestTrainerReadsTheRawArchive:
         assert "API_KEY: ${{ secrets.API_KEY }}" in workflow
 
 
+class TestStationsStayAnonymous:
+    """The training stations are the ones nearest the balcony.
+
+    Their names, ids and distances would put the location the coordinate
+    secrets protect into a public Actions log or a committed model file. So
+    nothing the trainer prints or writes may be built from them.
+    """
+
+    ROOT = Path(__file__).resolve().parent.parent
+    SOURCES = (ROOT / "ml" / "train.py", ROOT / "ml" / "dwd.py")
+    IDENTIFYING = frozenset({"id", "latitude", "longitude", "km_from"})
+
+    def prints(self, tree):
+        """Every print() call in a module."""
+        import ast
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) \
+                    and node.func.id == "print":
+                yield node
+
+    @pytest.mark.parametrize("source", SOURCES, ids=lambda p: p.name)
+    def test_nothing_printed_names_a_station(self, source):
+        import ast
+
+        for call in self.prints(ast.parse(source.read_text())):
+            for node in ast.walk(call):
+                if isinstance(node, ast.Attribute) and node.attr in self.IDENTIFYING:
+                    raise AssertionError(
+                        f"{source.name}:{call.lineno} prints a station's {node.attr}"
+                    )
+
+    def test_the_model_metadata_carries_a_count_not_a_list(self):
+        source = (self.ROOT / "ml" / "train.py").read_text()
+        assert '"stations": used' in source
+
+
 class TestTrainerAndAppAgree:
     """Constants the trainer bakes into labels and the app prints to readers.
 

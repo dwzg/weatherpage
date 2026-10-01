@@ -77,12 +77,12 @@ GERMAN: dict[str, str] = {
     "possible": "möglich",
     "unlikely": "unwahrscheinlich",
     "not expected": "nicht zu erwarten",
-    "Rain nearby": "Regen in der Nähe",
+    "Rain here": "Regen hier",
     "in {hours} h": "in {hours} Std.",
     # Suffix on each card's trend arrow: "+1.2 °C /3h".
     "/{hours}h": "/{hours} Std.",
-    "Learned from this station's own history":
-        "Aus der eigenen Messreihe dieser Station gelernt",
+    "Learned from years of weather-service observations":
+        "Aus jahrelangen Beobachtungen des Wetterdienstes gelernt",
 
     # ── Alert banners ──────────────────────────────────────────────────────
     "❄️ Frost warning — protect your plants!":
@@ -100,24 +100,33 @@ GERMAN: dict[str, str] = {
     "☀️ The outlook": "☀️ Die Aussicht",
     "Thresholds on two numbers: where the pressure sits in this station's own "
     "last 30 days, and the humidity. It ignores which way the barometer is "
-    "moving — measured against real rainfall here, that carries no signal.":
+    "moving: as a threshold on its own, that scored worse than nothing here.":
         "Schwellenwerte auf zwei Zahlen: wo der Luftdruck innerhalb der letzten "
         "30 Tage dieser Station liegt, und die Luftfeuchtigkeit. In welche "
-        "Richtung sich das Barometer bewegt, bleibt unberücksichtigt — am "
-        "tatsächlichen Niederschlag hier gemessen trägt das keine Information.",
+        "Richtung sich das Barometer bewegt, bleibt unberücksichtigt: als "
+        "Schwellenwert für sich allein schnitt das hier schlechter ab als gar "
+        "nichts.",
     "🤖 The rain chance": "🤖 Die Regenwahrscheinlichkeit",
-    "A model fitted to this station's readings against observed rainfall and "
-    "retrained weekly. Ten measurements in, one number out: the chance of "
-    "{mm} mm of rain within {hours} hours":
-        "Ein Modell, das auf die Messwerte dieser Station gegen beobachteten "
-        "Niederschlag angepasst und wöchentlich neu trainiert wird. Zehn "
-        "Messwerte hinein, eine Zahl heraus: die Wahrscheinlichkeit für "
-        "{mm} mm Regen innerhalb von {hours} Stunden",
-    "in the surrounding area": "in der Umgebung",
-    "— not on this balcony. Whether a shower crosses here or the next valley "
-    "is not something a barometer knows.":
-        "— nicht auf diesem Balkon. Ob ein Schauer hier oder im nächsten Tal "
-        "niedergeht, weiß ein Barometer nicht.",
+    "A model trained on years of ten-minute readings from the German weather "
+    "service's own stations — the same three things this balcony measures, "
+    "each checked against the rain gauge standing beside it. It is retrained "
+    "weekly, and a new fit only replaces it after passing a test on this "
+    "balcony's own record. One number out: the chance of at least {mm} mm of "
+    "rain":
+        "Ein Modell, trainiert auf jahrelangen Zehn-Minuten-Messwerten der "
+        "Stationen des Deutschen Wetterdienstes — dieselben drei Größen, die "
+        "dieser Balkon misst, jeweils geprüft am Regenmesser, der daneben "
+        "steht. Es wird wöchentlich neu trainiert, und eine neue Anpassung "
+        "ersetzt es erst, nachdem sie an den eigenen Messwerten dieses "
+        "Balkons eine Prüfung bestanden hat. Heraus kommt eine Zahl: die "
+        "Wahrscheinlichkeit für mindestens {mm} mm Regen",
+    "here, within {hours} hours": "hier, innerhalb von {hours} Stunden",
+    "What it reads best is rain that has already begun: a wet sensor, a "
+    "sudden chill, a jump in the barometer. A shower still on its way is "
+    "beyond any balcony.":
+        "Am besten erkennt es Regen, der schon eingesetzt hat: einen nassen "
+        "Sensor, eine plötzliche Abkühlung, einen Sprung im Barometer. Ein "
+        "Schauer, der noch unterwegs ist, bleibt jedem Balkon verborgen.",
     "Why both": "Warum beides",
     "The phrase is a category; the percentage is a calibrated probability, and "
     "they can disagree. Neither sees wind, radar or anything upstream of the "
@@ -246,11 +255,11 @@ GERMAN: dict[str, str] = {
     "Evidence": "Grundlage",
     "Tested in order, and the first rung that matches wins. Four of these "
     "rungs read a fitted probability — one model for rain, one for cloud, "
-    "both from the same ten measurements. Two of them do not, and cannot: "
-    "see below.":
+    "both from the same measurements. Two of them do not, and cannot: see "
+    "below.":
         "Der Reihe nach geprüft; die erste zutreffende Sprosse gewinnt. Vier "
         "dieser Sprossen lesen eine angepasste Wahrscheinlichkeit — ein "
-        "Modell für Regen, eines für Bewölkung, beide aus denselben zehn "
+        "Modell für Regen, eines für Bewölkung, beide aus denselben "
         "Messwerten. Zwei tun das nicht, und können es nicht: siehe unten.",
     "Why two of them are still hand-made: no label source scores either. Over "
     "two years of the reanalysis at this location there are zero fog codes "
@@ -299,8 +308,9 @@ GERMAN: dict[str, str] = {
     "another. Ranking the reading against the station's own last {days} days "
     "is stable across all of them, which is why the column above is a "
     "percentile. The tendency is still measured and shown on the pressure "
-    "card, because it is a fact about the last six hours — it is just not "
-    "evidence about the next six.":
+    "card, and the rain model reads it too — not as a rule, but as one "
+    "signal among the others, where it does earn its place (see what each "
+    "signal is worth, below).":
         "Wo der Luftdruck steht, trägt sehr wohl Information, aber keine "
         "feste hPa-Schwelle übersteht den Jahreszeitenwechsel: Ein schlichtes "
         "„unter 1020 hPa“ erreichte in einem Monat der Stichprobe einen "
@@ -308,9 +318,9 @@ GERMAN: dict[str, str] = {
         "Messwert gegen die eigenen letzten {days} Tage der Station zu "
         "sortieren, ist über alle hinweg stabil — deshalb steht oben ein "
         "Perzentil. Die Tendenz wird weiterhin gemessen und auf der "
-        "Luftdruck-Kachel gezeigt, denn sie ist eine Tatsache über die "
-        "vergangenen sechs Stunden — nur eben kein Beleg für die nächsten "
-        "sechs.",
+        "Luftdruck-Kachel gezeigt, und auch das Regenmodell liest sie — "
+        "nicht als Regel, sondern als eine Größe unter den anderen, wo sie "
+        "sich durchaus bewährt (siehe unten, was jede Größe wert ist).",
     "Taken as a yes/no rain forecast the ladder scores CSI {csi} and KSS "
     "{kss}, against {old} for what it replaced.":
         "Als Ja/Nein-Regenvorhersage gelesen erreicht die Leiter CSI {csi} "
@@ -319,23 +329,42 @@ GERMAN: dict[str, str] = {
     # The model, in full
     "🤖 The rain chance: a fitted model":
         "🤖 Die Regenwahrscheinlichkeit: ein angepasstes Modell",
-    "A logistic regression over {n} features. Each is standardised against "
-    "its training mean, multiplied by a weight, and added up; a sigmoid turns "
-    "that sum into a probability. Serving it is a dot product and a sigmoid, "
-    "so the container carries no numpy and no scikit-learn — the training job "
-    "in CI does, and all it ships back is a small JSON file of names, means, "
-    "scales and weights.":
-        "Eine logistische Regression über {n} Merkmale. Jedes wird gegen "
-        "seinen Trainingsmittelwert standardisiert, mit einem Gewicht "
-        "multipliziert und aufaddiert; eine Sigmoidfunktion macht aus dieser "
-        "Summe eine Wahrscheinlichkeit. Das Auswerten ist ein Skalarprodukt "
-        "und eine Sigmoidfunktion, der Container trägt also weder numpy noch "
-        "scikit-learn — das tut der Trainingslauf in der CI, und zurück kommt "
-        "nur eine kleine JSON-Datei mit Namen, Mittelwerten, Skalen und "
-        "Gewichten.",
+    "Gradient-boosted trees: {trees} small decision trees, each splitting the "
+    "hour on one signal at a time, whose outputs add up to log-odds that a "
+    "sigmoid turns into a probability. Trees rather than a weighted sum, "
+    "because these signals matter in combination — a sharp chill at "
+    "saturation means rain under any barometer, and a sum can only add the "
+    "two. Serving it is a walk down each tree, so the container carries no "
+    "numpy and no scikit-learn; the training job in CI does, and it ships the "
+    "trees back as plain arrays in JSON.":
+        "Gradient-Boosting-Bäume: {trees} kleine Entscheidungsbäume, von "
+        "denen jeder die Stunde Schritt für Schritt an jeweils einer Größe "
+        "aufteilt; ihre Ausgaben summieren sich zu Log-Odds, die eine "
+        "Sigmoidfunktion in eine Wahrscheinlichkeit verwandelt. Bäume statt "
+        "einer gewichteten Summe, weil diese Größen im Zusammenspiel zählen — "
+        "eine scharfe Abkühlung bei Sättigung bedeutet Regen, was auch immer "
+        "das Barometer sagt, und eine Summe kann beides nur addieren. Das "
+        "Auswerten ist ein Gang durch jeden Baum, der Container trägt also "
+        "weder numpy noch scikit-learn; das tut der Trainingslauf in der CI, "
+        "und zurück kommen die Bäume als schlichte Arrays in JSON.",
+    "It was not fitted to this balcony. One summer of readings is all the "
+    "archive holds, and a model that has only seen July learns that cool air "
+    "means dry air — the model this replaced did, and with rain on the "
+    "sensor in October it said 11%. So it learns from the weather service's "
+    "stations, every season of many years, and this balcony is where every "
+    "retrain has to prove itself.":
+        "Angepasst wurde es nicht an diesen Balkon. Das Archiv umfasst einen "
+        "einzigen Sommer, und ein Modell, das nur den Juli kennt, lernt, dass "
+        "kühle Luft trockene Luft ist — das Vorgängermodell tat genau das und "
+        "sagte im Oktober bei Regen auf dem Sensor 11 %. Deshalb lernt es von "
+        "den Stationen des Wetterdienstes, aus jeder Jahreszeit vieler Jahre, "
+        "und an diesem Balkon muss sich jedes neue Training bewähren.",
     "Question": "Frage",
-    "{mm} mm of rain within {hours} hours, in the area":
-        "{mm} mm Regen innerhalb von {hours} Stunden, in der Umgebung",
+    "At least {mm} mm of rain within {hours} hours, here":
+        "Mindestens {mm} mm Regen innerhalb von {hours} Stunden, hier",
+    "Learned from": "Gelernt von",
+    "{n} weather-service stations": "{n} Stationen des Wetterdienstes",
+    "{from_date} to {to_date}": "{from_date} bis {to_date}",
     "Fitted": "Angepasst",
     "data through {date}": "Daten bis {date}",
     "Sample": "Stichprobe",
@@ -356,15 +385,51 @@ GERMAN: dict[str, str] = {
     "This model": "Dieses Modell",
     "The ladder above": "Die Leiter oben",
     "Always saying {pct}%": "Immer {pct} % sagen",
+    "On the most recent year at those stations, {from_date} to {to_date}: "
+    "{hours} hours that the fit being scored never saw, every season once.":
+        "Auf dem jüngsten Jahr an diesen Stationen, {from_date} bis "
+        "{to_date}: {hours} Stunden, die die bewertete Anpassung nie gesehen "
+        "hat, jede Jahreszeit einmal.",
+    "Its skill over the base rate, season by season: winter {winter}, spring "
+    "{spring}, summer {summer}, autumn {autumn}. A model fitted to one summer "
+    "has no business in any of the other three — this one has seen each of "
+    "them many times.":
+        "Seine Güte gegenüber der Grundrate, Jahreszeit für Jahreszeit: "
+        "Winter {winter}, Frühling {spring}, Sommer {summer}, Herbst "
+        "{autumn}. Ein Modell, das an einen einzigen Sommer angepasst ist, "
+        "hat in den anderen dreien nichts verloren — dieses hat jede davon "
+        "viele Male gesehen.",
+    "On this balcony's own readings, {from_date} to {to_date} — {hours} "
+    "hours, {wet}% of them followed by rain at the nearest weather-service "
+    "gauge — it scored Brier {brier}, a skill of {bss}, AUC {auc}, where the "
+    "ladder ranked the same hours at AUC {rules}. That is the test a "
+    "weather-service screen cannot pass on this sensor's behalf.":
+        "Auf den eigenen Messwerten dieses Balkons, {from_date} bis "
+        "{to_date} — {hours} Stunden, auf {wet} % davon folgte Regen am "
+        "nächstgelegenen Regenmesser des Wetterdienstes — erreichte es "
+        "Brier {brier}, eine Güte von {bss} und AUC {auc}; die Leiter "
+        "sortierte dieselben Stunden mit AUC {rules}. Diese Prüfung kann "
+        "eine Wetterhütte des Wetterdienstes diesem Sensor nicht abnehmen.",
+    "A retrained model only ships if it clears the same gates on both tests: "
+    "skill over the base rate, ranking hours at least as well as the ladder, "
+    "and no sharp regression against the model already deployed. Refusing "
+    "to ship is a normal outcome.":
+        "Ein neu trainiertes Modell geht nur live, wenn es in beiden "
+        "Prüfungen dieselben Hürden nimmt: Güte gegenüber der Grundrate, "
+        "mindestens so gute Sortierung der Stunden wie die Leiter und kein "
+        "deutlicher Rückschritt gegenüber dem bereits ausgelieferten Modell. "
+        "Nicht auszuliefern ist ein normaler Ausgang.",
     # ── The live verification ──────────────────────────────────────────────
     "And has it been right?": "Und hatte es recht?",
     "Every hour, what the page was showing is written down. Once the weather "
-    "has happened those are scored against the same observations the model "
-    "was trained on. This is the deployed model's own record — not a fit to a "
-    "held-out past, but the thing you were actually shown.":
+    "has happened those are scored against the nearest weather-service rain "
+    "gauge — the same kind of observation the model learned from. This is "
+    "the deployed model's own record — not a fit to a held-out past, but the "
+    "thing you were actually shown.":
         "Stündlich wird festgehalten, was die Seite gerade anzeigte. Sobald "
-        "das Wetter eingetreten ist, wird das gegen dieselben Beobachtungen "
-        "bewertet, mit denen das Modell trainiert wurde. Das ist die "
+        "das Wetter eingetreten ist, wird das am nächstgelegenen Regenmesser "
+        "des Wetterdienstes bewertet — dieselbe Art Beobachtung, aus der das "
+        "Modell gelernt hat. Das ist die "
         "Bilanz des ausgelieferten Modells — keine Anpassung an eine "
         "zurückgehaltene Vergangenheit, sondern das, was tatsächlich zu "
         "sehen war.",
@@ -394,110 +459,89 @@ GERMAN: dict[str, str] = {
         "nachgerechnet: Ein Nachspielen des Archivs würde jede vergangene "
         "Stunde dem heute ausgelieferten Modell zuschreiben.",
 
-    "Scored walk-forward with weekly refits, never on hours it was fitted on. "
-    "A retrained model only ships if it clears all three gates: skill over "
-    "climatology, ranking at least as well as the ladder, and no sharp "
-    "regression against the model already deployed. Refusing to ship is a "
-    "normal outcome.":
-        "Vorwärtsrollend bewertet, mit wöchentlicher Neuanpassung, nie auf "
-        "Stunden, auf die es angepasst wurde. Ein neu trainiertes Modell geht "
-        "nur live, wenn es alle drei Hürden nimmt: Güte gegenüber der "
-        "Klimatologie, mindestens so gute Sortierung wie die Leiter und kein "
-        "deutlicher Rückschritt gegenüber dem bereits ausgelieferten Modell. "
-        "Nicht auszuliefern ist ein normaler Ausgang.",
-
-    "Why the percentage means rain in the area":
-        "Warum der Prozentwert Regen in der Umgebung meint",
-    'The labels it learned from are a {km} km reanalysis — "did it rain '
-    'around here", not "did it rain on this balcony". That is deliberate, and '
-    'it was measured: trained and judged on a 2 km series instead, the same '
-    'features manage AUC {auc} against {auc_good} on the reanalysis. Point '
-    'rain is a few percent of hours and turns on convective detail a '
-    'barometer cannot see; the synoptic question is the one these sensors can '
-    'answer.':
-        "Die Zielwerte, aus denen es gelernt hat, stammen aus einer "
-        "Reanalyse mit {km} km Auflösung — „hat es hier in der Gegend "
-        "geregnet“, nicht „hat es auf diesem Balkon geregnet“. Das ist "
-        "Absicht, und es wurde nachgemessen: Auf einer 2-km-Reihe trainiert "
-        "und bewertet schaffen dieselben Merkmale AUC {auc} gegenüber "
-        "{auc_good} auf der Reanalyse. Punktregen macht nur wenige Prozent "
-        "der Stunden aus und hängt an konvektiven Details, die ein Barometer "
-        "nicht sieht; die großräumige Frage ist die, die diese Sensoren "
-        "beantworten können.",
-    "Held against point rain at the station, the same model scores Brier "
-    "{brier} with a skill of {bss} — negative, because it is quoting area "
-    "odds at a question about one roof. That is the honest cost of the "
-    "choice, and it is why the pill says nearby.":
-        "Gegen den Punktregen an der Station gehalten erreicht dasselbe "
-        "Modell Brier {brier} bei einer Güte von {bss} — negativ, weil es auf "
-        "eine Frage nach einem einzelnen Dach mit Chancen für die Umgebung "
-        "antwortet. Das ist der ehrliche Preis dieser Entscheidung, und "
-        "deshalb steht auf der Plakette „in der Nähe“.",
-
     "What each signal is worth": "Was jede Größe wert ist",
-    "The same walk-forward, refitted from scratch without each signal in "
-    "turn. Positive means the model got worse without it — that is what "
-    "having evidence for a signal looks like. A row near zero is a signal "
-    "the model could lose without noticing, whatever weight it carries: over "
-    "a first summer \"warm\" and \"July\" are nearly the same column, and a "
-    "temperature coefficient fitted on that would be learning the calendar "
-    "rather than the sky.":
-        "Dieselbe Walk-forward-Prüfung, jeweils ohne eine Größe von Grund "
-        "auf neu gefittet. Positiv heißt: ohne sie wurde das Modell "
-        "schlechter — so sieht Evidenz für eine Größe aus. Eine Zeile nahe "
-        "null ist eine Größe, deren Verlust das Modell nicht bemerken "
-        "würde, welches Gewicht sie auch trägt: in einem ersten Sommer sind "
-        "„warm“ und „Juli“ fast dieselbe Spalte, und ein darauf gefitteter "
-        "Temperaturkoeffizient würde den Kalender lernen und nicht den "
-        "Himmel.",
+    "Why the percentage means rain here":
+        "Warum der Prozentwert Regen hier meint",
+    "The labels are rain gauges — each one standing beside the sensors the "
+    "model learned from — so the question is rain at a point like this "
+    "balcony, not somewhere in the district. They replaced labels from a "
+    "{km} km reanalysis, and that was measured rather than assumed: scored "
+    "on the same two years at eight stations, the same trees ranked wet "
+    "hours above dry ones as well against the gauges (AUC {auc_gauge}) as "
+    "against the reanalysis (AUC {auc_area}). Point rain had looked "
+    "unpredictable only because it was being asked of one summer and a "
+    "weighted sum.":
+        "Die Zielwerte sind Regenmesser — jeder steht neben den Sensoren, "
+        "von denen das Modell gelernt hat —, die Frage lautet also Regen an "
+        "einem Punkt wie diesem Balkon, nicht irgendwo im Landkreis. Sie "
+        "ersetzen Zielwerte aus einer Reanalyse mit {km} km Auflösung, und "
+        "das wurde nachgemessen statt angenommen: Auf denselben zwei Jahren "
+        "an acht Stationen bewertet, sortierten dieselben Bäume nasse "
+        "Stunden gegen die Regenmesser (AUC {auc_gauge}) genauso gut vor "
+        "trockene wie gegen die Reanalyse (AUC {auc_area}). Punktregen wirkte "
+        "nur deshalb unvorhersagbar, weil man ihn einem einzigen Sommer und "
+        "einer gewichteten Summe abverlangte.",
+    "The same fit and the same held-out year, refitted from scratch without "
+    "each signal in turn. Positive means the model got worse without it — "
+    "that is what having evidence for a signal looks like. A row near zero "
+    "is a signal the model could lose without noticing, usually because "
+    "another one already carries what it knows.":
+        "Dieselbe Anpassung und dasselbe zurückgehaltene Jahr, jeweils ohne "
+        "eine Größe von Grund auf neu gefittet. Positiv heißt: ohne sie "
+        "wurde das Modell schlechter — so sieht Evidenz für eine Größe aus. "
+        "Eine Zeile nahe null ist eine Größe, deren Verlust das Modell nicht "
+        "bemerken würde, meist weil eine andere bereits trägt, was sie "
+        "weiß.",
     "Without": "Ohne",
     "Cost of dropping it": "Kosten des Weglassens",
     "How much worse the Brier score gets without this signal.":
         "Um wie viel schlechter der Brier-Score ohne diese Größe wird.",
     "What is driving the number right now":
         "Was die Zahl gerade antreibt",
-    "Two different numbers, and the difference matters. The weight is the "
-    "fitted coefficient — what one standard deviation of this signal is "
-    "worth in log-odds, the same at every hour. The effect is that weight "
-    "times how unusual the reading is right now, so a big weight on a signal "
-    "sitting at its average moves nothing. The starting point plus all ten "
-    "effects is the number the sigmoid squashes, which makes this table the "
-    "prediction rather than a picture of it.":
-        "Zwei verschiedene Zahlen, und der Unterschied zählt. Das Gewicht "
-        "ist der gefittete Koeffizient — was eine Standardabweichung dieser "
-        "Größe in Log-Odds wert ist, zu jeder Stunde gleich. Der Effekt ist "
-        "dieses Gewicht mal der Ungewöhnlichkeit des aktuellen Messwerts; ein "
-        "großes Gewicht auf einer Größe, die genau im Mittel liegt, bewegt "
-        "also nichts. Der Ausgangswert plus alle zehn Effekte ergibt die "
-        "Zahl, die die Sigmoidfunktion zusammenstaucht — diese Tabelle ist "
-        "also die Vorhersage und nicht ein Bild davon.",
+    "Each tree walks one path from its root to a leaf, and every step down "
+    "it is a split on one signal that moves the tree's output up or down. "
+    "Credit each step to the signal that made it, add them up over every "
+    "tree, and you have the effects below: the starting point plus all of "
+    "them is exactly the number the sigmoid squashes, which makes this table "
+    "the prediction rather than a picture of it. There is no fixed weight to "
+    "print beside them — what a signal is worth depends on the others, which "
+    "is the reason for using trees.":
+        "Jeder Baum geht einen Pfad von der Wurzel bis zu einem Blatt, und "
+        "jeder Schritt darauf ist eine Teilung an einer Größe, die die "
+        "Ausgabe des Baums nach oben oder unten bewegt. Schreibt man jeden "
+        "Schritt der Größe zu, die ihn ausgelöst hat, und summiert über alle "
+        "Bäume, ergeben sich die Effekte unten: Der Ausgangswert plus alle "
+        "Effekte ist genau die Zahl, die die Sigmoidfunktion zusammenstaucht "
+        "— diese Tabelle ist also die Vorhersage und nicht ein Bild davon. "
+        "Ein festes Gewicht lässt sich daneben nicht angeben — was eine "
+        "Größe wert ist, hängt von den anderen ab, und genau deshalb sind es "
+        "Bäume.",
     "Signal": "Größe",
     "Now": "Jetzt",
-    "vs normal": "vs. normal",
-    "Standard deviations from the training mean.":
-        "Standardabweichungen vom Trainingsmittelwert.",
     "Effect now": "Effekt jetzt",
-    "Log-odds per standard deviation, as fitted. The same at every hour.":
-        "Log-Odds je Standardabweichung, wie gefittet. Zu jeder Stunde "
-        "gleich.",
-    "Weight times how unusual the reading is: the log-odds this signal is "
-    "adding right now.":
-        "Gewicht mal Ungewöhnlichkeit des Messwerts: die Log-Odds, die diese "
-        "Größe gerade beiträgt.",
-    "Weight": "Gewicht",
+    "The log-odds this signal moved the prediction by, right now.":
+        "Um so viele Log-Odds hat diese Größe die Vorhersage gerade bewegt.",
     "Starting point, before any signal": "Ausgangswert, vor allen Größen",
     "Total, squashed to a probability":
         "Summe, zur Wahrscheinlichkeit gestaucht",
 
     # Feature names (app/nowcast.py FEATURE_FORMATS)
+    "Peak humidity, 1 h": "Höchste Feuchte, 1 Std.",
+    "Peak humidity, 3 h": "Höchste Feuchte, 3 Std.",
+    "Time saturated, 3 h": "Zeit in Sättigung, 3 Std.",
+    "Dew-point spread": "Taupunktdifferenz",
+    "Temperature change, 1 h": "Temperaturänderung, 1 Std.",
+    "Temperature change, 3 h": "Temperaturänderung, 3 Std.",
+    "Temperature change, 24 h": "Temperaturänderung, 24 Std.",
+    "Dew-point change, 3 h": "Taupunktänderung, 3 Std.",
+    "Humidity change, 3 h": "Feuchteänderung, 3 Std.",
     "Pressure rank, 30 days": "Luftdruck-Rang, 30 Tage",
     "Pressure rank, 7 days": "Luftdruck-Rang, 7 Tage",
-    "Peak humidity, 6 h": "Höchste Feuchte, 6 Std.",
-    "Humidity change, 3 h": "Feuchteänderung, 3 Std.",
-    "Humidity change, 6 h": "Feuchteänderung, 6 Std.",
-    "Dew-point spread": "Taupunktdifferenz",
+    "Pressure change, 1 h": "Luftdruckänderung, 1 Std.",
+    "Pressure change, 3 h": "Luftdruckänderung, 3 Std.",
     "Pressure change, 6 h": "Luftdruckänderung, 6 Std.",
     "Pressure change, 12 h": "Luftdruckänderung, 12 Std.",
+    "Hour of the day": "Uhrzeit",
 
     # ── Current conditions ─────────────────────────────────────────────────
     "Temperature": "Temperatur",

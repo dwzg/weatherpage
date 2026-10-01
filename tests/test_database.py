@@ -204,11 +204,8 @@ class TestDailyPressureCycle:
 
     @pytest.fixture(autouse=True)
     def _pinned(self, monkeypatch, db):
-        """Pin the clock, and count a 15-minute day as complete."""
-        from app import database
-
+        """Pin the clock. A 15-minute day fills all 48 slots, so it is complete."""
         monkeypatch.setattr(clock, "now", lambda: self.NOW)
-        monkeypatch.setattr(database, "CYCLE_MIN_READINGS_PER_DAY", 90)
 
     def cycle_pressure(self, moment: datetime, base: float = 1013.0) -> float:
         """A pure daily cycle: peak at 11:00, trough at 23:00, no weather."""

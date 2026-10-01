@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timedelta
 
-from . import clock, database, nowcast, weather
+from . import clock, database, features, nowcast, weather
 from .config import STALE_AFTER_MINUTES
 
 #: How far back the sparklines and the trend arrows look.
@@ -33,12 +33,6 @@ SKY_MODEL = nowcast.load(nowcast.SKY_MODEL_PATH)
 #: which the poller refetches every minute for numbers that move.
 VERIFICATION = nowcast.load_verification()
 
-#: Windows the nowcast's features are measured over. They must match the
-#: ones ml/train.py replays, which it guarantees by calling this module.
-NOWCAST_PRESSURE_HOURS = (6, 12)
-NOWCAST_HUMIDITY_HOURS = (3, 6)
-NOWCAST_PEAK_HOURS = 6
-NOWCAST_SHORT_PERCENTILE_DAYS = 7
 TREND_HOURS = 3
 COMPARISON_HOURS = 24
 
@@ -54,7 +48,7 @@ async def build_status() -> dict | None:
     if not current:
         return None
 
-    pressure_trend, humidity_trend, temp_trend, yesterday, features = await asyncio.gather(
+    pressure_trend, humidity_trend, temp_trend, yesterday, vector = await asyncio.gather(
         database.get_pressure_trend(),
         database.get_recent_trend("humidity", TREND_HOURS),
         database.get_recent_trend("temperature", TREND_HOURS),
@@ -83,7 +77,7 @@ async def build_status() -> dict | None:
     smooth_t = temp_trend["current"] if temp_trend else temperature
     smooth_h = humidity_trend["current"] if humidity_trend else humidity
     smooth_dew = weather.compute_dew_point(smooth_t, smooth_h)
-    rain, sky = run_nowcast(features), run_sky(features)
+    rain, sky = run_nowcast(vector), run_sky(vector)
 
     # Gated on the rain model alone, because only the rain rungs need it.
     #
@@ -290,65 +284,37 @@ async def build_page_context() -> dict:
 
 
 
-async def nowcast_features() -> dict[str, float] | None:
+async def nowcast_features() -> dict[str, float | None] | None:
     """The nowcast's feature vector, or ``None`` if it cannot be built yet.
 
-    This is the only place the vector is assembled. ``ml/train.py`` replays
-    history through this same function with the clock pinned, so a feature
-    cannot come to mean one thing in training and another in the browser.
+    The arithmetic is :func:`app.features.compute`, and only that: this hands
+    it the last :data:`app.features.HISTORY_DAYS` of readings and the learned
+    pressure cycle. ``ml/train.py`` hands the same function years of the
+    weather service's observations, so a feature cannot come to mean one
+    thing in training and another in the browser.
 
-    Every input is a measurement the station makes itself. It returns
-    ``None`` whenever any of them is missing — which is the honest answer on
-    a young database, since the pressure ranks need weeks of history behind
-    them before they mean anything.
+    ``None`` on a young database — the pressure ranks need a week of history
+    before they mean anything — and when the newest reading is more than half
+    an hour old, because a nowcast of stale readings is a forecast for a
+    moment that has already passed.
     """
-    pressure_trend, pressure_trend_long, humidity_trend, humidity_trend_long, peak, temp_trend = (
-        await asyncio.gather(
-            database.get_pressure_trend(NOWCAST_PRESSURE_HOURS[0]),
-            database.get_pressure_trend(NOWCAST_PRESSURE_HOURS[1]),
-            database.get_recent_trend("humidity", NOWCAST_HUMIDITY_HOURS[0]),
-            database.get_recent_trend("humidity", NOWCAST_HUMIDITY_HOURS[1]),
-            database.get_extreme("humidity", NOWCAST_PEAK_HOURS),
-            database.get_recent_trend("temperature", TREND_HOURS),
-        )
+    series, cycle = await asyncio.gather(
+        database.get_recent_series(), database.get_pressure_cycle()
     )
-    if not (pressure_trend and humidity_trend and temp_trend):
-        return None
-
-    long_percentile, short_percentile = await asyncio.gather(
-        database.get_pressure_percentile(pressure_trend["current"]),
-        database.get_pressure_percentile(
-            pressure_trend["current"], NOWCAST_SHORT_PERCENTILE_DAYS
-        ),
-    )
-
-    smooth_t, smooth_h = temp_trend["current"], humidity_trend["current"]
-    values = {
-        "pct30": long_percentile,
-        "pct7": short_percentile,
-        "rh": smooth_h,
-        "rh_max6": peak,
-        "drh3": humidity_trend["delta"],
-        "drh6": humidity_trend_long["delta"] if humidity_trend_long else None,
-        "spread": smooth_t - weather.compute_dew_point(smooth_t, smooth_h),
-        "dp6": pressure_trend["delta"],
-        "dp12": pressure_trend_long["delta"] if pressure_trend_long else None,
-        "temp": smooth_t,
-    }
-    return None if any(v is None for v in values.values()) else values
+    return features.compute(series, clock.now().replace(tzinfo=None), cycle)
 
 
 def run_nowcast(
-    features: dict[str, float] | None, model: nowcast.Model | None = None
+    vector: dict[str, float | None] | None, model: nowcast.Model | None = None
 ) -> dict | None:
     """Turn a feature vector into the payload the dashboard renders."""
     model = model if model is not None else NOWCAST_MODEL
-    if model is None or features is None:
+    if model is None or vector is None:
         return None
-    if any(name not in features for name in model.features):
+    if any(name not in vector for name in model.features):
         return None
 
-    probability = model.predict(features)
+    probability = model.predict(vector)
     meta = model.metadata
     return {
         "probability": round(probability, 3),
@@ -362,24 +328,36 @@ def run_nowcast(
         # trainer already writes, passed through rather than restated here,
         # so a retrain updates the page without a code change.
         "samples": meta.get("samples"),
+        "trained_from": meta.get("trained_from"),
         "trained_through": meta.get("trained_through"),
         "base_rate": meta.get("base_rate"),
         "baselines": meta.get("baselines"),
-        "cross_check": meta.get("cross_check_2km"),
+        "trees": len(model.trees),
+        # How many weather-service stations it learned from — a count, never
+        # which ones: they are the nearest to the balcony, and naming them
+        # would say where it is.
+        "stations": meta.get("stations"),
+        # Skill season by season, over the held-out year, and on this
+        # balcony's own readings: the two tests a candidate must pass.
+        "seasons": meta.get("seasons"),
+        "holdout": meta.get("holdout"),
+        "archive": meta.get("archive"),
         # What each feature is worth out of sample, labelled the way the
         # breakdown labels them so the two tables name the same things.
         "ablations": [
             {**row, "label": nowcast.describe_feature(row.get("feature", "")).label}
             for row in (meta.get("ablations") or [])
         ] or None,
-        "intercept": round(model.intercept, 3),
-        "logit": round(model.logit(features), 3),
-        "contributions": nowcast_breakdown(model, features),
+        # The start of the breakdown: the log-odds before any signal has
+        # moved them, which every effect in the table is measured from.
+        "baseline": round(model.expected, 3),
+        "logit": round(model.logit(vector), 3),
+        "contributions": nowcast_breakdown(model, vector),
     }
 
 
 def run_sky(
-    features: dict[str, float] | None, model: nowcast.Model | None = None
+    vector: dict[str, float | None] | None, model: nowcast.Model | None = None
 ) -> dict | None:
     """Turn a feature vector into the sky half of the outlook.
 
@@ -390,12 +368,12 @@ def run_sky(
     nothing more.
     """
     model = model if model is not None else SKY_MODEL
-    if model is None or features is None:
+    if model is None or vector is None:
         return None
-    if any(name not in features for name in model.features):
+    if any(name not in vector for name in model.features):
         return None
 
-    probability = model.predict(features)
+    probability = model.predict(vector)
     meta = model.metadata
     return {
         "probability": round(probability, 3),
@@ -408,20 +386,22 @@ def run_sky(
         "base_rate": meta.get("base_rate"),
         "skill": meta.get("skill"),
         "baselines": meta.get("baselines"),
-        "contributions": nowcast_breakdown(model, features),
+        "contributions": nowcast_breakdown(model, vector),
     }
 
 
-def nowcast_breakdown(model: nowcast.Model, features: dict[str, float]) -> list[dict]:
+def nowcast_breakdown(model: nowcast.Model, values: dict[str, float | None]) -> list[dict]:
     """The per-feature decomposition, ready to print.
 
     The value is scaled and the decimals are chosen here rather than in the
     browser, for the same reason the numbers elsewhere are: the poller
     rewrites what the render produced, and a value that changes shape after
-    sixty seconds reads as a bug.
+    sixty seconds reads as a bug. A feature that could not be measured — its
+    lag fell in an outage — is sent as ``None`` and printed as a dash; the
+    trees still routed it, so its effect is real and still in the sum.
     """
     rows = []
-    for c in model.contributions(features):
+    for c in model.contributions(values):
         fmt = nowcast.describe_feature(c.name)
         rows.append({
             "name": c.name,
@@ -429,16 +409,10 @@ def nowcast_breakdown(model: nowcast.Model, features: dict[str, float]) -> list[
             "unit": fmt.unit,
             "digits": fmt.digits,
             "sign": fmt.sign,
-            "value": round(c.value * fmt.factor, 6),
-            "standardised": round(c.standardised, 2),
-            # The fitted coefficient and what it is doing to this hour. Both,
-            # because either alone is misleading: a large coefficient on a
-            # signal sitting at its average moves nothing, and a large effect
-            # says nothing about which way the signal points in general.
-            "coef": round(c.coef, 3),
+            "value": None if c.value is None else round(c.value * fmt.factor, 6),
             "effect": round(c.effect, 3),
         })
     # Biggest movers first: the point of the table is which signals are
-    # driving this number, and ten rows in training order does not say.
+    # driving this number, and sixteen rows in training order does not say.
     rows.sort(key=lambda r: abs(r["effect"]), reverse=True)
     return rows

@@ -292,11 +292,11 @@ function updateNowcast(nowcast) {
         el = document.createElement('span');
         el.id = 'label-nowcast';
         el.className = 'banner banner-nowcast';
-        el.title = t("Learned from this station's own history");
+        el.title = t('Learned from years of weather-service observations');
         row.appendChild(el);
     }
     el.textContent = '';
-    el.append(`🤖 ${t('Rain nearby')} ${t(nowcast.label)} `);
+    el.append(`🤖 ${t('Rain here')} ${t(nowcast.label)} `);
     // Same shape as the server render: the chance is one unwrappable unit.
     const chance = document.createElement('span');
     chance.className = 'nowcast-chance';
@@ -307,7 +307,7 @@ function updateNowcast(nowcast) {
 }
 
 /* The deep dive repeats live numbers the banners already show, so it has to
-   be maintained too — a coefficient table that quietly describes the weather
+   be maintained too — a breakdown that quietly describes the weather
    from an hour ago is worse than no table. The section is server-rendered and
    may be absent (no model, or not enough history yet), so every step here
    checks before it writes. */
@@ -362,27 +362,26 @@ function updateFeatureTable(nowcast) {
         const tr = document.createElement('tr');
         /* The server picked the scale and the decimals; formatting them here
            rather than re-deriving them keeps the poller's numbers the same
-           shape as the render's. */
-        const value = `${formatNumber(row.value, row.digits, { sign: row.sign })}${row.unit ? ` ${row.unit}` : ''}`;
+           shape as the render's. A signal whose lag fell in an outage
+           arrives as null: the trees still routed it, so its effect is real,
+           but there is no value to print — the render shows a dash too. */
+        const value = row.value == null ? '—'
+            : `${formatNumber(row.value, row.digits, { sign: row.sign })}${row.unit ? ` ${row.unit}` : ''}`;
         appendCell(tr, t(row.label), '');
         appendCell(tr, value, 'numeric');
-        appendCell(tr, signed(row.standardised, 1), 'numeric');
-        appendCell(tr, signed(row.coef, 2), 'numeric');
-        // Only the effect is coloured: the coefficient does not change from
-        // one hour to the next, and this column is what is happening now.
         const direction = row.effect > 0 ? 'weight-up' : row.effect < 0 ? 'weight-down' : '';
         appendCell(tr, signed(row.effect, 2), `numeric ${direction}`.trim());
         body.appendChild(tr);
     }
 
-    /* The footer's two numbers are the intercept and the squashed total. The
-       total keeps its <strong>, which textContent on the cell would drop —
-       the render's markup is the one this has to reproduce. */
+    /* The footer's two numbers are the starting point and the squashed
+       total. The total keeps its <strong>, which textContent on the cell
+       would drop — the render's markup is the one this has to reproduce. */
     const foot = table.tFoot;
     if (!foot) return;
-    const start = foot.querySelector('[data-cell="intercept"]');
+    const start = foot.querySelector('[data-cell="baseline"]');
     const total = foot.querySelector('[data-cell="total"] strong');
-    if (start) start.textContent = signed(nowcast.intercept, 2);
+    if (start) start.textContent = signed(nowcast.baseline, 2);
     if (total) total.textContent = `${formatNumber(nowcast.probability * 100, 0)} %`;
 }
 

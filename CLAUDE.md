@@ -30,10 +30,12 @@ Dynamic weather dashboard ("Balcony Weather Station") served by a FastAPI app in
 | `app/config.py` | Every environment variable, read once into a frozen `Settings`. Nothing else touches `os.environ`. |
 | `app/clock.py` | The timestamp convention: formatting, parsing, UTC-offset resolution, period cutoffs, month arithmetic. |
 | `app/weather.py` | Pure derived values — dew point, heat index, the forecast rules engine, forecast emoji. No I/O. |
-| `app/nowcast.py` | Loads `app/model.json` and evaluates it. Pure arithmetic — no ML dependency in the image. |
+| `app/features.py` | The nowcast's feature vector as a pure function of a run of readings and the pressure cycle. The one implementation the app and the trainer both call. |
+| `app/nowcast.py` | Loads `app/model.json` (gradient-boosted trees as plain arrays) and evaluates it, with an exact per-feature breakdown. Pure arithmetic — no ML dependency in the image. |
 | `app/model.json` | The fitted nowcast, written by CI. Data, not code: treat it as something that might be wrong. |
 | `app/verification.json` | How the *deployed* model has actually done, scored weekly from the prediction log. Absent until there is a record to make a claim about. |
-| `ml/train.py` | The retraining job. Runs in CI only; the one thing in this project that fetches anything. |
+| `ml/train.py` | The retraining job. Runs in CI only; with `ml/dwd.py`, the one thing in this project that fetches anything. |
+| `ml/dwd.py` | The German weather service's open ten-minute station archive: station lists, the nearest stations, downloads, parsing. Training only. |
 | `app/database.py` | All SQLite access: connection pool, migrations, queries, the daily rollup. |
 | `app/cache.py` | Memoisation for the aggregates, dropped on every write. |
 | `app/backup.py` | Daily `VACUUM INTO` snapshots of the archive, and their retention. |
@@ -59,11 +61,12 @@ These are implicit across the codebase and easy to break:
 - **`(timestamp, utc_offset)` is UNIQUE.** Ingestion upserts, so re-posting a slot corrects it rather than duplicating it — while the repeated autumn hour still holds both of its readings. On first start against an older database the migration fills in the offsets, de-duplicates (keeping the earliest row per key) and rebuilds the index; a database whose unique index covers `timestamp` alone has it dropped and recreated, since `CREATE INDEX IF NOT EXISTS` would quietly accept the old one.
 - **Readings are expected on a 5-minute grid with `:00` seconds.** `remove_off_grid_readings()` deletes anything off-grid; `remove_readings_in_range()` clears a window. Chart gaps are a real signal, so don't "fix" missing slots by interpolating.
 - **Incoming readings are range-checked** (`app/models.py`): temperature −90…60 °C, humidity 0…100 %, pressure 800…1100 hPa. A sensor glitch or a Home Assistant `unavailable` is rejected with 422 rather than stored forever.
-- **The forecast reads pressure as a level, not a tendency.** Scored against observed hourly rainfall for the station's own location over 90 days, the barometric tendency has *negative* skill at this station (a 6h fall of >1 hPa scored KSS −0.09; inside the wettest conditions rising pressure was followed by rain more often than falling). `get_pressure_percentile()` ranks the current reading against the station's own last 30 days, because a fixed hPa threshold does not transfer between months (CSI 0.05 in one, 0.44 in another). That rank plus humidity is the whole forecast; the tendency is still measured and shown on the pressure card, but nothing predictive is built on it. Don't reintroduce "falling barometer means rain" — it was measured and it is wrong here.
+- **The rule ladder reads pressure as a level, not a tendency.** Scored against observed hourly rainfall for the station's own location over 90 days, the barometric tendency *as a threshold* has negative skill at this station (a 6h fall of >1 hPa scored KSS −0.09; inside the wettest conditions rising pressure was followed by rain more often than falling). `get_pressure_percentile()` ranks the current reading against the station's own last 30 days, because a fixed hPa threshold does not transfer between months (CSI 0.05 in one, 0.44 in another). That rank plus humidity is the whole ladder. Don't reintroduce "falling barometer means rain" as a rule — it was measured and it is wrong here.
+- **The learned nowcast does read the tendency, and that is not a contradiction.** As one input among the others in a tree model, over 14 years at eight weather-service stations, the pressure changes were the most valuable *group* of signals (dropping all four cost 0.027 Brier skill, more than any other group). What fails is the lone rule; the trees learn which way a change points in which situation — a sharp rise behind a cold front reads very differently from a slow one under a high.
 - **The frost banner has two stages, and they are different claims.** Below `FROST_WARNING_C` (2 °C) it reads the current reading, because that is a statement about the number on the card. Below `FROST_WATCH_C` (4 °C) *and* falling it reads the smoothed 3-hour trend instead, because that is a claim about the next few hours and one cold sample is not a night getting colder. `weather.frost_alert()` returns `"Frost"`, `"Frost likely"` or `None` — English identifiers like the forecast phrases, translated by the page. A single threshold at 2 °C only ever announced a frost that had already arrived.
 - **Nothing reads pressure as an absolute, because nobody here knows what the absolute is.** A balcony sensor reports either station pressure or a sea-level-corrected value depending on how it was set up, and the archive does not say which; this app never corrects it either way. So the card prints the reading's rank in the station's own last 30 days beside the number, and the explainer prints the archive's own mean against the ~1013 hPa sea-level norm and lets the reader conclude. Both the rule ladder and the nowcast take the percentile, which is why an unknown offset cannot move a prediction. Don't add a sea-level reduction: it would need an altitude this repository deliberately does not hold (see **GitHub Secrets**).
 - **The pressure trend is de-tided**, and the percentile depends on that too.
-- **Both ends of every trend are medians** over `SMOOTHING_WINDOW_MINUTES`, not single readings, so one noisy sample cannot push a delta across a threshold. Which way a trend *points* has a per-metric deadband (`database.TREND_DEADBAND`): 0.5 suits hPa and °C, 0.5 % of humidity is noise. Display only — the arrows on the three current-conditions cards — since nothing predictive reads a tendency here.
+- **Both ends of every trend are medians** over `SMOOTHING_WINDOW_MINUTES`, not single readings, so one noisy sample cannot push a delta across a threshold. Which way a trend *points* has a per-metric deadband (`database.TREND_DEADBAND`): 0.5 suits hPa and °C, 0.5 % of humidity is noise. The arrows are display only; the nowcast takes its changes from `app/features.py`, which uses the same half-hour medians.
 - **Ordering is by `database.ORDER_OLDEST_FIRST` / `ORDER_NEWEST_FIRST`, never by `id`.** A backfill inserts old readings with fresh ids, so `ORDER BY id DESC` would make a backfilled row "current". `timestamp` alone is not a total order either: within one repeated local hour the larger UTC offset is the earlier instant, which is the tie-break those constants carry.
 
 ## Database access
@@ -79,6 +82,8 @@ These are implicit across the codebase and easy to break:
 
   Splitting on those seams would move the two rules most easily broken — *migrations run before the pool opens* and *every write path refreshes the rollup inside the lock* — into separate files, where nothing but a comment connects them. Right now they are enforced by proximity: you cannot add a write without `_refresh_rollup` being on the same screen. That is worth more than a smaller file. Revisit if the reads section grows its own subsystem; until then the section banners are the navigation.
 
+- **The pressure cycle is learned in `app/features.py`.** `get_pressure_cycle()` fetches the 90 *whole* days before today and hands them to `features.pressure_cycle()`, the function the trainer runs over the weather service's stations, so the model's pressure features are de-tided identically on both sides. A day counts when 40 of its 48 half-hour slots hold a reading — slots rather than a reading count, so a ten-minute station and the five-minute balcony judge completeness by one rule. Whole days mean the cycle moves at midnight, and today's half-finished day cannot skew its own correction.
+- `get_recent_series()` hands the feature code the last 30 days as a `features.Series`, `@cached` like the aggregates so the poller costs one query per new reading rather than one per request.
 - `get_history_series()` downsamples: a period whose raw series would exceed `TARGET_CHART_POINTS` is averaged into buckets, and each point then carries `*_min`/`*_max` for the range band. `/api/weather/history` returns `{readings, interval_seconds, bucketed, expected_samples}` — not a bare array. The route goes through `services.history_payload()`, which adds each point's `dew_point`: the temperature chart plots it as a second line, and deriving it server-side keeps the Magnus formula in `weather.py` alone rather than growing a JavaScript twin that can drift from the cards. On a bucketed point it is the dew point of the bucket's mean temperature and mean humidity — the raw rows a mean-of-dew-points would need are exactly what bucketing discarded, and the difference is hundredths of a degree.
 
 ## The two predictions
@@ -90,8 +95,8 @@ explains the difference to the reader under "How these two predictions work".
 | --- | --- | --- |
 | lives in | `app/weather.py` | `app/nowcast.py` + `app/model.json` |
 | output | a phrase (`Rain likely`) | a probability (`38%`) |
-| fitted by | hand, from measured tiers | `ml/train.py`, weekly in CI |
-| answers | is it settling or deteriorating | chance of ≥0.2 mm within 6 h |
+| fitted by | hand, from measured tiers | `ml/train.py`, weekly in CI, on weather-service stations |
+| answers | is it settling or deteriorating | chance of ≥0.2 mm here within 6 h |
 
 Neither may fetch anything at runtime, and neither needs to.
 
@@ -115,23 +120,29 @@ summary`) precisely so the nested handle does not inherit the card's own.
   ladder is documentation, so nothing else would notice it drifting.
 - **The feature breakdown is the prediction, not an illustration of it.**
   `Model.predict()` is routed through `Model.contributions()`, so the
-  intercept plus the printed effects is exactly the logit being squashed.
-  Everything in that table is in log-odds for that reason; don't
-  "normalise" it to percentages, which would stop it adding up.
-- **`coef` and `effect` are two different numbers**, and they were one field
-  called `weight` — so the table printed `coef x z` under the heading
-  "Weight", which is the name of the factor, not the product. `coef` is the
-  fitted coefficient, log-odds per standard deviation, the same at every
-  hour; `effect` is that times how unusual this reading is, and it is what
-  the model adds in. The page shows both columns because either alone
-  misleads: a large coefficient on a signal sitting at its average moves
-  nothing, and a large effect says nothing about which way the signal points
-  in general. Rows are sorted by `|effect|` — what is driving *this* number —
-  and only that column is coloured.
+  starting point plus the printed effects is exactly the logit being
+  squashed. Each tree walks one path; every step down it moves the tree's
+  expected output from a node's value to its child's, and that move is
+  credited to the feature the node split on. Summed over all steps of all
+  trees the moves telescope to `leaf - root`, so starting point
+  (`Model.expected`: the base score plus every root's value) plus effects is
+  the logit, to rounding. Internal nodes carry the expected output of the
+  leaves beneath them, weighted by the training hours that reached each —
+  `ml/train.py::export()` computes it, since scikit-learn does not store it
+  in that form. Everything in the table is in log-odds for that reason;
+  don't "normalise" it to percentages, which would stop it adding up.
+- **There is no coefficient column any more, on purpose.** The logistic
+  regression had one per feature, and the page printed it beside the effect.
+  A tree's response to a signal depends on the others — that is why it is
+  trees — so there is no single number that is "what this signal is worth"
+  at every hour. The table is signal, value now, effect now; rows are sorted
+  by `|effect|` and only that column is coloured. A value that could not be
+  measured (its lag fell in an outage) is sent as `None` and printed as a
+  dash; the trees still routed it, so its effect is real and in the sum.
 - **The server picks the scale and the decimals.** `services.nowcast_breakdown()`
   sends each row's `value`, `digits`, `sign` and `unit` so the render and the
   poller print the same shape — the same rule the rest of the numbers follow.
-- **Every retrain measures what each feature is worth, not just what it weighs.** `ml/train.py::ablations()` reruns the whole walk-forward once per feature with that feature dropped, and the model card carries the result; the explainer prints it under the same labels as the contribution table. A coefficient only says how hard a signal is being leaned on — this says whether leaning on it helps. `temp` is the row to watch: over a first summer "warm" and "July" are nearly the same column, so a temperature coefficient fitted on that may be learning the calendar. If a feature's Brier cost sits at zero across several weeks, that is the evidence for dropping it from `FEATURES` — the trainer measures, it never drops anything by itself. Ten extra walk-forwards cost well under a second. `tests/test_train.py` checks the measurement against synthetic hours where one feature carries the label and another is noise; it needs numpy and scikit-learn, so it skips in CI and runs for whoever is working on the model.
+- **Every retrain measures what each feature is worth.** `ml/train.py::ablations()` refits on the same training years without each feature in turn and scores the same held-out year, and the model card carries the result; the explainer prints it under the same labels as the contribution table. Single-feature costs are small — the signals overlap, so another one usually carries what a dropped one knew — and a row near zero is not by itself a reason to drop a feature. If one sits at zero across many weeks, that is the evidence for removing it from `FEATURES`; the trainer measures, it never drops anything by itself. Sixteen extra fits are most of the run's time. `tests/test_train.py` checks the measurement against synthetic hours where one feature carries the label and another is noise; it needs numpy and scikit-learn, so it skips in CI and runs for whoever is working on the model.
 - **The model card is metadata passed through**, not restated in the template,
   so a retrain updates the page without a code change. Anything `ml/train.py`
   did not write comes back `None` and the section is skipped.
@@ -142,57 +153,118 @@ summary`) precisely so the nested handle does not inherit the card's own.
 
 ### How the nowcast is trained and shipped
 
-`ml/train.py` (run by `.github/workflows/retrain.yml`, Mondays) pulls the
-station's readings from `/api/weather/export` and observed hourly rainfall
-from Open-Meteo's ERA5 archive for the labels. It fits a logistic
-regression, scores it walk-forward with weekly refits, and writes
-`app/model.json` **only if** the candidate clears the gates in that file:
-skill over climatology, ranking at least as well as the rules, and no sharp
-regression against the shipped model. Refusing to ship is a normal outcome.
+**It is not fitted to the balcony's archive, and that is the whole redesign.**
+Until October 2026 it was a logistic regression fitted to the balcony's own
+readings — ~1,600 labelled hours, all of them one summer. It learned that
+cool air means dry air (`temp` carried +1.22 per standard deviation against a
+22.7 °C training mean) and that a high barometer means no rain, and on the
+first wet October evening — sensor at 100 %, temperature down 4.4 °C in 3 h —
+it said 11%. Measured on DWD data, a model of that kind fitted to one summer
+scores Brier skill 0.08–0.11 over a following year, and *below zero* in winter
+against the reanalysis labels it used. Its own 0.296 was a summer-only number.
 
-**The labels are the 25 km reanalysis on purpose.** Open-Meteo's 2 km series
-is also fetched, but only ever scored against. Trained and judged on it the
-same features manage AUC 0.715 / CSI 0.220, against 0.831 / 0.473 on the
-reanalysis: point rain is 8% of hours and turns on convective detail a
-barometer cannot see, while "did it rain around here" is the synoptic
-question these sensors answer. So the percentage on the page means rain
-**in the area**, and the page says so — judged on point rain the model's
-Brier skill is −0.256, because it quotes area odds. Retraining on the
-higher-resolution source is the intuitive move and it was measured to be
-wrong.
+`ml/train.py` (run by `.github/workflows/retrain.yml`, Mondays) now:
 
-A learned "has it been raining" stage, feeding a persistence-like signal in,
-was also tried and dropped: it moved Brier by 0.0007 and AUC by 0.004, which
-is noise at this sample size, because the humidity features already carry
-that signal.
+1. picks the `TRAINING_STATIONS` (5) weather-service stations nearest the
+   balcony that measure temperature, humidity *and* pressure every ten
+   minutes since `TRAINING_SINCE` (2014) — many have no barometer, and are
+   passed over — and downloads their files and their co-located rain gauges
+   from opendata.dwd.de (`ml/dwd.py`);
+2. converts them to the app's conventions (local wall clock, the database's
+   ordering, a per-day pressure cycle learned from the 90 whole days before)
+   and calls `app.features.compute()` at every hour — the same function the
+   app calls — labelling each hour with ≥0.2 mm at that station's gauge in
+   the next six hours;
+3. fits `HistGradientBoostingClassifier` (`GBM`: 300 trees of 15 leaves)
+   on everything but the last `HOLDOUT_DAYS` and scores that held-out year,
+   season by season, against the base rate and the rule ladder;
+4. scores the same candidate on **the balcony's own archive** from
+   `/api/weather/export`, labelled by the nearest gauge — the evaluation fit
+   stops before the archive starts, so neighbouring stations cannot leak the
+   same storms into it;
+5. refits on everything, exports the trees, and writes `app/model.json`
+   **only if** the candidate clears the gates on *both* tests: Brier skill
+   over the base rate ≥ `MIN_SKILL`, AUC at least the ladder's, and no more
+   than `MAX_REGRESSION` below the skill the shipped model *recorded* when
+   it was fitted. Refusing to ship is a normal outcome.
 
-Three things are load-bearing here:
+Measured over 1.1 million station-hours at eight stations (2014 to
+September 2024, scored on the two years after), in Brier skill:
 
-- **One feature path.** Training does not reimplement the features: it calls
-  `services.nowcast_features()`, the same function the running app calls,
-  against a throwaway database with the clock pinned to each historical hour.
-  Add a feature by adding it there and to `FEATURES` in `ml/train.py`, never
-  by computing it separately in the trainer.
-- **Readings are fed in as the replay clock reaches them.** The app's
-  "latest reading" queries are `ORDER BY timestamp DESC LIMIT n` with no upper
-  bound — right in production, but against a fully populated table every
-  historical hour would get the values from the end of the series. That bug
-  produced a model that looked plausible and had learned nothing.
+| | gauge labels | ERA5 labels |
+| --- | --- | --- |
+| logistic, old features, one summer | 0.08–0.11 | 0.02–0.08 |
+| logistic, old features, 14 years | 0.15 | 0.19 |
+| logistic, + rain-signature features | 0.20 | 0.24 |
+| gradient-boosted trees, same features | **0.25** | **0.29** |
+
+The shipped bootstrap model (trained on those eight stations, since the
+coordinates are not available outside CI) scores 0.226 on its held-out year
+— winter 0.22, spring 0.26, summer 0.20, autumn 0.22 — against AUC 0.657 for
+the ladder. A model trained on seven stations scores the eighth (0.22–0.27)
+as well as one trained on that station's own years, which is why training on
+neighbours and serving the balcony is sound; recalibrating on 100 days of the
+target station did not help.
+
+**The labels are rain gauges, which reverses an earlier decision on
+evidence.** The regression used a 25 km reanalysis because point rain had
+measured as unpredictable (AUC 0.715 against 0.831). That was one summer,
+ten signals and a weighted sum, scored against a 2 km *forecast model*. With
+real gauges, all seasons and trees, point rain ranks as well as area rain
+(AUC 0.842 against 0.837; `nowcast.LABEL_CHOICE`), so the page now says "rain
+here" and means it.
+
+Things that are load-bearing:
+
+- **One feature path.** `app/features.py` is the only implementation. It
+  is pure — `now` and the pressure cycle are arguments — and every window is
+  defined in time, never as a count of readings, because the balcony reports
+  every five minutes and the stations every ten. Add a feature by adding it
+  to `features.compute()`, `features.DECIMALS`, `nowcast.FEATURE_FORMATS` and
+  `FEATURES` in `ml/train.py`; never by computing it in the trainer.
+- **Features are rounded to a fixed grid** (`features.DECIMALS`), and that
+  is part of the model's contract. The trees split between grid values, so
+  `export()` stores each threshold to one decimal more and the app, rounding
+  the same way, lands on the same side of every split.
+- **The export is checked on every run.** It reads scikit-learn's private
+  tree arrays (`_predictors`, `nodes`), which a release could change.
+  `self_check()` compares the exported trees with `decision_function()` on
+  every training row, and walks the app's own evaluator and breakdown on a
+  sample, and fails the run on any disagreement rather than shipping a model
+  that says something else. The training step runs under `shell: bash` so
+  that failure is not swallowed by `| tee`.
+- **The regression gate compares recorded skill, not a re-score.** Re-scored
+  now, the shipped model would be judged on hours it was trained on, and that
+  in-sample advantage measured +0.043 Brier skill — nearly the whole
+  tolerance, enough to refuse every honest retrain from then on.
+- **The stations are never named.** They are the nearest to the balcony, so
+  their ids, names and above all distances would put the location the
+  coordinate secrets protect into a public Actions log or a committed file.
+  The trainer prints counts, `model.json` carries `"stations": <int>`, the
+  workflow caches nothing (an Actions cache is readable by more than this
+  job), and `tests/test_api.py::TestStationsStayAnonymous` fails if a
+  `print()` in `ml/` touches a station's `id`, `latitude`, `longitude` or
+  `km_from`.
 - **The trainer reads `/export`, never `/history`.** `/history` downsamples
   above `TARGET_CHART_POINTS`, which is right for a chart and ruinous here:
   on a 92-day archive it turned ~26,500 readings into 734 three-hourly
-  averages, and none of the features — 30-minute medians, 6 and 12 hour
-  deltas — can be completed from those. Every run therefore found **zero**
-  labelled hours, printed "too few samples", and exited 0. A weekly job that
-  was green and decorative for months. `/export` never downsamples; it is
-  behind the API key because an unbucketed archive is the largest response
-  this app serves, and it pages with a `(timestamp, utc_offset)` cursor
-  because a timestamp alone is not unique across the repeated autumn hour.
-  `tests/test_api.py::TestTrainerReadsTheRawArchive` parses the trainer and
-  fails if a `/history` URL reappears in it.
-- **The image carries no ML dependency.** `app/nowcast.py` evaluates the
-  model with a dot product and a sigmoid; numpy and scikit-learn live in
-  `ml/requirements.txt` and are installed only by the retraining job.
+  averages, and none of the features can be completed from those. Every run
+  of the old trainer therefore found **zero** labelled hours, printed "too
+  few samples", and exited 0 — green and decorative for months. `/export`
+  never downsamples; it is behind the API key, and pages with a
+  `(timestamp, utc_offset)` cursor because a timestamp alone is not unique
+  across the repeated autumn hour. `tests/test_api.py::TestTrainerReadsTheRawArchive`
+  fails if a `/history` URL reappears in the trainer.
+- **The image carries no ML dependency.** `app/nowcast.py` walks the trees
+  in pure Python; numpy and scikit-learn live in `ml/requirements.txt` and
+  are installed only by the retraining job. `model.json` is ~210 KB.
+
+The sky model goes through the same pipeline, labelled by ERA5 cloud cover
+at each training station (and at the balcony, for its archive test). Over
+the held-out year it scores well (Brier skill +0.26 at two stations), but on
+a summer-only stand-in archive it failed the archive gate, so expect the
+weekly job to keep refusing it until the balcony's record covers more than
+one season.
 
 A `GITHUB_TOKEN` push does not start another workflow, so the retraining job
 cannot deploy by committing — it calls `deploy.yml` through
@@ -201,14 +273,14 @@ sit on `main` undeployed.
 
 ### Verifying it against what actually happened
 
-Everything above scores a *candidate* walk-forward against a held-out past. That says the method works. It does not say the model **already deployed** has been right about this station's weather, and until now nothing could answer that.
+Everything above scores a *candidate* against a held-out past. That says the method works. It does not say the model **already deployed** has been right about this station's weather, and until now nothing could answer that.
 
 - **`prediction_log`** records what the page showed, hour by hour, written at the time: the rain probability, the sky probability, the phrase from the ladder, and `model_trained_at`. Keyed on `(timestamp, utc_offset)` like the readings, so the repeated autumn hour holds both of its predictions.
 - **It cannot be reconstructed afterwards**, which is the whole reason it is a table rather than a query. The features are a pure function of the readings, so a replay could recompute them — but it would credit every past hour to *today's* model, and the model is refitted weekly; a backfill changes the inputs a replay would see; and the container may lag `main`. The `model_trained_at` column is what a replay could never supply.
 - **Written on the ingest path, on the hour only**, because the observations it is scored against are hourly — a row every five minutes is twelve times the rows and not one extra scoreable hour. Skipped for a reading that is not the newest, since `build_status()` describes *now* and a backfill would file today's prediction under last week.
 - **What is logged comes back through `build_status()`**, not from recomputing anything, so the row is by construction what `/status` served and the page rendered. A log that can disagree with the page is worse than no log.
 - **A failure to log is a warning, never a 500.** The reading is the irreplaceable thing and is committed first; handing the relay an error would make Home Assistant retry a reading that was already stored.
-- **`ml/train.py` scores it** against the same Open-Meteo observations that label the training data — no extra fetching — and writes `app/verification.json` **outside the shipping decision**, every run. Refusing to ship is normal, and a verification that went stale behind a declined candidate would be most misleading exactly when it mattered.
+- **`ml/train.py` scores it** against the nearest weather-service rain gauge — the same kind of observation the model is trained on, and the same gauge that labels the balcony's archive — and writes `app/verification.json` **outside the shipping decision**, every run. Each logged hour is put on the UTC clock with its `utc_offset` before it is matched to the gauge. The gauge must be within `MAX_GAUGE_KM`; further than that, "rain here" would be scored against elsewhere and nothing is written. Refusing to ship is normal, and a verification that went stale behind a declined candidate would be most misleading exactly when it mattered.
 - **The bins live in `app/nowcast.py`**, not in the trainer that writes them: the page renders them, and as pure arithmetic they are testable in the ordinary suite without numpy. A bin below `RELIABILITY_MIN_BIN` hours is shown, dimmed, with its count — hidden thin bins are how a reliability curve flatters itself.
 - The page renders it in the technical details and **the poller never touches it**: it changes weekly, in CI, and a new image is what carries it.
 
@@ -363,7 +435,7 @@ Because the path names the build, the versioned mount serves `Cache-Control: pub
 ## GitHub Secrets
 
 - `APP_URL` — base URL of the running app. Used by the relay workflow (`main.yml`) to forward HA webhook data.
-- `STATION_LATITUDE` / `STATION_LONGITUDE` — where the station stands, read by `ml/train.py` to ask Open-Meteo for the rainfall that labels the training data. **They are deliberately not in the repository**, and the trainer has no fallback: a default would either be wrong, and quietly label the data with another place's weather, or be the real location, which is what these keep out of a public file. An unset secret fails the retraining run. To run the trainer locally, export them or pass `--latitude` / `--longitude`.
+- `STATION_LATITUDE` / `STATION_LONGITUDE` — where the station stands, read by `ml/train.py` to choose the nearest weather-service stations to train on and the nearest rain gauge to score the balcony against, and to ask Open-Meteo for the cloud cover the sky model's archive test uses. **They are deliberately not in the repository**, and the trainer has no fallback: a default would either be wrong, and quietly train on another place's weather, or be the real location, which is what these keep out of a public file. Nothing derived from them — station ids, names, distances — is printed or committed either. An unset secret fails the retraining run. To run the trainer locally, export them or pass `--latitude` / `--longitude`; `--stations <ids>` trains on named stations instead and, without a location, skips the archive and the verification.
 - `API_KEY` — shared secret protecting `POST /api/weather`, `DELETE /api/weather/cleanup` and `GET /api/weather/export`. The retraining workflow passes it too, since the trainer reads the export endpoint. Must match between the app (env var), the relay workflow, and (eventually) Home Assistant. When the env var is unset those endpoints are unauthenticated, which is how local dev works.
 - `PORTAINER_WEBHOOK_URL` — Portainer webhook URL triggered by `deploy.yml` after a successful image push.
 - `GITHUB_TOKEN` — auto-provided, used for GHCR login and push.
@@ -372,6 +444,8 @@ Because the path names the build, the versioned mount serves `Cache-Control: pub
 Workflow inputs are passed to the shell through `env:`, never interpolated into a `run:` body — `${{ inputs.x }}` is substituted before the shell sees it, so a crafted value would execute as shell on the runner.
 
 ## Known limitations
+
+- **The balcony's hygrometer saturates in rain; a weather-service screen's does not.** In rain the screens read a median 90–94 % and reach ≥97 % in only 2–17 % of rain intervals, so in training a saturated sensor mostly means fog. The BME280 on the balcony sits at exactly 100 % when wet. The model leans on dew point, pressure rank and changes, temperature changes and the hour far more than on humidity, so the cost is limited — but "Time saturated, 3 h" carries nothing, which on this sensor it should. The fix is a learned correction from the balcony's archive against the nearest gauge, once that archive spans more than one season; until then the archive gate is what keeps a gap like this from shipping silently.
 
 - `get_history_series()` still scans the readings, and is now the most expensive query on a long archive (~120 ms over two years). It is the one aggregate a per-day rollup cannot serve: a chart needs resolution finer than a day until the archive is long enough for the bucket ladder to reach 1440 minutes.
 - A backfill cannot restore the *first* pass of a repeated autumn hour after the fact, because walking wall-clock time only ever visits 02:30 once and a replay has no arrival time to resolve it with. Posting the timestamp with an explicit `+02:00` is the way to aim at it.
