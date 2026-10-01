@@ -54,8 +54,8 @@
     {%- endif %}
     {%- if nowcast %}
     <span class="banner banner-nowcast" id="label-nowcast"
-          title="{{ t("Learned from this station's own history") }}">
-        🤖 {{ t('Rain nearby') }} {{ t(nowcast.label) }}
+          title="{{ t('Learned from years of weather-service observations') }}">
+        🤖 {{ t('Rain here') }} {{ t(nowcast.label) }}
         <span class="nowcast-chance">·
             <strong>{{ num(nowcast.probability * 100) }}%</strong>
             {{ t('in {hours} h', hours=nowcast.horizon_hours) }}</span>
@@ -76,16 +76,15 @@
             <dl>
                 <dt>{{ t('☀️ The outlook') }}</dt>
                 <dd>
-                    {{ t("Thresholds on two numbers: where the pressure sits in this station's own last 30 days, and the humidity. It ignores which way the barometer is moving — measured against real rainfall here, that carries no signal.") }}
+                    {{ t("Thresholds on two numbers: where the pressure sits in this station's own last 30 days, and the humidity. It ignores which way the barometer is moving: as a threshold on its own, that scored worse than nothing here.") }}
                 </dd>
 
                 <dt>{{ t('🤖 The rain chance') }}</dt>
                 <dd>
-                    {{ t("A model fitted to this station's readings against observed rainfall and retrained weekly. Ten measurements in, one number out: the chance of {mm} mm of rain within {hours} hours",
-                          mm=num(nowcast.rain_mm if nowcast else 0.2, 1),
-                          hours=nowcast.horizon_hours if nowcast else 6) }}
-                    <strong>{{ t('in the surrounding area') }}</strong>
-                    {{ t('— not on this balcony. Whether a shower crosses here or the next valley is not something a barometer knows.') }}
+                    {{ t("A model trained on years of ten-minute readings from the German weather service's own stations — the same three things this balcony measures, each checked against the rain gauge standing beside it. It is retrained weekly, and a new fit only replaces it after passing a test on this balcony's own record. One number out: the chance of at least {mm} mm of rain",
+                          mm=num(nowcast.rain_mm if nowcast else 0.2, 1)) }}
+                    <strong>{{ t('here, within {hours} hours', hours=nowcast.horizon_hours if nowcast else 6) }}</strong>.
+                    {{ t('What it reads best is rain that has already begun: a wet sensor, a sudden chill, a jump in the barometer. A shower still on its way is beyond any balcony.') }}
                 </dd>
 
                 <dt>{{ t('Why both') }}</dt>
@@ -112,7 +111,7 @@
                     {%- if outlook_is_learned and sky_is_learned %}
                     <h3>{{ t('☀️ The outlook: two models and two rules') }}</h3>
                     <p>
-                        {{ t('Tested in order, and the first rung that matches wins. Four of these rungs read a fitted probability — one model for rain, one for cloud, both from the same ten measurements. Two of them do not, and cannot: see below.') }}
+                        {{ t('Tested in order, and the first rung that matches wins. Four of these rungs read a fitted probability — one model for rain, one for cloud, both from the same measurements. Two of them do not, and cannot: see below.') }}
                     </p>
                     {%- elif outlook_is_learned %}
                     <h3>{{ t('☀️ The outlook: one model and a ladder') }}</h3>
@@ -198,7 +197,7 @@
                               old=num(calibration.superseded_kss, 3, sign=True)) }}
                     </p>
                     <p>
-                        {{ t("Where the pressure sits does carry signal, but no fixed hPa threshold survives the change of season: a plain 'below 1020 hPa' scored a critical success index of {low} in one month of the sample and {high} in another. Ranking the reading against the station's own last {days} days is stable across all of them, which is why the column above is a percentile. The tendency is still measured and shown on the pressure card, because it is a fact about the last six hours — it is just not evidence about the next six.",
+                        {{ t("Where the pressure sits does carry signal, but no fixed hPa threshold survives the change of season: a plain 'below 1020 hPa' scored a critical success index of {low} in one month of the sample and {high} in another. Ranking the reading against the station's own last {days} days is stable across all of them, which is why the column above is a percentile. The tendency is still measured and shown on the pressure card, and the rain model reads it too — not as a rule, but as one signal among the others, where it does earn its place (see what each signal is worth, below).",
                               low=num(calibration.fixed_csi_low, 2),
                               high=num(calibration.fixed_csi_high, 2),
                               days=percentile_days) }}
@@ -219,11 +218,17 @@
                     {%- if nowcast %}
                     <h3>{{ t('🤖 The rain chance: a fitted model') }}</h3>
                     <p>
-                        {{ t('A logistic regression over {n} features. Each is standardised against its training mean, multiplied by a weight, and added up; a sigmoid turns that sum into a probability. Serving it is a dot product and a sigmoid, so the container carries no numpy and no scikit-learn — the training job in CI does, and all it ships back is a small JSON file of names, means, scales and weights.', n=nowcast.contributions | length) }}
+                        {{ t('Gradient-boosted trees: {trees} small decision trees, each splitting the hour on one signal at a time, whose outputs add up to log-odds that a sigmoid turns into a probability. Trees rather than a weighted sum, because these signals matter in combination — a sharp chill at saturation means rain under any barometer, and a sum can only add the two. Serving it is a walk down each tree, so the container carries no numpy and no scikit-learn; the training job in CI does, and it ships the trees back as plain arrays in JSON.', trees=nowcast.trees) }}
+                    </p>
+                    <p>
+                        {{ t("It was not fitted to this balcony. One summer of readings is all the archive holds, and a model that has only seen July learns that cool air means dry air — the model this replaced did, and with rain on the sensor in October it said 11%. So it learns from the weather service's stations, every season of many years, and this balcony is where every retrain has to prove itself.") }}
                     </p>
 
                     <dl class="model-card">
-                        <div><dt>{{ t('Question') }}</dt><dd>{{ t('{mm} mm of rain within {hours} hours, in the area', mm=num(nowcast.rain_mm, 1), hours=nowcast.horizon_hours) }}</dd></div>
+                        <div><dt>{{ t('Question') }}</dt><dd>{{ t('At least {mm} mm of rain within {hours} hours, here', mm=num(nowcast.rain_mm, 1), hours=nowcast.horizon_hours) }}</dd></div>
+                        {%- if nowcast.stations %}
+                        <div><dt>{{ t('Learned from') }}</dt><dd>{{ t('{n} weather-service stations', n=nowcast.stations) }}{% if nowcast.trained_from %} · {{ t('{from_date} to {to_date}', from_date=date(nowcast.trained_from), to_date=date(nowcast.trained_through)) }}{% endif %}</dd></div>
+                        {%- endif %}
                         <div><dt>{{ t('Fitted') }}</dt><dd>{{ nowcast.trained_at }}{% if nowcast.trained_through %} · {{ t('data through {date}', date=nowcast.trained_through) }}{% endif %}</dd></div>
                         {%- if nowcast.samples %}
                         <div><dt>{{ t('Sample') }}</dt><dd>{{ t('{n} hours', n=num(nowcast.samples, 0, grouping=True)) }}{% if nowcast.base_rate %} · {{ t('{pct}% of them wet', pct=num(nowcast.base_rate * 100)) }}{% endif %}</dd></div>
@@ -233,6 +238,14 @@
 
                     {%- if nowcast.skill %}
                     <h4>{{ t('How well it scores') }}</h4>
+                    {%- if nowcast.holdout %}
+                    <p>
+                        {{ t('On the most recent year at those stations, {from_date} to {to_date}: {hours} hours that the fit being scored never saw, every season once.',
+                              from_date=date(nowcast.holdout['from']),
+                              to_date=date(nowcast.holdout.to),
+                              hours=num(nowcast.holdout.hours, 0, grouping=True)) }}
+                    </p>
+                    {%- endif %}
                     <div class="table-scroll">
                         <table class="deep-table skill-table">
                             <thead>
@@ -273,19 +286,41 @@
                             </tbody>
                         </table>
                     </div>
+                    {%- if nowcast.seasons and nowcast.seasons | length == 4 %}
                     <p>
-                        {{ t('Scored walk-forward with weekly refits, never on hours it was fitted on. A retrained model only ships if it clears all three gates: skill over climatology, ranking at least as well as the ladder, and no sharp regression against the model already deployed. Refusing to ship is a normal outcome.') }}
+                        {{ t('Its skill over the base rate, season by season: winter {winter}, spring {spring}, summer {summer}, autumn {autumn}. A model fitted to one summer has no business in any of the other three — this one has seen each of them many times.',
+                              winter=num(nowcast.seasons.DJF, 2, sign=True),
+                              spring=num(nowcast.seasons.MAM, 2, sign=True),
+                              summer=num(nowcast.seasons.JJA, 2, sign=True),
+                              autumn=num(nowcast.seasons.SON, 2, sign=True)) }}
+                    </p>
+                    {%- endif %}
+                    {%- if nowcast.archive %}
+                    <p>
+                        {{ t("On this balcony's own readings, {from_date} to {to_date} — {hours} hours, {wet}% of them followed by rain at the nearest weather-service gauge — it scored Brier {brier}, a skill of {bss}, AUC {auc}, where the ladder ranked the same hours at AUC {rules}. That is the test a weather-service screen cannot pass on this sensor's behalf.",
+                              from_date=date(nowcast.archive['from']),
+                              to_date=date(nowcast.archive.to),
+                              hours=num(nowcast.archive.hours, 0, grouping=True),
+                              wet=num(nowcast.archive.base_rate * 100),
+                              brier=num(nowcast.archive.skill.brier, 3),
+                              bss=num(nowcast.archive.skill.bss, 3, sign=True),
+                              auc=num(nowcast.archive.skill.auc, 3) if nowcast.archive.skill.auc else '—',
+                              rules=num(nowcast.archive.rules.auc, 3) if nowcast.archive.rules.auc else '—') }}
+                    </p>
+                    {%- endif %}
+                    <p>
+                        {{ t('A retrained model only ships if it clears the same gates on both tests: skill over the base rate, ranking hours at least as well as the ladder, and no sharp regression against the model already deployed. Refusing to ship is a normal outcome.') }}
                     </p>
                     {%- endif %}
 
-                    {#- A coefficient says how much a signal is being leaned
-                        on, not whether leaning on it helps. This is the
-                        measurement that can tell the difference, and it is
-                        run every week rather than when somebody wonders. -#}
+                    {#- How hard the trees lean on a signal is not whether
+                        leaning on it helps. This is the measurement that can
+                        tell the difference, and the trainer takes it every
+                        time it fits a model rather than when somebody wonders. -#}
                     {%- if nowcast.ablations %}
                     <h4>{{ t('What each signal is worth') }}</h4>
                     <p>
-                        {{ t('The same walk-forward, refitted from scratch without each signal in turn. Positive means the model got worse without it — that is what having evidence for a signal looks like. A row near zero is a signal the model could lose without noticing, whatever weight it carries: over a first summer "warm" and "July" are nearly the same column, and a temperature coefficient fitted on that would be learning the calendar rather than the sky.') }}
+                        {{ t('The same fit and the same held-out year, refitted from scratch without each signal in turn. Positive means the model got worse without it — that is what having evidence for a signal looks like. A row near zero is a signal the model could lose without noticing, usually because another one already carries what it knows.') }}
                     </p>
                     <div class="table-scroll">
                         <table class="deep-table skill-table">
@@ -320,7 +355,7 @@
                     {%- if verification and verification.reliability %}
                     <h4>{{ t('And has it been right?') }}</h4>
                     <p>
-                        {{ t("Every hour, what the page was showing is written down. Once the weather has happened those are scored against the same observations the model was trained on. This is the deployed model's own record — not a fit to a held-out past, but the thing you were actually shown.") }}
+                        {{ t("Every hour, what the page was showing is written down. Once the weather has happened those are scored against the nearest weather-service rain gauge — the same kind of observation the model learned from. This is the deployed model's own record — not a fit to a held-out past, but the thing you were actually shown.") }}
                     </p>
                     <p>
                         {{ t('{hours} hours logged, {from_date} to {to_date}, of which {wet}% saw rain. A calibrated probability matches its own claim: in the rows where it said 40%, it should have rained about 40% of the time.',
@@ -366,21 +401,17 @@
                     {%- endif %}
                     {%- endif %}
 
-                    <h4>{{ t('Why the percentage means rain in the area') }}</h4>
+                    <h4>{{ t('Why the percentage means rain here') }}</h4>
                     <p>
-                        {{ t('The labels it learned from are a {km} km reanalysis — "did it rain around here", not "did it rain on this balcony". That is deliberate, and it was measured: trained and judged on a 2 km series instead, the same features manage AUC {auc} against {auc_good} on the reanalysis. Point rain is a few percent of hours and turns on convective detail a barometer cannot see; the synoptic question is the one these sensors can answer.', km=25, auc=num(0.715, 3), auc_good=num(0.831, 3)) }}
+                        {{ t('The labels are rain gauges — each one standing beside the sensors the model learned from — so the question is rain at a point like this balcony, not somewhere in the district. They replaced labels from a {km} km reanalysis, and that was measured rather than assumed: scored on the same two years at eight stations, the same trees ranked wet hours above dry ones as well against the gauges (AUC {auc_gauge}) as against the reanalysis (AUC {auc_area}). Point rain had looked unpredictable only because it was being asked of one summer and a weighted sum.',
+                              km=25,
+                              auc_gauge=num(label_choice.auc_gauge, 3),
+                              auc_area=num(label_choice.auc_reanalysis, 3)) }}
                     </p>
-                    {%- if nowcast.cross_check %}
-                    <p>
-                        {{ t('Held against point rain at the station, the same model scores Brier {brier} with a skill of {bss} — negative, because it is quoting area odds at a question about one roof. That is the honest cost of the choice, and it is why the pill says nearby.',
-                              brier=num(nowcast.cross_check.brier, 3),
-                              bss=num(nowcast.cross_check.bss, 3, sign=True)) }}
-                    </p>
-                    {%- endif %}
 
                     <h4>{{ t('What is driving the number right now') }}</h4>
                     <p>
-                        {{ t('Two different numbers, and the difference matters. The weight is the fitted coefficient — what one standard deviation of this signal is worth in log-odds, the same at every hour. The effect is that weight times how unusual the reading is right now, so a big weight on a signal sitting at its average moves nothing. The starting point plus all ten effects is the number the sigmoid squashes, which makes this table the prediction rather than a picture of it.') }}
+                        {{ t("Each tree walks one path from its root to a leaf, and every step down it is a split on one signal that moves the tree's output up or down. Credit each step to the signal that made it, add them up over every tree, and you have the effects below: the starting point plus all of them is exactly the number the sigmoid squashes, which makes this table the prediction rather than a picture of it. There is no fixed weight to print beside them — what a signal is worth depends on the others, which is the reason for using trees.") }}
                     </p>
                     <div class="table-scroll">
                         <table class="deep-table feature-table" id="deep-features">
@@ -388,30 +419,25 @@
                                 <tr>
                                     <th>{{ t('Signal') }}</th>
                                     <th class="numeric">{{ t('Now') }}</th>
-                                    <th class="numeric" title="{{ t('Standard deviations from the training mean.') }}">{{ t('vs normal') }}</th>
-                                    <th class="numeric" title="{{ t('Log-odds per standard deviation, as fitted. The same at every hour.') }}">{{ t('Weight') }}</th>
-                                    <th class="numeric" title="{{ t('Weight times how unusual the reading is: the log-odds this signal is adding right now.') }}">{{ t('Effect now') }}</th>
+                                    <th class="numeric" title="{{ t('The log-odds this signal moved the prediction by, right now.') }}">{{ t('Effect now') }}</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 {%- for row in nowcast.contributions %}
                                 <tr>
                                     <td>{{ t(row.label) }}</td>
-                                    <td class="numeric">{{ num(row.value, row.digits, sign=row.sign) }}{% if row.unit %} {{ row.unit }}{% endif %}</td>
-                                    <td class="numeric">{{ num(row.standardised, 1, sign=True) }}</td>
-                                    <td class="numeric">{{ num(row.coef, 2, sign=True) }}</td>
-                                    {#- Only the effect is coloured: it is the one that is happening. -#}
+                                    <td class="numeric">{% if row.value is none %}—{% else %}{{ num(row.value, row.digits, sign=row.sign) }}{% if row.unit %} {{ row.unit }}{% endif %}{% endif %}</td>
                                     <td class="numeric {% if row.effect > 0 %}weight-up{% elif row.effect < 0 %}weight-down{% endif %}">{{ num(row.effect, 2, sign=True) }}</td>
                                 </tr>
                                 {%- endfor %}
                             </tbody>
                             <tfoot>
                                 <tr>
-                                    <td colspan="4">{{ t('Starting point, before any signal') }}</td>
-                                    <td class="numeric" data-cell="intercept">{{ num(nowcast.intercept, 2, sign=True) }}</td>
+                                    <td colspan="2">{{ t('Starting point, before any signal') }}</td>
+                                    <td class="numeric" data-cell="baseline">{{ num(nowcast.baseline, 2, sign=True) }}</td>
                                 </tr>
                                 <tr>
-                                    <td colspan="4">{{ t('Total, squashed to a probability') }}</td>
+                                    <td colspan="2">{{ t('Total, squashed to a probability') }}</td>
                                     <td class="numeric" data-cell="total"><strong>{{ num(nowcast.probability * 100) }} %</strong></td>
                                 </tr>
                             </tfoot>

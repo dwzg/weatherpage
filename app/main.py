@@ -15,7 +15,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import __version__, backup, database, i18n, services, weather
+from . import __version__, backup, database, i18n, nowcast, services, weather
 from .api import router as api_router
 from .config import STALE_AFTER_MINUTES, get_settings
 
@@ -301,6 +301,9 @@ def create_app() -> FastAPI:
                 "outlook_is_learned": bool(context.get("outlook_is_learned")),
                 "sky_is_learned": bool(context.get("sky_is_learned")),
                 "calibration": weather.CALIBRATION,
+                # The measurement behind "rain here" rather than "rain in
+                # the area", printed beside the claim it supports.
+                "label_choice": nowcast.LABEL_CHOICE,
                 # Static between deploys — written weekly by ml/train.py —
                 # so the render carries it and the poller leaves it alone.
                 "verification": services.VERIFICATION,

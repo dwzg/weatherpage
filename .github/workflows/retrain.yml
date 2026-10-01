@@ -1,15 +1,20 @@
 name: Retrain the nowcasts
 
-# The models are fitted from the station's own readings against observed
-# weather, so they get better as the archive grows. Once a week is often
-# enough to matter and rare enough to stay reviewable in the commit log.
+# The models are fitted to years of ten-minute observations from the German
+# weather service's stations nearest the balcony — the same three things the
+# balcony measures, labelled by the rain gauge beside them — and then scored
+# against the balcony's own archive before either may ship. Once a week is
+# often enough to keep up with the archive and rare enough to stay reviewable
+# in the commit log.
 #
-# Two come out of one run: rain, labelled by observed precipitation, and sky,
-# labelled by observed cloud cover. They share a feature vector and a replay
-# but are gated independently, so a run that ships one and refuses the other
-# is working as intended. The sky model in particular needs a year or so of
-# archive before it clears — on a single season it is measurably worse than
-# quoting the long-run average, and the gates catch that.
+# Two come out of one run: rain, labelled by those gauges, and sky, labelled
+# by ERA5 cloud cover. They share a feature vector but are gated
+# independently, so a run that ships one and refuses the other is working as
+# intended.
+#
+# The run downloads the stations' files from opendata.dwd.de every time and
+# deliberately caches nothing: which stations they are says roughly where
+# the balcony is, and an Actions cache is readable by more than this job.
 on:
   schedule:
     - cron: "17 4 * * 1"   # Mondays, 04:17 UTC
@@ -28,6 +33,9 @@ concurrency:
 jobs:
   retrain:
     runs-on: ubuntu-latest
+    # Five stations' worth of downloads, a few hundred thousand station-hours
+    # through app.features, and some thirty tree fits. About half an hour.
+    timeout-minutes: 90
 
     permissions:
       contents: write   # to commit a new model
@@ -49,7 +57,8 @@ jobs:
 
       # The station's coordinates are not in the repository — ml/train.py
       # refuses to guess, so an unset secret fails the run rather than
-      # labelling the data with some other place's rain.
+      # training on some other place's stations. Nothing the trainer prints
+      # says which stations it chose: this log is public.
       - name: Fit the model
         env:
           APP_URL: ${{ secrets.APP_URL }}
@@ -58,7 +67,11 @@ jobs:
           API_KEY: ${{ secrets.API_KEY }}
           STATION_LATITUDE: ${{ secrets.STATION_LATITUDE }}
           STATION_LONGITUDE: ${{ secrets.STATION_LONGITUDE }}
-        run: python ml/train.py ${{ inputs.force && '--force' || '' }} | tee training.log
+        # `shell: bash` is what adds pipefail. Without it the runner's default
+        # `bash -e` reports tee's exit status, so a trainer that refused to
+        # write a model failing its self-check would show a green tick.
+        shell: bash
+        run: python -u ml/train.py ${{ inputs.force && '--force' || '' }} | tee training.log
 
       # Two models come out of one run and are gated separately, so either,
       # both or neither may have moved. Anything that changed is committed
@@ -102,18 +115,19 @@ jobs:
           {
             echo "Retrain the nowcasts"
             echo
-            echo "Fitted by .github/workflows/retrain.yml from the station's own"
-            echo "readings: the rain model against observed rainfall, the sky model"
-            echo "against observed cloud cover. Each replaced what was shipped only"
-            echo "by clearing its own gates in ml/train.py, which are measured"
-            echo "walk-forward; the scores and the baselines they were compared"
-            echo "against are in each file under metadata."
+            echo "Fitted by .github/workflows/retrain.yml to the weather service's"
+            echo "stations nearest the balcony: the rain model against their rain"
+            echo "gauges, the sky model against observed cloud cover. Each replaced"
+            echo "what was shipped only by clearing its own gates in ml/train.py,"
+            echo "on a held-out year and on the balcony's own archive; the scores"
+            echo "and the baselines they were compared against are in each file"
+            echo "under metadata."
             echo
             echo "app/verification.json is refreshed every run regardless: it"
             echo "scores the model already deployed against the prediction log,"
             echo "which is a different question from whether to ship a new one."
             echo
-            sed -n '/walk-forward/,$p' training.log | head -n 24
+            sed -n '/── rain/,$p' training.log | head -n 40
           } > "$RUNNER_TEMP/commit-message.txt"
           # `git add` is fatal on a path that does not exist, and a run
           # before the sky model has ever cleared its gates has only one file.

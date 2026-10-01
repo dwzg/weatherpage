@@ -8,35 +8,32 @@ in the labels they were fitted against.
 The rain model is the second of the two predictions on the dashboard, and
 deliberately a different kind of thing from the one in :mod:`app.weather`.
 That one is a handful of thresholds a person can read and argue with. This
-one is a logistic regression fitted to the station's own history against
-observed rainfall, and it answers a narrower question with a number: how
-likely is measurable rain in the next six hours.
+one is an ensemble of gradient-boosted trees, and it answers a narrower
+question with a number: how likely is measurable rain here in the next six
+hours.
 
-The sky model answers the other half of the outlook. The threshold ladder
-asserts "Fair and settled" or "Overcast and humid" from humidity alone, with
-nothing measured behind it; fitted against observed cloud cover, that claim
-becomes one the station has evidence for. Where no label exists — fog, and
-the convective afternoon — the ladder's hand-made rungs stay exactly as they
-were, because no amount of fitting invents ground truth.
+It is not fitted to this balcony's own archive, which is one summer long and
+would teach any model that "cool" means "dry". It is fitted to years of
+ten-minute observations from the weather service's stations nearest the
+balcony — the same three measurements this sensor makes, each labelled by the
+rain gauge standing beside it — and then scored against this balcony's own
+readings before it is allowed to ship (see ``ml/train.py``).
 
-Nothing here trains, fits or downloads. Training happens in CI (``ml/train.py``),
-which writes :data:`MODEL_PATH` — a small JSON file of feature names, scaling
-and coefficients that ships inside the image. Serving a logistic regression is
-a dot product and a sigmoid, so the container needs no numpy, no scikit-learn
-and no network.
+Why trees rather than the logistic regression this used to be: measured on
+the last two years at eight stations, the regression over the same signals
+scored a Brier skill of 0.20 and the trees 0.25, because the signals matter
+in combination. A sharp temperature drop at saturation means rain under any
+barometer; a linear model can only add the two up.
 
-Why a probability rather than another phrase: scored walk-forward over the
-station's history, the model matched a persistence baseline on the yes/no
-call (CSI 0.438 against 0.446) while beating it badly as a probability
-(Brier 0.135 against 0.171, AUC 0.829 against 0.754). Persistence needs to
-know whether it actually rained in the last six hours, which a station with
-no rain gauge cannot; matching it from pressure and humidity alone is the
-point. The value it adds over the rules is calibration, so it is shown as a
-percentage and not collapsed back into a phrase.
+Nothing here trains, fits or downloads. Training happens in CI, which writes
+:data:`MODEL_PATH` — the trees as plain arrays in JSON — and serving them is a
+walk down each tree and a sum, so the container needs no numpy, no
+scikit-learn and no network.
 """
 
 from __future__ import annotations
 
+import itertools
 import json
 import logging
 import math
@@ -67,6 +64,16 @@ VERIFICATION_PATH = Path(__file__).parent / "verification.json"
 HORIZON_HOURS = 6
 RAIN_MM = 0.2
 
+#: Why the labels are rain gauges and not a reanalysis, measured rather than
+#: assumed: the same trees and signals, trained on 2014 to September 2024 at
+#: eight weather-service stations and scored on the two years after, ranked
+#: wet hours above dry ones as well against each station's own gauge as
+#: against the 25 km ERA5 reanalysis at the same point. An earlier finding
+#: that point rain was out of reach (AUC 0.715 against 0.831) had asked it of
+#: one summer, ten signals and a weighted sum, scored against a 2 km forecast
+#: model rather than any gauge.
+LABEL_CHOICE = {"auc_gauge": 0.842, "auc_reanalysis": 0.837}
+
 #: What the sky model calls overcast: mean cloud cover over the next
 #: :data:`HORIZON_HOURS` at or above this percentage. Baked into its labels.
 OVERCAST_PERCENT = 80
@@ -74,55 +81,133 @@ OVERCAST_PERCENT = 80
 
 @dataclass(frozen=True)
 class Contribution:
-    """One feature's share of a single prediction.
+    """One feature's share of a single prediction, in log-odds.
 
-    Two different numbers, which used to share the name ``weight``:
+    The model is a sum of trees, and each tree walks one path from its root
+    to a leaf. Every step down that path is a split on one feature, and it
+    moves the tree's expected output from the node's value to the child's:
+    that move is credited to the feature that made the split. Summed over
+    every step of every tree, the credits plus the model's expected output
+    are exactly the logit the sigmoid squashes — the leaf values telescope —
+    so the set of them is a decomposition of this prediction rather than an
+    illustration of it, which is the only reason it is worth printing.
 
-    ``coef`` is the fitted coefficient — log-odds per standard deviation,
-    a fact about the model that is the same at every hour. ``effect`` is
-    that coefficient times how unusual this reading is, which is a fact
-    about right now, and it is what the model adds in: the intercept plus
-    every effect is the logit the sigmoid squashes. That makes the set of
-    them an exact decomposition of one prediction rather than an
-    illustration of it, which is the only reason it is worth showing on the
-    page.
+    There is no fitted coefficient to show beside it, as there was when the
+    model was a logistic regression: a tree's response to a signal depends
+    on the other signals, which is the whole point of using trees.
     """
 
     name: str
-    value: float        #: the feature as it was measured
-    standardised: float #: standard deviations from the training mean
-    coef: float         #: log-odds per standard deviation, as fitted
-    effect: float       #: coef x standardised: log-odds contributed now
+    value: float | None  #: the feature as it was measured; None if unavailable
+    effect: float        #: log-odds this feature moved the prediction by, now
+
+
+@dataclass(frozen=True)
+class Tree:
+    """One fitted tree, as parallel arrays indexed by node.
+
+    ``feature`` is -1 at a leaf. A reading goes left when it is at or below
+    the node's threshold, and a missing one goes the way training sent the
+    missing values (``missing_left``). ``value`` is the tree's expected
+    output below each node — the leaf value at a leaf, and the
+    training-weighted mean of the leaves beneath an internal node — which is
+    what :class:`Contribution` measures the steps of a path against.
+    """
+
+    feature: tuple[int, ...]
+    threshold: tuple[float, ...]
+    left: tuple[int, ...]
+    right: tuple[int, ...]
+    missing_left: tuple[bool, ...]
+    value: tuple[float, ...]
+
+    def path(self, row: Sequence[float | None]) -> list[int]:
+        """The nodes a reading visits, root first, leaf last."""
+        node, visited = 0, [0]
+        while self.feature[node] >= 0:
+            x = row[self.feature[node]]
+            if x is None:
+                node = self.left[node] if self.missing_left[node] else self.right[node]
+            else:
+                node = self.left[node] if x <= self.threshold[node] else self.right[node]
+            visited.append(node)
+        return visited
+
+    def is_sound(self, width: int) -> bool:
+        """Every array the same length, every split on a known feature, and
+        every child after its parent — which is what guarantees a walk ends."""
+        n = len(self.feature)
+        if not n or any(
+            len(a) != n
+            for a in (self.threshold, self.left, self.right, self.missing_left, self.value)
+        ):
+            return False
+        for node in range(n):
+            f = self.feature[node]
+            if f < 0:
+                continue
+            if f >= width or not (node < self.left[node] < n and node < self.right[node] < n):
+                return False
+        return True
 
 
 @dataclass(frozen=True)
 class Model:
-    """A fitted logistic regression, as it comes out of training."""
+    """A fitted ensemble of trees, as it comes out of training.
+
+    Serving it is a walk down each tree and a sum: no numpy, no
+    scikit-learn. ``ml/train.py`` checks on every run that this walk
+    reproduces scikit-learn's own output for the model it is about to ship,
+    and refuses to write one that does not.
+    """
 
     features: tuple[str, ...]
-    mean: tuple[float, ...]
-    scale: tuple[float, ...]
-    coef: tuple[float, ...]
-    intercept: float
+    #: The raw score before any tree has spoken.
+    base: float
+    trees: tuple[Tree, ...]
     threshold: float
     metadata: dict
 
-    def contributions(self, values: dict[str, float]) -> tuple[Contribution, ...]:
+    @property
+    def expected(self) -> float:
+        """The starting point: the log-odds before any signal has moved it.
+
+        The model's average output over its training data, which is where the
+        breakdown on the page begins and every contribution is measured from.
+        """
+        return self.base + sum(tree.value[0] for tree in self.trees)
+
+    def _row(self, values: dict[str, float | None]) -> list[float | None]:
+        return [values.get(name) for name in self.features]
+
+    def contributions(self, values: dict[str, float | None]) -> tuple[Contribution, ...]:
         """Break one prediction into what each feature added to the log-odds."""
-        out = []
-        for name, mean, scale, coef in zip(
-            self.features, self.mean, self.scale, self.coef, strict=True
-        ):
-            z = (values[name] - mean) / (scale or 1.0)
-            out.append(Contribution(name, values[name], z, coef, coef * z))
-        return tuple(out)
+        row = self._row(values)
+        effect = [0.0] * len(self.features)
+        for tree in self.trees:
+            path = tree.path(row)
+            for parent, child in itertools.pairwise(path):
+                effect[tree.feature[parent]] += tree.value[child] - tree.value[parent]
+        return tuple(
+            Contribution(name, row[i], effect[i]) for i, name in enumerate(self.features)
+        )
 
-    def logit(self, values: dict[str, float]) -> float:
-        """The log-odds of rain: the intercept plus every feature's effect."""
-        return self.intercept + sum(c.effect for c in self.contributions(values))
+    def logit(self, values: dict[str, float | None]) -> float:
+        """The log-odds of rain: the starting point plus every feature's effect."""
+        return self.expected + sum(c.effect for c in self.contributions(values))
 
-    def predict(self, values: dict[str, float]) -> float:
-        """Probability of rain, from a feature dict. Standardise, dot, squash.
+    def raw(self, values: dict[str, float | None]) -> float:
+        """The same log-odds summed leaf by leaf, as scikit-learn computes it.
+
+        Equal to :meth:`logit` up to rounding. Kept separate because it is
+        what the trainer's self-check compares against scikit-learn — the
+        breakdown has to agree with *this*, and this with the library.
+        """
+        row = self._row(values)
+        return self.base + sum(tree.value[tree.path(row)[-1]] for tree in self.trees)
+
+    def predict(self, values: dict[str, float | None]) -> float:
+        """Probability of rain, from a feature dict.
 
         Routed through :meth:`contributions` on purpose: the breakdown the
         page shows is then the same arithmetic as the number beside it, so
@@ -130,6 +215,12 @@ class Model:
         """
         z = self.logit(values)
         return 1.0 / (1.0 + math.exp(-max(-60.0, min(60.0, z))))
+
+
+#: The only model format this code serves. A file in any other — the
+#: logistic regressions shipped before the trees — is skipped like any other
+#: unreadable model, and the page carries on without a nowcast.
+FORMAT = "trees"
 
 
 def load(path: Path | None = None) -> Model | None:
@@ -149,13 +240,24 @@ def load(path: Path | None = None) -> Model | None:
         log.warning("nowcast model at %s could not be read; skipping", path, exc_info=True)
         return None
 
+    if not isinstance(raw, dict) or raw.get("format") != FORMAT:
+        log.warning("nowcast model at %s is not in the %r format; skipping", path, FORMAT)
+        return None
     try:
         model = Model(
-            features=tuple(raw["features"]),
-            mean=tuple(float(v) for v in raw["mean"]),
-            scale=tuple(float(v) for v in raw["scale"]),
-            coef=tuple(float(v) for v in raw["coef"]),
-            intercept=float(raw["intercept"]),
+            features=tuple(str(name) for name in raw["features"]),
+            base=float(raw["base"]),
+            trees=tuple(
+                Tree(
+                    feature=tuple(int(v) for v in tree["feature"]),
+                    threshold=tuple(float(v) for v in tree["threshold"]),
+                    left=tuple(int(v) for v in tree["left"]),
+                    right=tuple(int(v) for v in tree["right"]),
+                    missing_left=tuple(bool(v) for v in tree["missing_left"]),
+                    value=tuple(float(v) for v in tree["value"]),
+                )
+                for tree in raw["trees"]
+            ),
             threshold=float(raw.get("threshold", 0.5)),
             metadata=dict(raw.get("metadata", {})),
         )
@@ -163,9 +265,10 @@ def load(path: Path | None = None) -> Model | None:
         log.warning("nowcast model at %s is malformed; skipping", path, exc_info=True)
         return None
 
-    widths = {len(model.features), len(model.mean), len(model.scale), len(model.coef)}
-    if len(widths) != 1 or not model.features:
-        log.warning("nowcast model at %s has mismatched feature arrays; skipping", path)
+    if not model.features or not model.trees or not all(
+        tree.is_sound(len(model.features)) for tree in model.trees
+    ):
+        log.warning("nowcast model at %s has an inconsistent tree; skipping", path)
         return None
     return model
 
@@ -290,20 +393,30 @@ class FeatureFormat:
     sign: bool = False
 
 
-#: Keyed by the feature names ml/train.py writes. The labels are English
-#: because the English string is the message id (see app.i18n).
+#: Keyed by the feature names :mod:`app.features` computes. The labels are
+#: English because the English string is the message id (see app.i18n).
 FEATURE_FORMATS: dict[str, FeatureFormat] = {
+    "rh": FeatureFormat("Humidity", "%", 0),
+    "rh_max1": FeatureFormat("Peak humidity, 1 h", "%", 0),
+    "rh_max3": FeatureFormat("Peak humidity, 3 h", "%", 0),
+    "sat3": FeatureFormat("Time saturated, 3 h", "%", 0, factor=100.0),
+    "temp": FeatureFormat("Temperature", "°C", 1),
+    "td": FeatureFormat("Dew point", "°C", 1),
+    "spread": FeatureFormat("Dew-point spread", "°C", 1),
+    "dT1": FeatureFormat("Temperature change, 1 h", "°C", 1, sign=True),
+    "dT3": FeatureFormat("Temperature change, 3 h", "°C", 1, sign=True),
+    "dT24": FeatureFormat("Temperature change, 24 h", "°C", 1, sign=True),
+    "dtd3": FeatureFormat("Dew-point change, 3 h", "°C", 1, sign=True),
+    "drh3": FeatureFormat("Humidity change, 3 h", "pp", 1, sign=True),
     "pct30": FeatureFormat("Pressure rank, 30 days", "%", 0, factor=100.0),
     "pct7": FeatureFormat("Pressure rank, 7 days", "%", 0, factor=100.0),
-    "rh": FeatureFormat("Humidity", "%", 0),
-    "rh_max6": FeatureFormat("Peak humidity, 6 h", "%", 0),
-    "drh3": FeatureFormat("Humidity change, 3 h", "pp", 1, sign=True),
-    "drh6": FeatureFormat("Humidity change, 6 h", "pp", 1, sign=True),
-    "spread": FeatureFormat("Dew-point spread", "°C", 1),
+    "dp1": FeatureFormat("Pressure change, 1 h", "hPa", 1, sign=True),
+    "dp3": FeatureFormat("Pressure change, 3 h", "hPa", 1, sign=True),
     "dp6": FeatureFormat("Pressure change, 6 h", "hPa", 1, sign=True),
     "dp12": FeatureFormat("Pressure change, 12 h", "hPa", 1, sign=True),
-    "temp": FeatureFormat("Temperature", "°C", 1),
+    "hour": FeatureFormat("Hour of the day", "h", 0),
 }
+
 
 def describe_feature(name: str) -> FeatureFormat:
     """How to print one feature.

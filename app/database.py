@@ -17,18 +17,17 @@ through the repeated autumn hour apart — see :data:`ORDER_OLDEST_FIRST`.
 from __future__ import annotations
 
 import asyncio
-import bisect
 import itertools
 import logging
 from collections.abc import AsyncIterator, Iterable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
 
 import aiosqlite
 
-from . import clock
+from . import clock, features
 from .cache import cached
 from .cache import invalidate as invalidate_cache
 from .config import READING_INTERVAL_MINUTES, get_settings
@@ -88,22 +87,12 @@ TREND_WINDOW_HOURS = 6
 SMOOTHING_WINDOW_MINUTES = 30
 SMOOTHING_READINGS = max(int(SMOOTHING_WINDOW_MINUTES / READING_INTERVAL_MINUTES), 1)
 
-#: How far back the daily pressure cycle is learned from.
-CYCLE_LEARN_DAYS = 90
-
-#: Readings a day needs before it counts toward the learned cycle — a day
-#: with an outage in it would bias the slots that are missing.
-CYCLE_MIN_READINGS_PER_DAY = 200
-
-#: Complete days needed before the learned cycle is applied at all.
-CYCLE_MIN_DAYS = 14
-
-#: How much recent history the current pressure is ranked against, and the
-#: hourly readings needed before that ranking means anything.
-PERCENTILE_DAYS = 30
-PERCENTILE_MIN_READINGS = 7 * 24
-#: Fraction of a shorter window that must be populated for it to count.
-PERCENTILE_COVERAGE = 0.6
+#: The pressure cycle and the pressure ranking are defined once, in
+#: app.features, because the nowcast reads them too and training feeds them
+#: weather-service data: a second definition here would be a second thing
+#: for the card and the model to disagree about.
+CYCLE_LEARN_DAYS = features.CYCLE_LEARN_DAYS
+PERCENTILE_DAYS = features.PERCENTILE_DAYS
 
 #: How today is judged unusual or not: the same clock-hours on each of the
 #: last this-many days. Not "this date in other years", which an archive
@@ -1054,20 +1043,9 @@ async def get_pressure_percentile(
     Returns ``None`` until there is enough history to rank against.
     """
     window = await _recent_pressures(days)
-    if len(window) < _percentile_minimum(days):
+    if len(window) < features.percentile_minimum(days):
         return None
-    return round(bisect.bisect_left(window, pressure) / len(window), 3)
-
-
-def _percentile_minimum(days: int) -> int:
-    """Hourly readings needed before a ranking window means anything.
-
-    The smaller of a week's worth and most of the window: a rank against a
-    handful of readings is meaningless, but demanding every hour would let a
-    single afternoon's outage silently switch the ranking — and the nowcast
-    that reads it — off for days.
-    """
-    return min(PERCENTILE_MIN_READINGS, int(days * 24 * PERCENTILE_COVERAGE))
+    return features.rank(pressure, window)
 
 
 @cached
@@ -1096,43 +1074,56 @@ async def get_pressure_cycle() -> dict[int, float]:
     mean offset of each slot is learned from complete days and subtracted
     before any trend is taken.
 
-    Returns an empty mapping until :data:`CYCLE_MIN_DAYS` complete days exist,
-    in which case no correction is applied at all — a young database has no
-    cycle to learn from, and half a cycle is worse than none.
+    Learned over the :data:`CYCLE_LEARN_DAYS` whole days before today, by
+    :func:`app.features.pressure_cycle` — the same function the trainer runs
+    over the weather service's stations, so the model's pressure features are
+    de-tided identically on both sides. Whole days, so the cycle moves at
+    midnight rather than with every reading, and so today's half-finished
+    day cannot skew its own correction.
+
+    Returns an empty mapping until enough complete days exist, in which case
+    no correction is applied at all — a young database has no cycle to learn
+    from, and half a cycle is worse than none.
     """
-    cutoff = clock.fmt_ts(clock.now() - timedelta(days=CYCLE_LEARN_DAYS))
+    today = clock.now().replace(tzinfo=None).date()
+    first = today - timedelta(days=CYCLE_LEARN_DAYS)
     rows = await _fetch_all(
-        """
-        WITH recent AS (
-            SELECT substr(timestamp, 1, 10) AS day,
-                   CAST(substr(timestamp, 12, 2) AS INTEGER) * 2
-                     + (CAST(substr(timestamp, 15, 2) AS INTEGER) / 30) AS slot,
-                   pressure
-            FROM weather_readings
-            WHERE timestamp >= ?
-        ),
-        complete AS (
-            SELECT day, AVG(pressure) AS mean_pressure
-            FROM recent
-            GROUP BY day
-            HAVING COUNT(*) >= ?
-        )
-        SELECT r.slot AS slot,
-               AVG(r.pressure - c.mean_pressure) AS offset,
-               COUNT(DISTINCT r.day) AS days
-        FROM recent r
-        JOIN complete c ON c.day = r.day
-        GROUP BY r.slot
-        """,
-        (cutoff, CYCLE_MIN_READINGS_PER_DAY),
+        "SELECT timestamp, pressure FROM weather_readings "
+        "WHERE timestamp >= ? AND timestamp < ?",
+        (f"{first} 00:00:00", f"{today} 00:00:00"),
     )
-    if not rows or max(row["days"] for row in rows) < CYCLE_MIN_DAYS:
-        return {}
-    return {int(row["slot"]): round(row["offset"], 2) for row in rows}
+    return features.pressure_cycle(
+        (date.fromisoformat(row["timestamp"][:10]), _slot_of(row["timestamp"]), row["pressure"])
+        for row in rows
+    )
+
+
+@cached
+async def get_recent_series(days: int = features.HISTORY_DAYS) -> features.Series:
+    """The last ``days`` of readings, as the series app.features reads.
+
+    Memoised like the aggregates, and dropped with them on every write, so
+    the poller asking every minute costs one query per new reading rather
+    than one per request.
+    """
+    cutoff = clock.fmt_ts(clock.now() - timedelta(days=days))
+    rows = await _fetch_all(
+        "SELECT timestamp, temperature, humidity, pressure FROM weather_readings "
+        f"WHERE timestamp >= ? {ORDER_OLDEST_FIRST}",
+        (cutoff,),
+    )
+    return features.Series.from_rows(
+        (datetime.fromisoformat(row["timestamp"]), row["temperature"],
+         row["humidity"], row["pressure"])
+        for row in rows
+    )
 
 
 def _slot_of(timestamp: str) -> int:
-    """The half-hour slot of the day a timestamp falls in (0-47)."""
+    """The half-hour slot of a stored timestamp (0-47), read off the string.
+
+    :func:`app.features.slot_of` for a timestamp that has not been parsed.
+    """
     return int(timestamp[11:13]) * 2 + int(timestamp[14:16]) // 30
 
 
@@ -1141,9 +1132,7 @@ def _detide(row: Any, cycle: dict[int, float]) -> float:
     return row["pressure"] - cycle.get(_slot_of(row["timestamp"]), 0.0)
 
 
-def _median(values: Sequence[float]) -> float:
-    ordered = sorted(values)
-    return ordered[len(ordered) // 2]
+_median = features.median
 
 
 async def _pressure_at(hours: float, cycle: dict[int, float]) -> float | None:
