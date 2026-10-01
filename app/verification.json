@@ -1,24 +1,26 @@
 {
-  "scored_at": "2026-09-28",
+  "scored_at": "2026-10-01",
   "from": "2026-09-22",
-  "to": "2026-09-28",
-  "hours": 149,
+  "to": "2026-09-30",
+  "hours": 204,
   "base_rate": 0.0,
   "models": [
     "2026-09-21",
-    "2026-09-22"
+    "2026-09-22",
+    "2026-09-28"
   ],
   "horizon_hours": 6,
   "rain_mm": 0.2,
+  "labels": "the nearest weather-service rain gauge",
   "rules": {
-    "brier": 0.0,
+    "brier": 0.0294,
     "bss": 0.0,
     "auc": null,
     "csi": 0.0,
-    "kss": 0.0,
+    "kss": -0.029,
     "pod": 0.0,
-    "far": 0.0,
-    "fires": 0.0,
-    "hours": 149
+    "far": 1.0,
+    "fires": 0.029,
+    "hours": 204
   }
 }
