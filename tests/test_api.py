@@ -858,7 +858,7 @@ class TestStationsStayAnonymous:
 
     def test_the_model_metadata_carries_a_count_not_a_list(self):
         source = (self.ROOT / "ml" / "train.py").read_text()
-        assert '"stations": used' in source
+        assert '"stations": used[name]' in source
 
 
 class TestTrainerAndAppAgree:

@@ -140,6 +140,12 @@ Things that differ between them, all declared once in `ml/train.TARGETS`:
   rather than applied — that would mean readings the model does not
   understand. Too little thunder expected in those months (winter) and it
   ships as fitted.
+- **A summit in the cloud does not label fog** (`MAX_FOG_SHARE`, 15 %). Of
+  the five stations nearest the test location, four were foggy 1.0–4.5 % of
+  their hours and one, a hilltop, 29.8 %: its "fog" is a low cloud base, and
+  it taught the model that saturated air means fog — the one lesson a
+  balcony that reads 100 % when wet must not be taught. Its rain, cloud and
+  thunder are still used. The archive's fog labels follow the same rule.
 - **Fog must pass on the balcony before it ships** (`needs_archive`). A BME280
   that sits at 100 % whenever it is wet is, to a model fitted on screens,
   exactly the saturated air fog forms in. Without `MIN_ARCHIVE_EVENTS` foggy
@@ -229,11 +235,14 @@ against the reanalysis labels it used. Its own 0.296 was a summer-only number.
 
 `ml/train.py` (run by `.github/workflows/retrain.yml`, Mondays) now:
 
-1. picks the `TRAINING_STATIONS` (5) weather-service stations nearest the
-   balcony that measure temperature, humidity *and* pressure every ten
-   minutes since `TRAINING_SINCE` (2014) — many have no barometer, and are
-   passed over — and downloads their files and their co-located rain gauges
-   from opendata.dwd.de (`ml/dwd.py`);
+1. picks, for each model, the `TRAINING_STATIONS` (5) weather-service
+   stations nearest the balcony that measure temperature, humidity *and*
+   pressure every ten minutes since `TRAINING_SINCE` (2014) — many have no
+   barometer, and are passed over — *and* observe that model's label, and
+   downloads their files from opendata.dwd.de (`ml/dwd.py`). Usually the
+   same five serve rain, cloud and fog; thunder, reported only where people
+   kept watch, reaches further. `claim()` drops a station's labels for a
+   model that already has its five, so none learns from a sixth-nearest;
 2. converts them to the app's conventions (local wall clock, the database's
    ordering, a per-day pressure cycle learned from the 90 whole days before)
    and calls `app.features.compute()` at every hour — the same function the

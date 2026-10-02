@@ -210,6 +210,48 @@ class TestHourlyLabels:
         assert bound(self.START.replace(year=2023)) is None
 
 
+class TestWhichStationsLabelWhat:
+    """Each model learns from its own nearest stations that observe its label."""
+
+    def station(self, hours=48, **labels):
+        start = datetime(2021, 6, 1)
+        local = [start + timedelta(hours=i) for i in range(hours)]
+        y = np.full((hours, len(train.TARGET_NAMES)), np.nan)
+        for name, value in labels.items():
+            y[:, train.TARGET_NAMES.index(name)] = value
+        return train.Samples(np.zeros((hours, len(features.NAMES))),
+                             np.array(local, dtype="datetime64[s]"), local, y)
+
+    def test_a_station_counts_for_every_target_it_labels(self):
+        need = {"rain": 2, "sky": 2, "fog": 2, "thunder": 2}
+        _, labelled = train.claim(self.station(rain=0.0, sky=1.0, thunder=0.0), need)
+        assert labelled == ["rain", "sky", "thunder"]
+        assert need == {"rain": 1, "sky": 1, "fog": 2, "thunder": 1}
+
+    def test_labels_for_a_full_target_are_dropped(self):
+        """A station found while looking for thunder must not become a sixth
+        rain station: rain has its five nearest."""
+        need = {"rain": 0, "sky": 0, "fog": 0, "thunder": 1}
+        kept, labelled = train.claim(self.station(rain=1.0, thunder=0.0), need)
+        assert labelled == ["thunder"]
+        assert np.isnan(kept.labels("rain")).all()
+        assert (kept.labels("thunder") == 0.0).all()
+
+    def test_a_station_no_model_needs_is_not_kept(self):
+        need = {"rain": 0, "sky": 0, "fog": 0, "thunder": 0}
+        kept, labelled = train.claim(self.station(rain=1.0), need)
+        assert labelled == [] and len(kept) == 0
+
+    def test_a_summit_in_the_cloud_does_not_label_fog(self):
+        start = datetime(2021, 1, 1, tzinfo=UTC)
+        valley = {start + timedelta(hours=k): (500.0 if k % 30 == 0 else 20000.0)
+                  for k in range(3000)}
+        summit = {start + timedelta(hours=k): (300.0 if k % 3 == 0 else 20000.0)
+                  for k in range(3000)}
+        assert train.labeller("fog", valley) is not None
+        assert train.labeller("fog", summit) is None
+
+
 class TestSamples:
     """build_samples is app.features at every hour, on the app's own clock."""
 
@@ -353,6 +395,13 @@ class TestRareEvents:
         tested = {"hours": 2000, "events": 60, "skill": {"bss": 0.2, "auc": 0.9},
                   "rules": {"auc": 0.6}}
         assert train.gates(self.evaluation(tested), "fog", None) == []
+
+    def test_a_summer_without_fog_says_what_it_looked_at(self):
+        """Labelled hours with no fog in them are not "no labels"."""
+        dry = {"hours": 1914, "events": 0, "from": "2026-07-12", "to": "2026-10-02",
+               "base_rate": 0.0}
+        [reason] = train.gates(self.evaluation(dry), "fog", None)
+        assert "has 1914 labelled hours, 0 with fog" in reason
 
     def test_a_level_shift_at_its_bound_is_refused(self):
         evaluation = self.evaluation(None) | {

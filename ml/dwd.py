@@ -256,8 +256,12 @@ def has_barometer(station_id: str, cache: Path, share: float) -> bool:
     return bool(rows) and present / len(rows) >= share
 
 
-def load(station_id: str, cache: Path, since: date) -> Observations:
-    """One station's air and rain record from ``since`` on, from the archive."""
+def load(station_id: str, cache: Path, since: date, rain: bool = True) -> Observations:
+    """One station's air and rain record from ``since`` on, from the archive.
+
+    ``rain=False`` skips the gauge, for a station only needed for a label it
+    does not provide — thunder, at a station further out than the gauges used.
+    """
     since_instant = datetime(since.year, since.month, since.day, tzinfo=UTC)
 
     air: dict[datetime, tuple[float, ...]] = {}
@@ -270,7 +274,7 @@ def load(station_id: str, cache: Path, since: date) -> Observations:
             for instant, (t, h, p) in sorted(air.items())
             if instant >= since_instant and not (math.isnan(t) or math.isnan(h) or math.isnan(p))
         ],
-        rain=load_rain(station_id, cache, since),
+        rain=load_rain(station_id, cache, since) if rain else {},
     )
 
 
@@ -299,7 +303,15 @@ def load_hourly(product: str, station_id: str, cache: Path, since: date) -> dict
     since_instant = datetime(since.year, since.month, since.day, tzinfo=UTC)
     out: dict[datetime, tuple[float, ...]] = {}
     for url in files(product, station_id, cache, since):
-        out.update(read_zip(cached(url, cache, refresh=url.endswith("_akt.zip")), (spec.column,)))
+        try:
+            data = cached(url, cache, refresh=url.endswith("_akt.zip"))
+        except urllib.error.HTTPError as error:
+            # The station lists name stations whose recent file is gone —
+            # closed, or observing something else now. No file, no record.
+            if error.code == 404:
+                continue
+            raise
+        out.update(read_zip(data, (spec.column,)))
     return {
         instant: value
         for instant, (value,) in out.items()

@@ -331,7 +331,7 @@
                               autumn=num(nowcast.seasons.SON, 2, sign=True)) }}
                     </p>
                     {%- endif %}
-                    {%- if nowcast.archive %}
+                    {%- if nowcast.archive and nowcast.archive.skill %}
                     <p>
                         {{ t("On this balcony's own readings, {from_date} to {to_date} — {hours} hours, {wet}% of them followed by rain at the nearest weather-service gauge — it scored Brier {brier}, a skill of {bss}, AUC {auc}, where the ladder ranked the same hours at AUC {rules}. That is the test a weather-service screen cannot pass on this sensor's behalf.",
                               from_date=date(nowcast.archive['from']),

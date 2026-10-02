@@ -10,9 +10,12 @@ from __future__ import annotations
 import io
 import math
 import sys
+import urllib.error
 import zipfile
 from datetime import UTC, date, datetime
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -81,6 +84,27 @@ class TestLoadingAnHourlySeries:
             datetime(2025, 3, 30, 2, tzinfo=UTC): -1.0,
         }
         assert dwd.load_hourly("cloud", "00433", tmp_path, date(2025, 3, 31)) == {}
+
+
+class TestAMissingFile:
+    def test_a_file_the_list_promised_but_the_server_lacks_is_no_record(
+        self, monkeypatch, tmp_path
+    ):
+        def gone(url, *a, **k):
+            raise urllib.error.HTTPError(url, 404, "Not Found", {}, None)
+
+        monkeypatch.setattr(dwd, "files", lambda *a: ["https://example/stundenwerte_WW_00433_akt.zip"])
+        monkeypatch.setattr(dwd, "cached", gone)
+        assert dwd.load_hourly("weather", "00433", tmp_path, date(2025, 1, 1)) == {}
+
+    def test_any_other_failure_is_not_swallowed(self, monkeypatch, tmp_path):
+        def down(url, *a, **k):
+            raise urllib.error.HTTPError(url, 503, "Unavailable", {}, None)
+
+        monkeypatch.setattr(dwd, "files", lambda *a: ["https://example/stundenwerte_WW_00433_akt.zip"])
+        monkeypatch.setattr(dwd, "cached", down)
+        with pytest.raises(urllib.error.HTTPError):
+            dwd.load_hourly("weather", "00433", tmp_path, date(2025, 1, 1))
 
 
 class TestWhereEachProductLives:
