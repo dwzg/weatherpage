@@ -207,6 +207,25 @@ def read_zip(data: bytes, columns: tuple[str, ...]) -> dict[datetime, tuple[floa
     return out
 
 
+def has_barometer(station_id: str, cache: Path, share: float) -> bool:
+    """Whether the station's recent air file reports pressure for ``share`` of its rows.
+
+    Plenty of the service's ten-minute stations measure temperature and
+    humidity with no barometer at all. Checking the small recent file first
+    means such a station costs one download instead of its whole history and
+    its gauge, which on the first real run was 13 stations' worth of both.
+    The file is the one :func:`load` would fetch anyway, so it is cached for it.
+    """
+    directory, stem, _ = PRODUCTS["air"]
+    url = f"{BASE}/{directory}/recent/10minutenwerte_{stem}_{station_id}_akt.zip"
+    try:
+        rows = read_zip(cached(url, cache, refresh=True), ("PP_10",))
+    except urllib.error.HTTPError:
+        return False
+    present = sum(1 for (pressure,) in rows.values() if not math.isnan(pressure))
+    return bool(rows) and present / len(rows) >= share
+
+
 def load(station_id: str, cache: Path, since: date) -> Observations:
     """One station's air and rain record from ``since`` on, from the archive."""
     since_instant = datetime(since.year, since.month, since.day, tzinfo=UTC)

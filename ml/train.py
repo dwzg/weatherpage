@@ -58,6 +58,7 @@ sys.path.insert(0, str(REPO))
 
 import numpy as np  # noqa: E402
 from sklearn.ensemble import HistGradientBoostingClassifier  # noqa: E402
+from sklearn.linear_model import LogisticRegression  # noqa: E402
 from sklearn.metrics import brier_score_loss, roc_auc_score  # noqa: E402
 
 from app import features, nowcast, weather  # noqa: E402
@@ -143,6 +144,19 @@ HOLDOUT_DAYS = 365
 #: Below this many labelled hours the balcony's archive is too short to gate
 #: on, and only the weather-service hold-out decides.
 MIN_ARCHIVE_HOURS = 500
+#: The calibration to the balcony. The trees are fitted to weather-service
+#: screens; on this sensor they rank hours well (AUC 0.807 on the first
+#: archive) but run high (Brier skill -0.116), because a sun-baked, dewy
+#: balcony is not a ventilated screen. Two numbers on the log-odds fix the
+#: scale without touching the ranking. Fitted on the most recent
+#: CALIBRATION_DAYS of the archive, so it follows the season as the record
+#: grows instead of carrying a summer's sensor into the winter; needs
+#: MIN_CALIBRATION_WET wet hours to fit at all; and scored out of fold, the
+#: archive cut into CALIBRATION_FOLDS stretches each judged by a calibration
+#: fitted without it.
+CALIBRATION_DAYS = 120
+MIN_CALIBRATION_WET = 30
+CALIBRATION_FOLDS = 4
 #: Gates a candidate must clear before it replaces the shipped model.
 #: BSS is skill over quoting the base rate; MAX_REGRESSION lets a model
 #: wobble without thrashing the deployed one.
@@ -438,6 +452,8 @@ def build_samples(
 def station_samples(job: tuple[str, Path, date, dict | None]) -> tuple[Samples, float]:
     """Load one weather-service station and build its samples (a worker)."""
     station_id, cache, since, cloud = job
+    if not dwd.has_barometer(station_id, cache, MIN_COVERAGE):
+        return _empty(), 0.0
     observations = dwd.load(station_id, cache, since)
     expected = (datetime.now(UTC).date() - since).days * 144
     coverage = len(observations.air) / expected if expected else 0.0
@@ -494,7 +510,7 @@ def fit(X: np.ndarray, y: np.ndarray) -> HistGradientBoostingClassifier:
 
 def export(
     model: HistGradientBoostingClassifier, names: tuple[str, ...], threshold: float,
-    metadata: dict,
+    metadata: dict, calibration: tuple[float, float] | None = None,
 ) -> dict:
     """The fitted trees as the plain arrays :func:`app.nowcast.load` reads.
 
@@ -541,7 +557,7 @@ def export(
                              for i in range(n)],
             "value": [round(v, 6) for v in value],
         })
-    return {
+    exported = {
         "format": nowcast.FORMAT,
         "features": list(names),
         "base": round(float(np.ravel(model._baseline_prediction)[0]), 6),
@@ -549,6 +565,15 @@ def export(
         "threshold": round(threshold, 3),
         "metadata": metadata,
     }
+    if calibration is not None:
+        exported["calibration"] = {
+            "slope": round(calibration[0], 6), "intercept": round(calibration[1], 6),
+        }
+    return exported
+
+
+def predict(model: nowcast.Model, samples: Samples) -> np.ndarray:
+    return sigmoid(raw_scores(model, samples.matrix(model.features)))
 
 
 def as_model(exported: dict) -> nowcast.Model:
@@ -587,7 +612,7 @@ def raw_scores(model: nowcast.Model, X: np.ndarray) -> np.ndarray:
             go_left = np.where(np.isnan(x), missing_left[node], x <= threshold[node])
             node = np.where(active, np.where(go_left, left[node], right[node]), node)
         out += np.array(tree.value)[node]
-    return out
+    return model.slope * out + model.intercept
 
 
 def self_check(
@@ -603,7 +628,11 @@ def self_check(
     rather than putting a model on the page that says something else.
     """
     model = as_model(exported)
-    expected = fitted.decision_function(X)
+    calibration = exported.get("calibration") or {}
+    expected = (
+        calibration.get("slope", 1.0) * fitted.decision_function(X)
+        + calibration.get("intercept", 0.0)
+    )
     worst = float(np.max(np.abs(raw_scores(model, X) - expected)))
     if worst > 1e-3:
         raise SystemExit(f"exported trees disagree with scikit-learn by up to {worst:.4f}")
@@ -638,11 +667,17 @@ def csi(prediction: np.ndarray, truth: np.ndarray) -> float:
     return hits / total if total else 0.0
 
 
-def score(probabilities: np.ndarray, truth: np.ndarray, threshold: float) -> dict:
+def score(
+    probabilities: np.ndarray, truth: np.ndarray, threshold: float,
+    calls: np.ndarray | None = None,
+) -> dict:
+    """Probabilistic and yes/no skill. ``calls`` overrides the yes/no
+    decisions, for a calibrated score whose calls are the uncalibrated
+    model's — the same hours, since a calibration never reorders them."""
     probabilities = np.asarray(probabilities, dtype=float)
     brier = brier_score_loss(truth, probabilities)
     climatology = brier_score_loss(truth, np.full_like(probabilities, truth.mean()))
-    prediction = probabilities >= threshold
+    prediction = probabilities >= threshold if calls is None else calls
     hits = int((prediction & (truth == 1)).sum())
     misses = int((~prediction & (truth == 1)).sum())
     false_alarms = int((prediction & (truth == 0)).sum())
@@ -744,6 +779,48 @@ def ablations(
     return worth
 
 
+def sigmoid(z: np.ndarray) -> np.ndarray:
+    return 1.0 / (1.0 + np.exp(-np.clip(z, -60, 60)))
+
+
+def logit(p: float) -> float:
+    p = min(max(p, 1e-6), 1 - 1e-6)
+    return float(np.log(p / (1 - p)))
+
+
+def platt(z: np.ndarray, y: np.ndarray) -> tuple[float, float]:
+    """The slope and intercept that best rescale log-odds ``z`` to labels ``y``."""
+    fitted = LogisticRegression(C=1e6, max_iter=1000).fit(z.reshape(-1, 1), y)
+    return float(fitted.coef_[0][0]), float(fitted.intercept_[0])
+
+
+def can_calibrate(truth: np.ndarray) -> bool:
+    return len(truth) >= MIN_ARCHIVE_HOURS and truth.sum() >= MIN_CALIBRATION_WET
+
+
+def out_of_fold(z: np.ndarray, truth: np.ndarray, folds: int = CALIBRATION_FOLDS) -> np.ndarray:
+    """Calibrated probabilities for every hour, each from a fit that never saw it.
+
+    The hours are in time order, and the folds are contiguous stretches of
+    them: rain comes in spells, and a calibration fitted on the hours either
+    side of a wet one would be scored on its own spell.
+    """
+    edges = np.linspace(0, len(z), folds + 1).astype(int)
+    out = sigmoid(z)
+    for k in range(folds):
+        held = np.zeros(len(z), dtype=bool)
+        held[edges[k]:edges[k + 1]] = True
+        if held.all() or len(set(truth[~held].tolist())) < 2:
+            continue  # nothing to fit on: that stretch stays uncalibrated
+        slope, intercept = platt(z[~held], truth[~held])
+        out[held] = sigmoid(slope * z[held] + intercept)
+    return out
+
+
+def recent(samples: Samples, days: int) -> Samples:
+    return samples.take(samples.moments >= samples.moments.max() - np.timedelta64(days, "D"))
+
+
 def describe_period(samples: Samples) -> dict:
     return {
         "from": samples.local[0].strftime("%Y-%m-%d"),
@@ -762,6 +839,7 @@ def print_scores(label: str, rows: dict) -> None:
 
 def evaluate(
     samples: Samples, target: str, archive: Samples | None, measure_worth: bool,
+    shipped: nowcast.Model | None = None,
 ) -> dict | None:
     """Score a candidate out of sample, then fit the one that would ship.
 
@@ -813,17 +891,34 @@ def evaluate(
     on_archive = None
     if scored_archive is not None:
         truth = scored_archive.labels(target)
-        p = candidate.predict_proba(scored_archive.matrix())[:, 1]
+        z = candidate.decision_function(scored_archive.matrix())
+        straight = score(sigmoid(z), truth, threshold)
         on_archive = {
             **describe_period(scored_archive),
             "base_rate": round(float(truth.mean()), 3),
-            "skill": score(p, truth, threshold),
+            "skill": straight,
             "rules": score(incumbent(scored_archive, target), truth, 0.5),
         }
+        rows = {target: straight, "rules": on_archive["rules"]}
+        if can_calibrate(truth):
+            # What ships is calibrated, so what is gated is too — scored out
+            # of fold, with the yes/no calls the threshold makes either way.
+            on_archive["uncalibrated"] = straight
+            on_archive["skill"] = score(
+                out_of_fold(z, truth), truth, threshold, calls=sigmoid(z) >= threshold
+            )
+            rows = {f"{target} (calibrated)": on_archive["skill"],
+                    f"{target} (straight)": straight, "rules": on_archive["rules"]}
+        # What is live now, on the same hours. Only to know whether the
+        # candidate is an improvement on it — see gates() — and it is judged
+        # with whatever calibration it shipped with.
+        if shipped is not None and set(shipped.features) <= set(features.NAMES):
+            on_archive["shipped"] = score(predict(shipped, scored_archive), truth, shipped.threshold)
+            rows["shipped"] = on_archive["shipped"]
         print_scores(
             f"the balcony's own archive: {len(scored_archive)} hours "
             f"(base rate {truth.mean() * 100:.1f}%)",
-            {target: on_archive["skill"], "rules": on_archive["rules"]},
+            rows,
         )
 
     worth = ablations(train, test, target, skill) if measure_worth else None
@@ -832,11 +927,25 @@ def evaluate(
     final_threshold = best_threshold(
         final.predict_proba(usable.matrix())[:, 1], usable.labels(target)
     )
+    calibration = None
+    if on_archive is not None and "uncalibrated" in on_archive:
+        window = recent(scored_archive, CALIBRATION_DAYS)
+        if can_calibrate(window.labels(target)):
+            calibration = platt(final.decision_function(window.matrix()), window.labels(target))
+            on_archive["calibrated_on"] = describe_period(window)
+            print(f"  calibration to the balcony: log-odds x {calibration[0]:.3f} "
+                  f"{calibration[1]:+.3f}, fitted on {len(window)} hours")
+            # The same decision on the new scale: a monotone rescaling moves
+            # the threshold with the probabilities, so the same hours fire.
+            final_threshold = float(sigmoid(np.array(
+                calibration[0] * logit(final_threshold) + calibration[1]
+            )))
     return {
         "target": target,
         "usable": usable,
         "fitted": final,
         "threshold": final_threshold,
+        "calibration": calibration,
         "skill": skill,
         "baselines": reference,
         "seasons": seasons,
@@ -872,13 +981,23 @@ def gates(evaluation: dict, target: str, shipped: dict | None) -> list[str]:
     recorded = (shipped or {}).get("metadata", {})
     reasons = []
     tests = [("held-out year", evaluation["skill"], evaluation["baselines"]["rules"],
-              (recorded.get("skill") or {}).get("bss"))]
+              (recorded.get("skill") or {}).get("bss"), None)]
     archive = evaluation["archive"]
     if archive and archive["hours"] >= MIN_ARCHIVE_HOURS:
         tests.append(("balcony archive", archive["skill"], archive["rules"],
-                      ((recorded.get("archive") or {}).get("skill") or {}).get("bss")))
-    for where, skill, rules, before in tests:
-        if skill["bss"] < MIN_SKILL:
+                      ((recorded.get("archive") or {}).get("skill") or {}).get("bss"),
+                      archive.get("shipped")))
+    for where, skill, rules, before, live in tests:
+        # A candidate short of the bar may still replace a live model that is
+        # further short of it on the same hours, provided it has some skill
+        # of its own: better than what is showing, and better than nothing.
+        # Without this, a model that was never tested on the balcony — the
+        # first one was trained before any archive could be scored — would
+        # stay up behind a gate it could not pass either.
+        improves_on_live = (
+            live is not None and skill["bss"] > max(live["bss"], 0.0)
+        )
+        if skill["bss"] < MIN_SKILL and not improves_on_live:
             reasons.append(f"not enough skill over the base rate on the {where} "
                            f"(BSS {skill['bss']:+.3f}, need {MIN_SKILL:+.2f})")
         if skill["auc"] is None or (rules["auc"] is not None and skill["auc"] < rules["auc"]):
@@ -887,6 +1006,10 @@ def gates(evaluation: dict, target: str, shipped: dict | None) -> list[str]:
         if before is not None and skill["bss"] < before - MAX_REGRESSION:
             reasons.append(f"a clear step down from the shipped {target} model on the {where} "
                            f"(BSS {skill['bss']:+.3f} vs {before:+.3f} when it was fitted)")
+    calibration = evaluation.get("calibration")
+    if calibration is not None and calibration[0] <= 0:
+        reasons.append("the balcony's record ranks this model's hours backwards "
+                       f"(calibration slope {calibration[0]:+.3f})")
     return reasons
 
 
@@ -924,6 +1047,7 @@ def ship(evaluation: dict, out: Path, extra: dict, force: bool) -> bool:
             "ablations": evaluation["ablations"],
             **extra,
         },
+        evaluation["calibration"],
     )
     self_check(exported, evaluation["fitted"], usable.matrix())
     out.write_text(json.dumps(exported, separators=(",", ":")) + "\n")
@@ -1126,7 +1250,8 @@ def main() -> int:
     provenance = {"stations": used, "years": [TRAINING_SINCE.year, today.year]}
 
     if args.target in ("rain", "both"):
-        evaluation = evaluate(samples, "rain", archive, measure_worth=not args.no_ablations)
+        evaluation = evaluate(samples, "rain", archive, measure_worth=not args.no_ablations,
+                              shipped=nowcast.load(args.out))
         if evaluation is not None:
             wrote |= ship(
                 evaluation, args.out,
@@ -1139,7 +1264,8 @@ def main() -> int:
             )
 
     if with_sky:
-        evaluation = evaluate(samples, "sky", archive, measure_worth=False)
+        evaluation = evaluate(samples, "sky", archive, measure_worth=False,
+                              shipped=nowcast.load(args.sky_out))
         if evaluation is not None:
             wrote |= ship(
                 evaluation, args.sky_out,
