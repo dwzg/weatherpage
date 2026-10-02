@@ -279,3 +279,94 @@ class TestGates:
             self.shipped(archive_bss=0.2),
         )
         assert any("balcony archive" in r and "step down" in r for r in reasons)
+
+
+class TestCalibrationFit:
+    """The two numbers fitted to the balcony's record, and how they are scored."""
+
+    def miscalibrated(self, count=4000, slope=0.6, intercept=-0.8, seed=3):
+        """Log-odds that run high: the truth is a rescaling of what they say."""
+        rng = np.random.default_rng(seed)
+        z = rng.normal(-1.5, 1.5, count)
+        y = (rng.random(count) < train.sigmoid(slope * z + intercept)).astype(float)
+        return z, y
+
+    def test_it_recovers_the_rescaling(self):
+        z, y = self.miscalibrated()
+        slope, intercept = train.platt(z, y)
+        assert slope == pytest.approx(0.6, abs=0.1)
+        assert intercept == pytest.approx(-0.8, abs=0.15)
+
+    def test_calibrating_never_changes_the_ranking(self):
+        z, y = self.miscalibrated()
+        from sklearn.metrics import roc_auc_score
+
+        assert roc_auc_score(y, train.out_of_fold(z, y)) == pytest.approx(
+            roc_auc_score(y, z), abs=0.02)  # each fold is monotone; only fold seams move
+
+    def test_out_of_fold_beats_straight_on_a_miscalibrated_record(self):
+        z, y = self.miscalibrated()
+        straight = train.score(train.sigmoid(z), y, 0.3)["brier"]
+        assert train.score(train.out_of_fold(z, y), y, 0.3)["brier"] < straight
+
+    def test_no_hour_is_scored_by_a_fit_that_saw_it(self, monkeypatch):
+        """Each contiguous stretch is calibrated by a fit on the others alone."""
+        z, y = self.miscalibrated(count=400)
+        seen = []
+        real = train.platt
+
+        def spy(zz, yy):
+            seen.append(len(zz))
+            return real(zz, yy)
+
+        monkeypatch.setattr(train, "platt", spy)
+        train.out_of_fold(z, y, folds=4)
+        assert seen == [300, 300, 300, 300]
+
+    def test_too_few_wet_hours_are_not_calibrated_on(self):
+        y = np.zeros(train.MIN_ARCHIVE_HOURS)
+        y[: train.MIN_CALIBRATION_WET - 1] = 1
+        assert not train.can_calibrate(y)
+        y[: train.MIN_CALIBRATION_WET] = 1
+        assert train.can_calibrate(y)
+
+    def test_the_export_carries_it_and_the_trees_are_checked_under_it(self, small_trees):
+        data = synthetic(2000)
+        fitted = train.fit(data.matrix(), data.rain)
+        exported = train.export(fitted, train.FEATURES, 0.3, {}, calibration=(0.7, -0.3))
+        assert exported["calibration"] == {"slope": 0.7, "intercept": -0.3}
+        train.self_check(exported, fitted, data.matrix(), count=200)
+        # The check reads the calibration from the file it is checking, so
+        # what it holds to account is the trees under that calibration.
+        exported["base"] += 0.5
+        with pytest.raises(SystemExit):
+            train.self_check(exported, fitted, data.matrix(), count=50)
+
+
+class TestReplacingAnUntestedModel:
+    """The first tree model was trained where no balcony archive could be
+    scored, so it has no archive record to be measured against. A candidate
+    short of the bar may still replace it — but only for real."""
+
+    def evaluation(self, bss, live_bss):
+        return {
+            "skill": {"bss": 0.25, "auc": 0.85},
+            "baselines": {"rules": {"auc": 0.68}},
+            "archive": {
+                "hours": 1700, "skill": {"bss": bss, "auc": 0.80},
+                "rules": {"auc": 0.73}, "shipped": {"bss": live_bss},
+            },
+        }
+
+    def test_better_than_live_and_better_than_nothing_ships(self):
+        assert train.gates(self.evaluation(0.03, -0.11), "rain", None) == []
+
+    def test_better_than_live_but_worse_than_nothing_does_not(self):
+        assert train.gates(self.evaluation(-0.02, -0.11), "rain", None)
+
+    def test_short_of_the_bar_and_no_better_than_live_does_not(self):
+        assert train.gates(self.evaluation(0.03, 0.04), "rain", None)
+
+    def test_a_calibration_that_would_reverse_the_ranking_is_refused(self):
+        evaluation = self.evaluation(0.12, -0.11) | {"calibration": (-0.4, 0.1)}
+        assert any("backwards" in r for r in train.gates(evaluation, "rain", None))

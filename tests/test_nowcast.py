@@ -647,3 +647,76 @@ class TestComposedOutlookOnThePage:
         text = (await client.get("/", headers={"accept-language": "de-DE,de;q=0.9"})).text
         assert 'data-phrase="Rain likely"' in text
         assert "Regenmodell über" in text
+
+
+class TestCalibration:
+    """The two numbers fitted to the balcony's own record.
+
+    The trees learn from weather-service screens; on this sensor they ranked
+    hours well and ran high, so the log-odds are rescaled before they are
+    squashed. Everything the page prints must still add up afterwards.
+    """
+
+    CALIBRATED = MODEL | {"calibration": {"slope": 0.5, "intercept": -0.4}}
+
+    def model(self, tmp_path, payload=None):
+        return nowcast.load(write(tmp_path, payload or self.CALIBRATED))
+
+    def test_a_file_without_one_is_left_alone(self, tmp_path):
+        model = nowcast.load(write(tmp_path, MODEL))
+        assert (model.slope, model.intercept) == (1.0, 0.0)
+
+    def test_it_rescales_the_log_odds(self, tmp_path):
+        model = self.model(tmp_path)
+        trees = -1.0 + 0.6 + 0.9  # pct30 0.1 left in tree one, rh 95 right in tree two
+        assert model.raw({"pct30": 0.1, "rh": 95.0}) == pytest.approx(0.5 * trees - 0.4)
+        assert model.predict({"pct30": 0.1, "rh": 95.0}) == pytest.approx(
+            1 / (1 + math.exp(-(0.5 * trees - 0.4))))
+
+    def test_the_breakdown_still_adds_up(self, tmp_path):
+        model = self.model(tmp_path)
+        for values in ({"pct30": 0.1, "rh": 95.0}, {"pct30": None, "rh": 50.0}):
+            total = model.expected + sum(c.effect for c in model.contributions(values))
+            assert total == pytest.approx(model.raw(values))
+
+    def test_each_effect_is_scaled_with_the_sum(self, tmp_path):
+        plain = nowcast.load(write(tmp_path, MODEL, "plain.json"))
+        scaled = self.model(tmp_path)
+        values = {"pct30": 0.1, "rh": 95.0}
+        for a, b in zip(plain.contributions(values), scaled.contributions(values), strict=True):
+            assert b.effect == pytest.approx(0.5 * a.effect)
+
+    def test_it_never_reorders_two_hours(self, tmp_path):
+        """A calibration changes how sure the model sounds, not which hour is wetter."""
+        plain = nowcast.load(write(tmp_path, MODEL, "plain.json"))
+        scaled = self.model(tmp_path)
+        hours = [{"pct30": p, "rh": h} for p in (0.1, 0.3, 0.7) for h in (40.0, 70.0, 95.0)]
+        order = sorted(range(len(hours)), key=lambda i: plain.predict(hours[i]))
+        assert order == sorted(range(len(hours)), key=lambda i: scaled.predict(hours[i]))
+
+    @pytest.mark.parametrize("slope", [0.0, -0.5])
+    def test_a_slope_that_would_turn_the_ranking_over_is_rejected(self, tmp_path, slope):
+        payload = MODEL | {"calibration": {"slope": slope, "intercept": 0.0}}
+        assert nowcast.load(write(tmp_path, payload)) is None
+
+    def test_a_malformed_one_is_rejected(self, tmp_path):
+        payload = MODEL | {"calibration": {"slope": "steep"}}
+        assert nowcast.load(write(tmp_path, payload)) is None
+
+    async def test_the_page_says_it_was_calibrated(self, client, db, monkeypatch, tmp_path):
+        payload = self.CALIBRATED | {"metadata": {
+            "skill": {"brier": 0.1, "bss": 0.22, "auc": 0.83, "csi": 0.3, "kss": 0.4},
+            "archive": {
+                "from": "2026-07-20", "to": "2026-09-30", "hours": 1697, "base_rate": 0.085,
+                "skill": {"brier": 0.07, "bss": 0.12, "auc": 0.807},
+                "uncalibrated": {"brier": 0.087, "bss": -0.116, "auc": 0.807},
+                "rules": {"auc": 0.73},
+            },
+        }}
+        model = nowcast.load(write(tmp_path, payload))
+        monkeypatch.setattr(services, "NOWCAST_MODEL", model)
+        await stock(db)
+        text = (await client.get("/")).text
+        assert "Straight from the weather-service stations it scored a skill of -0.116" in text
+        german = (await client.get("/", headers={"accept-language": "de-DE,de;q=0.9"})).text
+        assert "Kalibrierung an den eigenen Messwerten des Balkons" in german

@@ -129,8 +129,11 @@ summary`) precisely so the nested handle does not inherit the card's own.
   the logit, to rounding. Internal nodes carry the expected output of the
   leaves beneath them, weighted by the training hours that reached each —
   `ml/train.py::export()` computes it, since scikit-learn does not store it
-  in that form. Everything in the table is in log-odds for that reason;
-  don't "normalise" it to percentages, which would stop it adding up.
+  in that form. The balcony calibration (below) multiplies the whole sum by
+  its slope and adds its intercept, so the starting point and every effect
+  are scaled with it and the table still adds up exactly. Everything in it is
+  in log-odds for that reason; don't "normalise" it to percentages, which
+  would stop it adding up.
 - **There is no coefficient column any more, on purpose.** The logistic
   regression had one per feature, and the page printed it beside the effect.
   A tree's response to a signal depends on the others — that is why it is
@@ -182,11 +185,48 @@ against the reanalysis labels it used. Its own 0.296 was a summer-only number.
    `/api/weather/export`, labelled by the nearest gauge — the evaluation fit
    stops before the archive starts, so neighbouring stations cannot leak the
    same storms into it;
-5. refits on everything, exports the trees, and writes `app/model.json`
-   **only if** the candidate clears the gates on *both* tests: Brier skill
-   over the base rate ≥ `MIN_SKILL`, AUC at least the ladder's, and no more
-   than `MAX_REGRESSION` below the skill the shipped model *recorded* when
-   it was fitted. Refusing to ship is a normal outcome.
+5. **calibrates it to the balcony**: a slope and an intercept on the
+   log-odds, fitted (Platt) against the gauge on the most recent
+   `CALIBRATION_DAYS` (120) of the archive — see below;
+6. refits on everything, exports the trees with the calibration, and writes
+   `app/model.json` **only if** the candidate clears the gates on *both*
+   tests: Brier skill over the base rate ≥ `MIN_SKILL`, AUC at least the
+   ladder's, and no more than `MAX_REGRESSION` below the skill the shipped
+   model *recorded* when it was fitted. Refusing to ship is a normal outcome.
+
+**Why the calibration exists.** The first real run scored the trees on the
+balcony's archive (1,697 hours, rain in 8.5 % of six-hour windows at the
+nearest gauge) at AUC 0.807 — better than at most training stations, and
+well above the ladder's 0.73 — and Brier skill **−0.116**. Ranking right and
+scoring below the base rate is miscalibration, not blindness: the signal
+transfers to this sensor, the scale does not. A sun-baked BME280 that holds
+dew and sits at 100 % when wet is not a ventilated screen. Two numbers fix a
+scale without touching the ranking (a positive slope cannot reorder hours,
+and `nowcast.load()` rejects any other), so that is all the balcony's record
+is asked to fit; it is far too short — one summer, ~150 wet hours — to be
+asked for more. Details that matter:
+
+- It is **scored out of fold**: the archive is cut into `CALIBRATION_FOLDS`
+  contiguous stretches, each scored by a calibration fitted on the others,
+  and that score is what the archive gate reads. Contiguous, because rain
+  comes in spells and a fit on the hours either side of a wet one would be
+  marking its own homework. The yes/no figures use the uncalibrated calls,
+  which are the same hours either way.
+- The **shipped** calibration is fitted on the final model's log-odds over
+  the most recent `CALIBRATION_DAYS`, so it follows the season as the record
+  grows rather than carrying a summer's sensor into the winter — at the cost
+  of lagging a season change by a few weeks. It needs `MIN_CALIBRATION_WET`
+  wet hours; short of that, nothing is calibrated and the archive is not
+  gated on.
+- The operating **threshold** is carried through the calibration
+  (`sigmoid(a·logit(t) + b)`), so the same hours fire.
+- The trainer also scores **the live model** on the same archive hours. A
+  candidate short of `MIN_SKILL` there may still replace it if it has
+  positive skill and beats what is live: the first tree model was trained
+  where no archive could be scored, and without this it could have stayed up
+  behind a bar it would not pass either. That re-score is optimistic for the
+  live model wherever its training stations saw the archive's weather, which
+  only ever makes replacing it harder.
 
 Measured over 1.1 million station-hours at eight stations (2014 to
 September 2024, scored on the two years after), in Brier skill:
@@ -445,7 +485,8 @@ Workflow inputs are passed to the shell through `env:`, never interpolated into 
 
 ## Known limitations
 
-- **The balcony's hygrometer saturates in rain; a weather-service screen's does not.** In rain the screens read a median 90–94 % and reach ≥97 % in only 2–17 % of rain intervals, so in training a saturated sensor mostly means fog. The BME280 on the balcony sits at exactly 100 % when wet. The model leans on dew point, pressure rank and changes, temperature changes and the hour far more than on humidity, so the cost is limited — but "Time saturated, 3 h" carries nothing, which on this sensor it should. The fix is a learned correction from the balcony's archive against the nearest gauge, once that archive spans more than one season; until then the archive gate is what keeps a gap like this from shipping silently.
+- **The balcony's hygrometer saturates in rain; a weather-service screen's does not.** In rain the screens read a median 90–94 % and reach ≥97 % in only 2–17 % of rain intervals, so in training a saturated sensor mostly means fog. The BME280 on the balcony sits at exactly 100 % when wet. Together with the sun this is why the trees run high here; the calibration corrects the scale, but "Time saturated, 3 h" still carries nothing, which on this sensor it should. Correcting the inputs themselves — learning the sensor's own humidity and temperature against the nearest station — is the next step once the archive spans more than one season. The calibration is fitted on a single season too, and will lag the next one by a few weeks.
+- **Stations without a barometer are skipped after one small download.** `dwd.has_barometer()` reads the recent air file first; most of the service's ten-minute stations carry no pressure at all (13 were skipped on the first real run, each of which used to cost its full history and its gauge).
 
 - `get_history_series()` still scans the readings, and is now the most expensive query on a long archive (~120 ms over two years). It is the one aggregate a per-day rollup cannot serve: a chart needs resolution finer than a day until the archive is long enough for the bucket ladder to reach 1440 minutes.
 - A backfill cannot restore the *first* pass of a repeated autumn hour after the fact, because walking wall-clock time only ever visits 02:30 once and a replay has no arrival time to resolve it with. Posting the timestamp with an explicit `+02:00` is the way to aim at it.

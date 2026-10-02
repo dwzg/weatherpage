@@ -167,21 +167,35 @@ class Model:
     trees: tuple[Tree, ...]
     threshold: float
     metadata: dict
+    #: The calibration to this balcony: the trees' log-odds are multiplied by
+    #: ``slope`` and shifted by ``intercept``. The trees are fitted to
+    #: weather-service screens, and on this sensor they rank hours well but
+    #: run high, so ml/train.py fits these two numbers against the balcony's
+    #: own record. Identity when the file carries none. A monotone rescaling:
+    #: it changes how sure the model sounds, never which hour it thinks wetter.
+    slope: float = 1.0
+    intercept: float = 0.0
 
     @property
     def expected(self) -> float:
         """The starting point: the log-odds before any signal has moved it.
 
-        The model's average output over its training data, which is where the
-        breakdown on the page begins and every contribution is measured from.
+        The model's average output over its training data, calibrated, which
+        is where the breakdown on the page begins and every contribution is
+        measured from.
         """
-        return self.base + sum(tree.value[0] for tree in self.trees)
+        return self.slope * (self.base + sum(tree.value[0] for tree in self.trees)) + self.intercept
 
     def _row(self, values: dict[str, float | None]) -> list[float | None]:
         return [values.get(name) for name in self.features]
 
     def contributions(self, values: dict[str, float | None]) -> tuple[Contribution, ...]:
-        """Break one prediction into what each feature added to the log-odds."""
+        """Break one prediction into what each feature added to the log-odds.
+
+        Each step is scaled by the calibration's slope, as the sum it is part
+        of is: the starting point plus these is then still exactly the
+        calibrated logit.
+        """
         row = self._row(values)
         effect = [0.0] * len(self.features)
         for tree in self.trees:
@@ -189,7 +203,8 @@ class Model:
             for parent, child in itertools.pairwise(path):
                 effect[tree.feature[parent]] += tree.value[child] - tree.value[parent]
         return tuple(
-            Contribution(name, row[i], effect[i]) for i, name in enumerate(self.features)
+            Contribution(name, row[i], self.slope * effect[i])
+            for i, name in enumerate(self.features)
         )
 
     def logit(self, values: dict[str, float | None]) -> float:
@@ -201,10 +216,12 @@ class Model:
 
         Equal to :meth:`logit` up to rounding. Kept separate because it is
         what the trainer's self-check compares against scikit-learn — the
-        breakdown has to agree with *this*, and this with the library.
+        breakdown has to agree with *this*, and this with the library, once
+        both are put through the same calibration.
         """
         row = self._row(values)
-        return self.base + sum(tree.value[tree.path(row)[-1]] for tree in self.trees)
+        trees = self.base + sum(tree.value[tree.path(row)[-1]] for tree in self.trees)
+        return self.slope * trees + self.intercept
 
     def predict(self, values: dict[str, float | None]) -> float:
         """Probability of rain, from a feature dict.
@@ -260,8 +277,10 @@ def load(path: Path | None = None) -> Model | None:
             ),
             threshold=float(raw.get("threshold", 0.5)),
             metadata=dict(raw.get("metadata", {})),
+            slope=float((raw.get("calibration") or {}).get("slope", 1.0)),
+            intercept=float((raw.get("calibration") or {}).get("intercept", 0.0)),
         )
-    except (KeyError, TypeError, ValueError):
+    except (KeyError, TypeError, ValueError, AttributeError):
         log.warning("nowcast model at %s is malformed; skipping", path, exc_info=True)
         return None
 
@@ -269,6 +288,11 @@ def load(path: Path | None = None) -> Model | None:
         tree.is_sound(len(model.features)) for tree in model.trees
     ):
         log.warning("nowcast model at %s has an inconsistent tree; skipping", path)
+        return None
+    # A slope at or below zero would turn the ranking upside down, which no
+    # calibration should do: the file is wrong, whatever wrote it.
+    if not (model.slope > 0 and math.isfinite(model.slope) and math.isfinite(model.intercept)):
+        log.warning("nowcast model at %s has an impossible calibration; skipping", path)
         return None
     return model
 

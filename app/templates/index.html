@@ -307,6 +307,12 @@
                               auc=num(nowcast.archive.skill.auc, 3) if nowcast.archive.skill.auc else '—',
                               rules=num(nowcast.archive.rules.auc, 3) if nowcast.archive.rules.auc else '—') }}
                     </p>
+                    {%- if nowcast.archive.uncalibrated %}
+                    <p>
+                        {{ t("Straight from the weather-service stations it scored a skill of {straight} on those hours: it ranked them well, but its probabilities did not fit this sensor, which is sun-baked and holds dew where a ventilated screen does neither. So the last step is a calibration fitted to the balcony's own record — two numbers that rescale the log-odds without changing which hour ranks above which — and the figures above are for the calibrated model, each stretch of the record scored by a calibration that was fitted without it.",
+                              straight=num(nowcast.archive.uncalibrated.bss, 3, sign=True)) }}
+                    </p>
+                    {%- endif %}
                     {%- endif %}
                     <p>
                         {{ t('A retrained model only ships if it clears the same gates on both tests: skill over the base rate, ranking hours at least as well as the ladder, and no sharp regression against the model already deployed. Refusing to ship is a normal outcome.') }}
