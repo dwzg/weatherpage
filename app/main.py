@@ -287,13 +287,16 @@ def create_app() -> FastAPI:
                 "rule": i18n.rule_describer(lang),
                 # The explainer prints whichever ladder actually produced the
                 # phrase on the banner. They are different documents: one is
-                # thresholds on raw readings, the other bands on two fitted
-                # probabilities, and showing the wrong one would describe
+                # thresholds on raw readings, the other bands on the fitted
+                # probabilities, with a hand-made rung only where its model
+                # has not shipped. Showing the wrong one would describe
                 # reasoning the page did not do.
                 "ladder": (
                     weather.learned_ladder(
                         context["nowcast"]["threshold"],
                         sky=bool(context.get("sky_is_learned")),
+                        thunder=(context.get("thunder") or {}).get("threshold"),
+                        fog=(context.get("fog") or {}).get("threshold"),
                     )
                     if context.get("outlook_is_learned")
                     else weather.RULE_LADDER
@@ -304,6 +307,12 @@ def create_app() -> FastAPI:
                 # The measurement behind "rain here" rather than "rain in
                 # the area", printed beside the claim it supports.
                 "label_choice": nowcast.LABEL_CHOICE,
+                # What the other models' labels mean, from the constants the
+                # trainer is held to, so the page cannot describe a question
+                # the models were not fitted to answer.
+                "horizon_hours": nowcast.HORIZON_HOURS,
+                "overcast_percent": nowcast.OVERCAST_PERCENT,
+                "fog_metres": nowcast.FOG_METRES,
                 # Static between deploys — written weekly by ml/train.py —
                 # so the render carries it and the poller leaves it alone.
                 "verification": services.VERIFICATION,

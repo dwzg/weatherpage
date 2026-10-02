@@ -20,12 +20,14 @@ SPARK_PERIOD = "3h"
 #: forecast alone.
 NOWCAST_MODEL = nowcast.load()
 
-#: The sky model, same shape and same features, fitted against observed cloud
-#: cover instead of rainfall. Far more likely to be ``None`` than the one
-#: above: it ships only once ``ml/train.py`` has one that clears its gates,
-#: and on a short or single-season archive it correctly refuses. While it is
-#: absent the outlook is exactly what it always was — the threshold ladder.
+#: The other three, same shape and same features, fitted against observed
+#: cloud cover, visibility and reported thunder instead of rainfall. Each may
+#: be ``None``: it ships only once ``ml/train.py`` has one that clears its
+#: gates, and while it is absent its rung of the outlook is exactly what it
+#: always was — the hand-made threshold.
 SKY_MODEL = nowcast.load(nowcast.SKY_MODEL_PATH)
+FOG_MODEL = nowcast.load(nowcast.FOG_MODEL_PATH)
+THUNDER_MODEL = nowcast.load(nowcast.THUNDER_MODEL_PATH)
 
 #: How the deployed model has actually done, from the prediction log. Loaded
 #: once at import like the models: it changes weekly, in CI, and a new image
@@ -78,6 +80,8 @@ async def build_status() -> dict | None:
     smooth_h = humidity_trend["current"] if humidity_trend else humidity
     smooth_dew = weather.compute_dew_point(smooth_t, smooth_h)
     rain, sky = run_nowcast(vector), run_sky(vector)
+    fog = run_event(vector, FOG_MODEL)
+    thunder = run_event(vector, THUNDER_MODEL)
 
     # Gated on the rain model alone, because only the rain rungs need it.
     #
@@ -88,13 +92,16 @@ async def build_status() -> dict | None:
     # disagreed in public: "Rain possible" next to "Rain nearby not expected
     # · 9%". The page's own skill table says which to believe, and it is not
     # the ladder. compose_forecast() reads the sky rungs from thresholds when
-    # no sky model is loaded, which is what the ladder did there anyway.
+    # no sky model is loaded, which is what the ladder did there anyway, and
+    # the same holds for fog and thunder.
     if rain is not None:
         forecast = weather.compose_forecast(
             rain["probability"], rain["threshold"],
             sky["probability"] if sky else None,
             smooth_h, smooth_t, smooth_dew, humidity_trend,
             pressure_percentile=percentile,
+            thunder=(thunder["probability"], thunder["threshold"]) if thunder else None,
+            fog=(fog["probability"], fog["threshold"]) if fog else None,
         )
     else:
         forecast = weather.compute_forecast(
@@ -116,12 +123,17 @@ async def build_status() -> dict | None:
         "forecast_emoji": weather.forecast_emoji(forecast),
         "nowcast": rain,
         "sky": sky,
+        "fog": fog,
+        "thunder": thunder,
         # Which path produced the phrase above, and how much of it was
         # fitted. The explainer prints a different ladder for each, so it has
-        # to be told both: whether the rain rungs are a model, and whether
-        # the sky rungs are.
+        # to be told: whether the rain rungs are a model, and whether each of
+        # the others is. A model that is loaded but whose rung the rain model
+        # never reaches still counts — the ladder is what the page would read.
         "outlook_is_learned": rain is not None,
         "sky_is_learned": sky is not None,
+        "fog_is_learned": fog is not None,
+        "thunder_is_learned": thunder is not None,
         "frost_warning": weather.frost_alert(
             temperature, temp_trend["direction"] if temp_trend else None
         ),
@@ -180,6 +192,8 @@ async def record_prediction(timestamp: str, utc_offset: int) -> bool:
         utc_offset=utc_offset,
         rain_probability=nowcast["probability"] if nowcast else None,
         sky_probability=sky["probability"] if sky else None,
+        fog_probability=status["fog"]["probability"] if status["fog"] else None,
+        thunder_probability=status["thunder"]["probability"] if status["thunder"] else None,
         forecast=forecast,
         model_trained_at=nowcast.get("trained_at") if nowcast else None,
     )
@@ -381,12 +395,52 @@ def run_sky(
         "label": nowcast.describe_sky(probability),
         "overcast_percent": meta.get("overcast_percent", nowcast.OVERCAST_PERCENT),
         "horizon_hours": nowcast.HORIZON_HOURS,
+        **_model_card(model),
+        "contributions": nowcast_breakdown(model, vector),
+    }
+
+
+def run_event(vector: dict[str, float | None] | None, model: nowcast.Model | None) -> dict | None:
+    """Fog or thunder: a probability, the threshold it fires at, and its card.
+
+    Thinner still than :func:`run_sky`. Each decides one rung of the outlook
+    — fires or does not — so the page needs the probability, the threshold,
+    and enough of the model card to say what it was fitted to and how well
+    it did. No breakdown: the explainer prints the rain model's, which is
+    the number shown in its own right.
+    """
+    if model is None or vector is None:
+        return None
+    if any(name not in vector for name in model.features):
+        return None
+    probability = model.predict(vector)
+    return {
+        "probability": round(probability, 3),
+        "threshold": model.threshold,
+        "fires": probability >= model.threshold,
+        "horizon_hours": nowcast.HORIZON_HOURS,
+        **_model_card(model),
+    }
+
+
+def _model_card(model: nowcast.Model) -> dict:
+    """What the explainer prints about any of the models beside rain.
+
+    Metadata the trainer wrote, passed through: a retrain updates the page
+    without a code change, and anything it did not write comes back ``None``.
+    """
+    meta = model.metadata
+    return {
         "trained_at": meta.get("trained_at"),
         "samples": meta.get("samples"),
+        "trained_from": meta.get("trained_from"),
+        "trained_through": meta.get("trained_through"),
+        "stations": meta.get("stations"),
         "base_rate": meta.get("base_rate"),
         "skill": meta.get("skill"),
         "baselines": meta.get("baselines"),
-        "contributions": nowcast_breakdown(model, vector),
+        "archive": meta.get("archive"),
+        "level": meta.get("level"),
     }
 
 

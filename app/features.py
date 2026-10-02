@@ -51,6 +51,11 @@ HISTORY_DAYS = PERCENTILE_DAYS
 #: a rain gauge this station has.
 SATURATED_HUMIDITY = 97.0
 
+#: How much of a window its readings must span before its swing means
+#: anything: a six-hour range taken over the two hours either side of an
+#: outage is a two-hour range, and a clear sky is read off how big it is.
+SWING_COVERAGE = 2 / 3
+
 #: The daily pressure cycle: learned over this many whole days before today,
 #: from days with at least :data:`CYCLE_MIN_SLOTS` of their 48 half-hour slots
 #: populated, and applied only once :data:`CYCLE_MIN_DAYS` such days exist.
@@ -84,6 +89,12 @@ DECIMALS: dict[str, int] = {
     "dp3": 2,
     "dp6": 2,
     "dp12": 2,
+    "t_range3": 1,
+    "t_range6": 1,
+    "t_range12": 1,
+    "t_range24": 1,
+    "rh_range6": 1,
+    "rh_min24": 1,
     "hour": 0,
 }
 
@@ -272,6 +283,26 @@ class _Window:
             median([detide(s.times[i], s.pressure[i], self.cycle) for i in idx]),
         )
 
+    def covering(self, hours: float, values: list[float]) -> list[float] | None:
+        """``values`` over the last ``hours``, if the readings span most of it."""
+        idx = self.series.span(self.now - timedelta(hours=hours), self.now)
+        if not idx:
+            return None
+        spanned = self.series.times[idx[-1]] - self.series.times[idx[0]]
+        if spanned < timedelta(hours=hours) * SWING_COVERAGE:
+            return None
+        return [values[i] for i in idx]
+
+    def swing(self, hours: float, values: list[float]) -> float | None:
+        """How far ``values`` ranged over the last ``hours``, top to bottom.
+
+        From the raw readings rather than half-hour medians: the range is the
+        signal here, and a clear sky shows in how far the temperature climbs
+        by day and falls by night — up to twice an overcast sky's swing.
+        """
+        window = self.covering(hours, values)
+        return None if window is None else max(window) - min(window)
+
     def humidities(self, hours: float) -> list[float]:
         idx = self.series.span(self.now - timedelta(hours=hours), self.now)
         return [self.series.humidity[i] for i in idx]
@@ -337,6 +368,14 @@ def compute(
         "dp3": change(3, 2),
         "dp6": change(6, 2),
         "dp12": change(12, 2),
+        "t_range3": w.swing(3, series.temperature),
+        "t_range6": w.swing(6, series.temperature),
+        "t_range12": w.swing(12, series.temperature),
+        "t_range24": w.swing(24, series.temperature),
+        "rh_range6": w.swing(6, series.humidity),
+        "rh_min24": (
+            None if (low := w.covering(24, series.humidity)) is None else min(low)
+        ),
         "hour": now.hour,
     }
     return {

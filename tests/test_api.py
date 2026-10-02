@@ -898,16 +898,32 @@ class TestTrainerAndAppAgree:
 
         assert self.assigned("RAIN_MM") == nowcast.RAIN_MM
 
-    def test_the_trainer_fits_both_targets_from_one_feature_tuple(self):
-        """Two models, one vector: a feature that meant different things to
-        the two would make their contributions incomparable."""
+    def test_the_trainer_fits_every_target_from_one_feature_tuple(self):
+        """Four models, one vector: a feature that meant different things to
+        two of them would make their contributions incomparable."""
         features = self.assigned("FEATURES")
         from app import nowcast
 
         assert set(features) <= set(nowcast.FEATURE_FORMATS)
 
+    def test_fog_means_the_same_on_both_sides(self):
+        from app import nowcast
+
+        assert self.assigned("FOG_METRES") == nowcast.FOG_METRES
+
+    MODELS = ("MODEL_PATH", "SKY_MODEL_PATH", "FOG_MODEL_PATH", "THUNDER_MODEL_PATH")
+
     def test_the_trainer_writes_the_path_the_app_loads(self):
         from app import nowcast
 
-        assert nowcast.SKY_MODEL_PATH.name in self.SOURCE.read_text()
-        assert nowcast.MODEL_PATH.name in self.SOURCE.read_text()
+        for name in self.MODELS:
+            assert f'"{getattr(nowcast, name).name}"' in self.SOURCE.read_text(), name
+
+    def test_the_workflow_commits_every_model_the_app_loads(self):
+        """A model the job fitted and then left out of the commit would be
+        thrown away every week, with a green tick on the run."""
+        from app import nowcast
+
+        workflow = (self.SOURCE.parent.parent / ".github" / "workflows" / "retrain.yml").read_text()
+        for name in (*self.MODELS, "VERIFICATION_PATH"):
+            assert f"app/{getattr(nowcast, name).name}" in workflow, name

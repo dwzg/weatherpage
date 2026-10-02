@@ -32,10 +32,11 @@ Dynamic weather dashboard ("Balcony Weather Station") served by a FastAPI app in
 | `app/weather.py` | Pure derived values — dew point, heat index, the forecast rules engine, forecast emoji. No I/O. |
 | `app/features.py` | The nowcast's feature vector as a pure function of a run of readings and the pressure cycle. The one implementation the app and the trainer both call. |
 | `app/nowcast.py` | Loads `app/model.json` (gradient-boosted trees as plain arrays) and evaluates it, with an exact per-feature breakdown. Pure arithmetic — no ML dependency in the image. |
-| `app/model.json` | The fitted nowcast, written by CI. Data, not code: treat it as something that might be wrong. |
+| `app/model.json` | The fitted rain nowcast, written by CI. Data, not code: treat it as something that might be wrong. |
+| `app/sky_model.json`, `app/fog_model.json`, `app/thunder_model.json` | The outlook's other three models, same format, written by CI only once each clears its gates. Any of them may be absent, and then its rung of the outlook is the hand-made threshold. |
 | `app/verification.json` | How the *deployed* model has actually done, scored weekly from the prediction log. Absent until there is a record to make a claim about. |
 | `ml/train.py` | The retraining job. Runs in CI only; with `ml/dwd.py`, the one thing in this project that fetches anything. |
-| `ml/dwd.py` | The German weather service's open ten-minute station archive: station lists, the nearest stations, downloads, parsing. Training only. |
+| `ml/dwd.py` | The German weather service's open station archive: the ten-minute sensors and rain gauges the models learn from, and the hourly cloud cover, visibility and present-weather codes that label three of them. Station lists, the nearest stations, downloads, parsing. Training only. |
 | `app/database.py` | All SQLite access: connection pool, migrations, queries, the daily rollup. |
 | `app/cache.py` | Memoisation for the aggregates, dropped on every write. |
 | `app/backup.py` | Daily `VACUUM INTO` snapshots of the archive, and their retention. |
@@ -91,14 +92,74 @@ These are implicit across the codebase and easy to break:
 The dashboard shows two, deliberately different in kind, and the page itself
 explains the difference to the reader under "How these two predictions work".
 
-| | rule-based outlook | learned nowcast |
+| | outlook | learned nowcast |
 | --- | --- | --- |
-| lives in | `app/weather.py` | `app/nowcast.py` + `app/model.json` |
+| lives in | `app/weather.py` (+ up to four models) | `app/nowcast.py` + `app/model.json` |
 | output | a phrase (`Rain likely`) | a probability (`38%`) |
-| fitted by | hand, from measured tiers | `ml/train.py`, weekly in CI, on weather-service stations |
-| answers | is it settling or deteriorating | chance of ≥0.2 mm here within 6 h |
+| fitted by | rung by rung: a model where one has shipped, a hand-made threshold where none has | `ml/train.py`, weekly in CI, on weather-service stations |
+| answers | what the next six hours look like | chance of ≥0.2 mm here within 6 h |
 
 Neither may fetch anything at runtime, and neither needs to.
+
+### The outlook is four models and a fallback
+
+Every claim the banner makes has its own model, fitted the same way as the
+rain nowcast and to what the same weather-service stations observed:
+
+| rung | model | labelled by | the hand-made rung it replaces |
+| --- | --- | --- | --- |
+| `Thunderstorm possible` | `app/thunder_model.json` | present-weather codes 17, 29, 91–99, through 2021 | warm, humid summer afternoon (AUC 0.52) |
+| `Rain likely` / `Rain possible` | `app/model.json` | the rain gauge | the pressure/humidity ladder |
+| `Fog possible` | `app/fog_model.json` | visibility under 1 km in any hour | spread < 3 °C and humidity rising (AUC 0.66) |
+| `Cloudy` / `Little change` / `Fair and settled` | `app/sky_model.json` | mean cloud cover ≥ 80 % (6.4 octas) | humidity > 85 % |
+
+`weather.compose_forecast()` takes each as optional, and a missing model's
+rung falls back to the threshold it always had — rung by rung, so a thunder
+model and no fog model is a valid page. `weather.learned_ladder()` prints
+whichever ran, and `tests/test_weather.py` drives every rung of both shapes.
+A learned thunderstorm goes *above* `Rain likely` (the more specific and more
+urgent claim; the rain probability is on the pill anyway); the hand-made rule
+stays below it, because it is too weak to outrank a measured rain chance.
+The learned fog rung says `Fog possible`, not "Fog or drizzle": drizzle is
+rain, and the rain model owns it.
+
+Things that differ between them, all declared once in `ml/train.TARGETS`:
+
+- **Thunder is labelled only before `THUNDER_UNTIL` (2022).** People reported
+  it; the instruments that replaced them in 2022 report cloud and visibility
+  but not thunder. At the eight stations measured, 2014–2021 held 25–118
+  thunder reports a year each and 2023 onwards none at all. A station whose
+  record holds no thunder in those years was never watching for it and is
+  not used. `-1` ("nothing reported") is an observation, not a gap: thunder
+  is always significant enough to report.
+- **Nothing near the balcony reports thunder any more**, so the thunder model
+  cannot be scored on the archive. Its calibration is to the *level* only
+  (`calibration="level"`): one shift of the log-odds that makes its mean on
+  the balcony's last `CALIBRATION_DAYS` equal how often the stations had
+  thunder in the same months. A shift of `LEVEL_BOUND` or more is refused
+  rather than applied — that would mean readings the model does not
+  understand. Too little thunder expected in those months (winter) and it
+  ships as fitted.
+- **Fog must pass on the balcony before it ships** (`needs_archive`). A BME280
+  that sits at 100 % whenever it is wet is, to a model fitted on screens,
+  exactly the saturated air fog forms in. Without `MIN_ARCHIVE_EVENTS` foggy
+  hours in the archive the gate refuses, and the hand-made rung stays.
+- **The archive is a test only with enough events.** `MIN_ARCHIVE_EVENTS`
+  (30) hours of the thing happening, for every target: a Brier score over a
+  handful of foggy hours is a coin toss. It is the same number the Platt
+  calibration needs to fit at all.
+- **Each archive label comes from the nearest station observing it**: a rain
+  gauge within `MAX_GAUGE_KM` (25), cloud within `MAX_CLOUD_KM` (50, a sky is
+  shared more widely than a shower), visibility within `MAX_VISIBILITY_KM`
+  (25). Same rule as the stations themselves: counts only, never which.
+- **The baselines are the hand-made rungs themselves**, evaluated by
+  `app.weather` (`ForecastInputs`, `compute_forecast`) rather than restated in
+  the trainer, so the AUC a model must beat is the rung it replaces.
+- **Measured over the same 1.1 million station-hours** (two held-out years;
+  thunder on 2021): overcast Brier skill 0.29 / AUC 0.82, fog 0.29 / 0.93,
+  thunder 0.10 / 0.88. Thunder's skill is low in Brier terms because it is
+  rare (3 % of windows) and it is still the largest gain on the page over
+  what it replaces.
 
 ### The explainer on the page
 
@@ -145,7 +206,7 @@ summary`) precisely so the nested handle does not inherit the card's own.
 - **The server picks the scale and the decimals.** `services.nowcast_breakdown()`
   sends each row's `value`, `digits`, `sign` and `unit` so the render and the
   poller print the same shape — the same rule the rest of the numbers follow.
-- **Every retrain measures what each feature is worth.** `ml/train.py::ablations()` refits on the same training years without each feature in turn and scores the same held-out year, and the model card carries the result; the explainer prints it under the same labels as the contribution table. Single-feature costs are small — the signals overlap, so another one usually carries what a dropped one knew — and a row near zero is not by itself a reason to drop a feature. If one sits at zero across many weeks, that is the evidence for removing it from `FEATURES`; the trainer measures, it never drops anything by itself. Sixteen extra fits are most of the run's time. `tests/test_train.py` checks the measurement against synthetic hours where one feature carries the label and another is noise; it needs numpy and scikit-learn, so it skips in CI and runs for whoever is working on the model.
+- **Every retrain measures what each feature is worth.** `ml/train.py::ablations()` refits on the same training years without each feature in turn and scores the same held-out year, and the model card carries the result; the explainer prints it under the same labels as the contribution table. Single-feature costs are small — the signals overlap, so another one usually carries what a dropped one knew — and a row near zero is not by itself a reason to drop a feature. If one sits at zero across many weeks, that is the evidence for removing it from `FEATURES`; the trainer measures, it never drops anything by itself. One extra fit per feature, for the rain model only, is most of the run's time. `tests/test_train.py` checks the measurement against synthetic hours where one feature carries the label and another is noise; it needs numpy and scikit-learn, so it skips in CI and runs for whoever is working on the model.
 - **The model card is metadata passed through**, not restated in the template,
   so a retrain updates the page without a code change. Anything `ml/train.py`
   did not write comes back `None` and the section is skipped.
@@ -215,7 +276,7 @@ asked for more. Details that matter:
 - The **shipped** calibration is fitted on the final model's log-odds over
   the most recent `CALIBRATION_DAYS`, so it follows the season as the record
   grows rather than carrying a summer's sensor into the winter — at the cost
-  of lagging a season change by a few weeks. It needs `MIN_CALIBRATION_WET`
+  of lagging a season change by a few weeks. It needs `MIN_ARCHIVE_EVENTS`
   wet hours; short of that, nothing is calibrated and the archive is not
   gated on.
 - The operating **threshold** is carried through the calibration
@@ -299,13 +360,6 @@ Things that are load-bearing:
   in pure Python; numpy and scikit-learn live in `ml/requirements.txt` and
   are installed only by the retraining job. `model.json` is ~210 KB.
 
-The sky model goes through the same pipeline, labelled by ERA5 cloud cover
-at each training station (and at the balcony, for its archive test). Over
-the held-out year it scores well (Brier skill +0.26 at two stations), but on
-a summer-only stand-in archive it failed the archive gate, so expect the
-weekly job to keep refusing it until the balcony's record covers more than
-one season.
-
 A `GITHUB_TOKEN` push does not start another workflow, so the retraining job
 cannot deploy by committing — it calls `deploy.yml` through
 `workflow_dispatch` explicitly. Remove that trigger and retrained models will
@@ -315,7 +369,7 @@ sit on `main` undeployed.
 
 Everything above scores a *candidate* against a held-out past. That says the method works. It does not say the model **already deployed** has been right about this station's weather, and until now nothing could answer that.
 
-- **`prediction_log`** records what the page showed, hour by hour, written at the time: the rain probability, the sky probability, the phrase from the ladder, and `model_trained_at`. Keyed on `(timestamp, utc_offset)` like the readings, so the repeated autumn hour holds both of its predictions.
+- **`prediction_log`** records what the page showed, hour by hour, written at the time: the rain, sky, fog and thunder probabilities, the phrase from the ladder, and `model_trained_at`. The fog and thunder columns were added later; `_add_prediction_columns()` gives an older log them, and the hours before stay `NULL` because nothing was predicting them. Keyed on `(timestamp, utc_offset)` like the readings, so the repeated autumn hour holds both of its predictions.
 - **It cannot be reconstructed afterwards**, which is the whole reason it is a table rather than a query. The features are a pure function of the readings, so a replay could recompute them — but it would credit every past hour to *today's* model, and the model is refitted weekly; a backfill changes the inputs a replay would see; and the container may lag `main`. The `model_trained_at` column is what a replay could never supply.
 - **Written on the ingest path, on the hour only**, because the observations it is scored against are hourly — a row every five minutes is twelve times the rows and not one extra scoreable hour. Skipped for a reading that is not the newest, since `build_status()` describes *now* and a backfill would file today's prediction under last week.
 - **What is logged comes back through `build_status()`**, not from recomputing anything, so the row is by construction what `/status` served and the page rendered. A log that can disagree with the page is worse than no log.
@@ -475,7 +529,7 @@ Because the path names the build, the versioned mount serves `Cache-Control: pub
 ## GitHub Secrets
 
 - `APP_URL` — base URL of the running app. Used by the relay workflow (`main.yml`) to forward HA webhook data.
-- `STATION_LATITUDE` / `STATION_LONGITUDE` — where the station stands, read by `ml/train.py` to choose the nearest weather-service stations to train on and the nearest rain gauge to score the balcony against, and to ask Open-Meteo for the cloud cover the sky model's archive test uses. **They are deliberately not in the repository**, and the trainer has no fallback: a default would either be wrong, and quietly train on another place's weather, or be the real location, which is what these keep out of a public file. Nothing derived from them — station ids, names, distances — is printed or committed either. An unset secret fails the retraining run. To run the trainer locally, export them or pass `--latitude` / `--longitude`; `--stations <ids>` trains on named stations instead and, without a location, skips the archive and the verification.
+- `STATION_LATITUDE` / `STATION_LONGITUDE` — where the station stands, read by `ml/train.py` to choose the nearest weather-service stations to train on, and the nearest rain gauge, cloud observation and visibility sensor to score the balcony's archive against. **They are deliberately not in the repository**, and the trainer has no fallback: a default would either be wrong, and quietly train on another place's weather, or be the real location, which is what these keep out of a public file. Nothing derived from them — station ids, names, distances — is printed or committed either. An unset secret fails the retraining run. To run the trainer locally, export them or pass `--latitude` / `--longitude`; `--stations <ids>` trains on named stations instead and, without a location, skips the archive and the verification.
 - `API_KEY` — shared secret protecting `POST /api/weather`, `DELETE /api/weather/cleanup` and `GET /api/weather/export`. The retraining workflow passes it too, since the trainer reads the export endpoint. Must match between the app (env var), the relay workflow, and (eventually) Home Assistant. When the env var is unset those endpoints are unauthenticated, which is how local dev works.
 - `PORTAINER_WEBHOOK_URL` — Portainer webhook URL triggered by `deploy.yml` after a successful image push.
 - `GITHUB_TOKEN` — auto-provided, used for GHCR login and push.

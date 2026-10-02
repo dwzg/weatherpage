@@ -304,8 +304,8 @@ class TestLearnedLadder:
     Same contract as :class:`TestRuleLadder`, and for the same reason: the
     ladder is documentation, so a rung that drifts from
     :func:`compose_forecast` breaks nothing and quietly starts lying. The
-    difference is what the rungs read — four of them a fitted probability,
-    two of them the thresholds no label source can replace.
+    difference is what the rungs read: a fitted probability where a model
+    has shipped, the hand-made threshold where none has yet.
     """
 
     THRESHOLD = 0.212
@@ -348,9 +348,9 @@ class TestLearnedLadder:
         for tier in weather.learned_ladder(self.THRESHOLD):
             assert tier.note, tier.phrase
 
-    def test_the_unlabelled_rungs_are_marked_as_hand_made(self):
-        """Fog and thunderstorms have no label source; the page must not imply
-        they were fitted alongside the rest."""
+    def test_rungs_without_a_model_are_marked_as_hand_made(self):
+        """Until their models ship, fog and thunderstorms are thresholds; the
+        page must not imply they were fitted alongside the rest."""
         hand_made = {
             tier.phrase
             for tier in weather.learned_ladder(self.THRESHOLD)
@@ -455,3 +455,74 @@ class TestLearnedLadder:
             TestForecast.WINTER_NIGHT,
         )
         assert result == "Overcast and humid"
+
+
+class TestLearnedFogAndThunder:
+    """Once their models ship, the fog and thunder rungs read probabilities."""
+
+    RAIN, THUNDER, FOG = 0.212, 0.25, 0.30
+
+    def compose(self, rain=0.05, sky=0.50, thunder=0.01, fog=0.01, humidity=60.0,
+                temperature=12.0, dew=2.0, trend=None, moment=None):
+        return weather.compose_forecast(
+            rain, self.RAIN, sky, humidity, temperature, dew, trend,
+            moment or TestForecast.WINTER_NIGHT,
+            thunder=(thunder, self.THUNDER), fog=(fog, self.FOG),
+        )
+
+    def ladder(self):
+        return weather.learned_ladder(self.RAIN, thunder=self.THUNDER, fog=self.FOG)
+
+    #: (keyword arguments to compose) per rung of the fully learned ladder.
+    CASES: ClassVar[dict] = {
+        "Thunderstorm possible": {"thunder": 0.40, "rain": 0.90},
+        "Rain likely": {"rain": 0.90},
+        "Rain possible": {"rain": 0.30},
+        "Fog possible": {"fog": 0.50},
+        "Cloudy": {"sky": 0.90},
+        "Little change": {"sky": 0.45},
+        "Fair and settled": {"sky": 0.10, "humidity": 55.0},
+    }
+
+    def test_every_rung_has_a_worked_case(self):
+        assert {tier.phrase for tier in self.ladder()} == set(self.CASES)
+
+    @pytest.mark.parametrize("phrase", list(CASES), ids=lambda p: p)
+    def test_the_rung_produces_the_phrase_it_advertises(self, phrase):
+        assert self.compose(**self.CASES[phrase]) == phrase
+
+    def test_a_learned_thunderstorm_outranks_rain_likely(self):
+        """The more specific claim and the more urgent one; the rain
+        probability is on the pill beside it either way."""
+        phrases = [tier.phrase for tier in self.ladder()]
+        assert phrases.index("Thunderstorm possible") < phrases.index("Rain likely")
+
+    def test_the_hand_made_rules_stay_silent_once_their_models_answer(self):
+        """A warm humid afternoon the thunder model calls quiet is quiet, and
+        saturated air the fog model calls clear is clear."""
+        afternoon = self.compose(temperature=28.0, dew=18.0,
+                                 moment=TestForecast.SUMMER_AFTERNOON)
+        assert afternoon != "Thunderstorm possible"
+        damp = self.compose(humidity=95.0, temperature=10.0, dew=8.5, trend={"delta": 2.0})
+        assert "Fog" not in damp
+
+    def test_each_rung_follows_its_own_threshold(self):
+        tiers = {t.phrase: t for t in self.ladder()}
+        assert tiers["Thunderstorm possible"].fields["pct"] == 25
+        assert tiers["Fog possible"].fields["pct"] == 30
+
+    def test_nothing_learned_is_called_hand_made(self):
+        for tier in self.ladder():
+            assert "hand-made" not in tier.note, tier.phrase
+
+    def test_one_model_without_the_other(self):
+        """Each rung falls back on its own: a thunder model and no fog model
+        prints the learned thunder rung and the hand-made fog one."""
+        phrases = [t.phrase for t in weather.learned_ladder(self.RAIN, thunder=self.THUNDER)]
+        assert phrases[0] == "Thunderstorm possible"
+        assert "Fog or drizzle possible" in phrases
+        assert "Fog possible" not in phrases
+
+    def test_fog_has_its_emoji(self):
+        assert weather.forecast_emoji("Fog possible") == "🌫️"
+

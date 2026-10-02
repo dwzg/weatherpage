@@ -65,6 +65,7 @@ GERMAN: dict[str, str] = {
     "Rain possible": "Regen möglich",
     "Unsettled": "Wechselhaft",
     "Fog or drizzle possible": "Nebel oder Nieselregen möglich",
+    "Fog possible": "Nebel möglich",
     "Settled but humid": "Beständig, aber schwül",
     "Overcast and humid": "Bedeckt und schwül",
     "Fair and settled": "Heiter und beständig",
@@ -138,27 +139,100 @@ GERMAN: dict[str, str] = {
     "Model trained {date}": "Modell trainiert am {date}",
     "{bss}% skill over climatology": "{bss} % Güte gegenüber der Klimatologie",
 
+    "One claim about the next six hours, picked from a ladder: thunder, "
+    "rain, fog, cloud. Each rung reads its own model — fitted like the rain "
+    "chance below, to what the weather service's stations observed — where "
+    "that model has passed its tests, and a threshold on the pressure and "
+    "the humidity where none has yet. The technical details say which is "
+    "which.":
+        "Eine Aussage über die nächsten sechs Stunden, gewählt von einer "
+        "Leiter: Gewitter, Regen, Nebel, Bewölkung. Jede Sprosse liest ihr "
+        "eigenes Modell — angepasst wie die Regenchance unten, an das, was "
+        "die Stationen des Wetterdienstes beobachtet haben —, wo dieses "
+        "Modell seine Prüfungen bestanden hat, und einen Schwellenwert für "
+        "Luftdruck und Feuchte, wo noch keines das geschafft hat. Die "
+        "technischen Details sagen, was davon gilt.",
+    "The phrase names the one thing most worth knowing about the next six "
+    "hours; the percentage is the chance of rain alone, and the rain rungs "
+    "of the phrase read that same number. Neither sees wind, radar or "
+    "anything upstream of the balcony, so treat both as a hint rather than "
+    "a forecast.":
+        "Der Text nennt das eine, was über die nächsten sechs Stunden am "
+        "wissenswertesten ist; der Prozentwert ist allein die Regenchance, "
+        "und die Regensprossen des Textes lesen genau diese Zahl. Keiner von "
+        "beiden sieht Wind, Radar oder sonst etwas oberhalb des Balkons; sie "
+        "sind daher eher ein Hinweis als eine Vorhersage.",
+
     # ── The deep dive ──────────────────────────────────────────────────────
     "The technical details": "Die technischen Details",
 
     # The outlook, in full
     "☀️ The outlook: a ladder of thresholds":
         "☀️ Die Aussicht: eine Leiter aus Schwellenwerten",
-    "☀️ The outlook: one model and a ladder":
-        "☀️ Die Aussicht: ein Modell und eine Leiter",
+    "☀️ The outlook: a ladder of fitted models":
+        "☀️ Die Aussicht: eine Leiter aus angepassten Modellen",
     "Tested in order, and the first rung that matches wins. The rain rungs "
     "read the fitted probability shown on the pill above — the same number, "
-    "so the two cannot disagree. Below them the ladder falls back to where "
-    "the pressure sits and how humid the air is, because no cloud model has "
-    "cleared its gates yet; when one does, those rungs become measurements "
-    "too.":
+    "so the two cannot disagree. Every other rung reads its own model where "
+    "one has cleared its gates, and the threshold it always had where none "
+    "has yet; the right-hand column says which.":
         "Der Reihe nach geprüft; die erste zutreffende Sprosse gewinnt. Die "
         "Regensprossen lesen die angepasste Wahrscheinlichkeit, die oben auf "
         "der Plakette steht — dieselbe Zahl, die beiden können sich also "
-        "nicht widersprechen. Darunter greift die Leiter auf den Stand des "
-        "Luftdrucks und die Luftfeuchtigkeit zurück, denn noch hat kein "
-        "Wolkenmodell seine Hürden genommen; sobald eines das schafft, "
-        "werden auch diese Sprossen zu Messungen.",
+        "nicht widersprechen. Jede andere Sprosse liest ihr eigenes Modell, "
+        "wo eines seine Hürden genommen hat, und sonst den Schwellenwert, den "
+        "sie schon immer hatte; die rechte Spalte sagt, was davon gilt.",
+
+    # The other three models (sky, fog, thunder)
+    "The other three models": "Die anderen drei Modelle",
+    "Each is fitted like the rain model — the same trees, the same signals, "
+    "the same weather-service stations — to what those stations observed: "
+    "how much of the sky was cloud, how far one could see, and thunder their "
+    "observers heard. Each must clear the same gates before it ships, and "
+    "until it has, its rung keeps the threshold it always had.":
+        "Jedes ist angepasst wie das Regenmodell — dieselben Bäume, dieselben "
+        "Signale, dieselben Stationen des Wetterdienstes — an das, was diese "
+        "Stationen beobachtet haben: wie viel des Himmels bewölkt war, wie "
+        "weit man sehen konnte, und Donner, den ihre Beobachter hörten. Jedes "
+        "muss dieselben Hürden nehmen, bevor es ausgeliefert wird, und bis "
+        "dahin behält seine Sprosse den Schwellenwert, den sie schon immer "
+        "hatte.",
+    "Model": "Modell",
+    "Held-out year": "Zurückgehaltenes Jahr",
+    "This balcony": "Dieser Balkon",
+    "Overcast: {pct}% cloud or more over the next {hours} h":
+        "Bedeckt: {pct} % Bewölkung oder mehr in den nächsten {hours} Std.",
+    "Fog: visibility under {metres} m within {hours} h":
+        "Nebel: Sichtweite unter {metres} m innerhalb von {hours} Std.",
+    "Thunder within {hours} h": "Gewitter innerhalb von {hours} Std.",
+    "{bss} skill · AUC {auc}": "{bss} Skill · AUC {auc}",
+    "the rule: AUC {auc}": "die Regel: AUC {auc}",
+    "{bss} skill over {hours} h": "{bss} Skill über {hours} Std.",
+    "level matched to the stations": "Niveau an die Stationen angeglichen",
+    "not shipped yet: the hand-made rung runs":
+        "noch nicht ausgeliefert: die Sprosse von Hand gilt",
+    "Fog has to prove itself on this balcony before it ships, not only at "
+    "the stations: a sensor that sits at 100% whenever it is wet looks, to a "
+    "model fitted on ventilated screens, like exactly the saturated air fog "
+    "forms in.":
+        "Nebel muss sich auf diesem Balkon bewähren, bevor er ausgeliefert "
+        "wird, nicht nur an den Stationen: Ein Sensor, der bei jeder Nässe "
+        "auf 100 % steht, sieht für ein an belüfteten Wetterhütten "
+        "angepasstes Modell genau wie die gesättigte Luft aus, in der Nebel "
+        "entsteht.",
+    "Thunder is labelled only up to {date}. The weather service's observers "
+    "reported it until they went off duty in 2022, and the instruments that "
+    "replaced them do not. So nothing near this balcony reports thunder now "
+    "and the model cannot be scored here; instead, its level on these "
+    "readings is matched to how often the stations had thunder in the same "
+    "months.":
+        "Gewitter sind nur bis {date} erfasst. Die Beobachter des "
+        "Wetterdienstes meldeten sie, bis sie 2022 ihren Dienst beendeten, "
+        "und die Instrumente, die sie ersetzten, tun es nicht. In der Nähe "
+        "dieses Balkons meldet daher heute nichts mehr Gewitter, und das "
+        "Modell kann hier nicht bewertet werden; stattdessen wird sein "
+        "Niveau auf diesen Messwerten daran angeglichen, wie oft die "
+        "Stationen in denselben Monaten Gewitter hatten.",
     # The threshold-sky rungs, printed while no cloud model has shipped.
     "Pressure in the lowest {pct}% of 30 days":
         "Luftdruck in den untersten {pct} % von 30 Tagen",
@@ -239,10 +313,16 @@ GERMAN: dict[str, str] = {
         "an beobachtetem Niederschlag angepasst",
     "fitted against observed cloud cover":
         "an beobachteter Bewölkung angepasst",
-    "hand-made: no label source scores thunderstorms here":
-        "von Hand: keine Datenquelle bewertet hier Gewitter",
-    "hand-made: the archive records no fog at all":
-        "von Hand: das Archiv verzeichnet überhaupt keinen Nebel",
+    "Thunder model above {pct}%": "Gewittermodell über {pct} %",
+    "Fog model above {pct}%": "Nebelmodell über {pct} %",
+    "fitted against thunder the stations' observers reported":
+        "an Gewittern angepasst, die die Beobachter der Stationen meldeten",
+    "fitted against observed visibility":
+        "an beobachteter Sichtweite angepasst",
+    "hand-made: no thunder model has cleared its gates yet":
+        "von Hand: noch kein Gewittermodell hat seine Hürden genommen",
+    "hand-made: no fog model has cleared its gates yet":
+        "von Hand: noch kein Nebelmodell hat seine Hürden genommen",
 
     # How the sky probability is worded (app/nowcast.py describe_sky)
     "mostly cloudy": "überwiegend bewölkt",
@@ -250,40 +330,7 @@ GERMAN: dict[str, str] = {
     "mostly clear": "überwiegend klar",
 
     # The composed ladder's own section of the explainer
-    "☀️ The outlook: two models and two rules":
-        "☀️ Die Aussicht: zwei Modelle und zwei Regeln",
     "Evidence": "Grundlage",
-    "Tested in order, and the first rung that matches wins. Four of these "
-    "rungs read a fitted probability — one model for rain, one for cloud, "
-    "both from the same measurements. Two of them do not, and cannot: see "
-    "below.":
-        "Der Reihe nach geprüft; die erste zutreffende Sprosse gewinnt. Vier "
-        "dieser Sprossen lesen eine angepasste Wahrscheinlichkeit — ein "
-        "Modell für Regen, eines für Bewölkung, beide aus denselben "
-        "Messwerten. Zwei tun das nicht, und können es nicht: siehe unten.",
-    "Why two of them are still hand-made: no label source scores either. Over "
-    "two years of the reanalysis at this location there are zero fog codes "
-    "and zero thunderstorm codes, and its convective-energy field is empty. A "
-    "model cannot be fitted to a label that does not exist, so those rungs "
-    "stay thresholds and say so.":
-        "Warum zwei davon weiterhin von Hand stammen: Keine Datenquelle "
-        "bewertet sie. Über zwei Jahre der Reanalyse an diesem Ort gibt es "
-        "null Nebel-Codes und null Gewitter-Codes, und ihr Feld für "
-        "konvektive Energie ist leer. Ein Modell lässt sich nicht an ein "
-        "Label anpassen, das es nicht gibt; diese Sprossen bleiben daher "
-        "Schwellenwerte und sagen das auch.",
-    "The cloud model was fitted on {samples} hours and scored walk-forward: "
-    "AUC {auc}, Brier skill {bss} against climatology. What it replaces is "
-    "the humidity threshold this ladder used to read, which scored AUC "
-    "{rules}.":
-        "Das Wolkenmodell wurde an {samples} Stunden angepasst und "
-        "vorwärtsschreitend bewertet: AUC {auc}, Brier-Skill {bss} gegenüber "
-        "der Klimatologie. Es ersetzt den Feuchte-Schwellenwert, den diese "
-        "Leiter zuvor las und der AUC {rules} erreichte.",
-    "Right now it puts the chance of a mostly overcast next {hours} hours "
-    "at {pct}%.":
-        "Aktuell beziffert es die Chance auf überwiegend bedeckte nächste "
-        "{hours} Stunden mit {pct} %.",
 
     "Why the barometer is read as a level, not a tendency":
         "Warum das Barometer als Stand und nicht als Tendenz gelesen wird",
@@ -559,6 +606,12 @@ GERMAN: dict[str, str] = {
     "Pressure change, 3 h": "Luftdruckänderung, 3 Std.",
     "Pressure change, 6 h": "Luftdruckänderung, 6 Std.",
     "Pressure change, 12 h": "Luftdruckänderung, 12 Std.",
+    "Temperature swing, 3 h": "Temperaturspanne, 3 Std.",
+    "Temperature swing, 6 h": "Temperaturspanne, 6 Std.",
+    "Temperature swing, 12 h": "Temperaturspanne, 12 Std.",
+    "Temperature swing, 24 h": "Temperaturspanne, 24 Std.",
+    "Humidity swing, 6 h": "Feuchtespanne, 6 Std.",
+    "Lowest humidity, 24 h": "Niedrigste Feuchte, 24 Std.",
     "Hour of the day": "Uhrzeit",
 
     # ── Current conditions ─────────────────────────────────────────────────

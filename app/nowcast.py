@@ -46,12 +46,15 @@ log = logging.getLogger(__name__)
 #: Where the trained model lives inside the image. Written by ml/train.py.
 MODEL_PATH = Path(__file__).parent / "model.json"
 
-#: The second fitted model, predicting cloud rather than rain. Same shape,
-#: same features, same loader — only the labels it was fitted against differ,
-#: so everything below serves both. It is optional in a way the rain model is
-#: not: until ``ml/train.py`` has shipped one, the outlook falls back to the
-#: threshold ladder in :mod:`app.weather`, which is what it always was.
+#: The other fitted models, one per claim the outlook makes besides rain: an
+#: overcast sky, fog, thunder. Same shape, same features, same loader — only
+#: the labels they were fitted against differ, so everything below serves
+#: all four. They are optional in a way the rain model is not: until
+#: ``ml/train.py`` has shipped one, its rung of the outlook falls back to the
+#: hand-made thresholds in :mod:`app.weather`, which is what it always was.
 SKY_MODEL_PATH = Path(__file__).parent / "sky_model.json"
+FOG_MODEL_PATH = Path(__file__).parent / "fog_model.json"
+THUNDER_MODEL_PATH = Path(__file__).parent / "thunder_model.json"
 
 #: How the deployed model has actually done, written weekly by ml/train.py
 #: from the prediction log. Absent until there are enough scored hours, and
@@ -77,6 +80,10 @@ LABEL_CHOICE = {"auc_gauge": 0.842, "auc_reanalysis": 0.837}
 #: What the sky model calls overcast: mean cloud cover over the next
 #: :data:`HORIZON_HOURS` at or above this percentage. Baked into its labels.
 OVERCAST_PERCENT = 80
+
+#: What the fog model calls fog: visibility under this many metres in any
+#: hour of the next :data:`HORIZON_HOURS`. Baked into its labels.
+FOG_METRES = 1000
 
 
 @dataclass(frozen=True)
@@ -438,6 +445,12 @@ FEATURE_FORMATS: dict[str, FeatureFormat] = {
     "dp3": FeatureFormat("Pressure change, 3 h", "hPa", 1, sign=True),
     "dp6": FeatureFormat("Pressure change, 6 h", "hPa", 1, sign=True),
     "dp12": FeatureFormat("Pressure change, 12 h", "hPa", 1, sign=True),
+    "t_range3": FeatureFormat("Temperature swing, 3 h", "°C", 1),
+    "t_range6": FeatureFormat("Temperature swing, 6 h", "°C", 1),
+    "t_range12": FeatureFormat("Temperature swing, 12 h", "°C", 1),
+    "t_range24": FeatureFormat("Temperature swing, 24 h", "°C", 1),
+    "rh_range6": FeatureFormat("Humidity swing, 6 h", "pp", 0),
+    "rh_min24": FeatureFormat("Lowest humidity, 24 h", "%", 0),
     "hour": FeatureFormat("Hour of the day", "h", 0),
 }
 

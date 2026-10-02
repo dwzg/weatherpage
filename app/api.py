@@ -179,9 +179,9 @@ async def predictions(
     timestamp is not unique across the repeated autumn hour, and an
     unbounded archive is a large response.
 
-    Carries no observations. Those belong to Open-Meteo, and the trainer
-    already fetches them for its labels — storing a second copy here would
-    be a cache of somebody else's data that could silently go stale.
+    Carries no observations. Those belong to the weather service, and the
+    trainer already fetches them for its labels — storing a second copy here
+    would be a cache of somebody else's data that could silently go stale.
     """
     if (after is None) != (after_offset is None):
         raise HTTPException(

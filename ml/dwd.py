@@ -31,12 +31,41 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
-BASE = "https://opendata.dwd.de/climate_environment/CDC/observations_germany/climate/10_minutes"
+CLIMATE = "https://opendata.dwd.de/climate_environment/CDC/observations_germany/climate"
 
-#: product -> (directory, file stem, station list)
+
+@dataclass(frozen=True)
+class Product:
+    """One of the service's observation products, and where its files live."""
+
+    resolution: str  #: "10_minutes" or "hourly"
+    directory: str
+    stem: str
+    listing: str     #: the station list's file name
+    column: str = ""  #: the value an hourly product is read for
+
+    @property
+    def base(self) -> str:
+        return f"{CLIMATE}/{self.resolution}/{self.directory}"
+
+    @property
+    def prefix(self) -> str:
+        return "10minutenwerte" if self.resolution == "10_minutes" else "stundenwerte"
+
+
 PRODUCTS = {
-    "air": ("air_temperature", "TU", "zehn_min_tu_Beschreibung_Stationen.txt"),
-    "rain": ("precipitation", "nieder", "zehn_min_rr_Beschreibung_Stationen.txt"),
+    # The sensors and the gauge, every ten minutes: what the models learn from.
+    "air": Product("10_minutes", "air_temperature", "TU", "zehn_min_tu_Beschreibung_Stationen.txt"),
+    "rain": Product("10_minutes", "precipitation", "nieder", "zehn_min_rr_Beschreibung_Stationen.txt"),
+    # What the sky, the air and the weather did, every hour: the labels for
+    # cloud (octas), fog (visibility in metres) and thunder (present-weather
+    # codes). Observers made them until 2022; instruments since, which still
+    # report cloud and visibility and no longer report thunder.
+    "cloud": Product("hourly", "cloudiness", "N", "N_Stundenwerte_Beschreibung_Stationen.txt", "V_N"),
+    "visibility": Product("hourly", "visibility", "VV", "VV_Stundenwerte_Beschreibung_Stationen.txt",
+                          "V_VV"),
+    "weather": Product("hourly", "weather_phenomena", "WW", "WW_Stundenwerte_Beschreibung_Stationen.txt",
+                       "WW"),
 }
 
 #: The interval every reading closes. DWD stamps a ten-minute value with the
@@ -120,8 +149,8 @@ def stations(product: str, cache: Path) -> list[Station]:
     the header rather than from splitting on whitespace. Only the leading
     numeric columns are read; the name never leaves this function.
     """
-    directory, _, listing = PRODUCTS[product]
-    text = cached(f"{BASE}/{directory}/recent/{listing}", cache, refresh=True).decode("latin-1")
+    spec = PRODUCTS[product]
+    text = cached(f"{spec.base}/recent/{spec.listing}", cache, refresh=True).decode("latin-1")
     lines = text.splitlines()
     rule = next(i for i, line in enumerate(lines) if line.startswith("-----"))
     out = []
@@ -159,18 +188,18 @@ def files(product: str, station_id: str, cache: Path, since: date) -> list[str]:
     refreshed daily. Ranges overlap, which :func:`read_zip` callers resolve by
     letting the later file win.
     """
-    directory, stem, _ = PRODUCTS[product]
-    listing = cached(f"{BASE}/{directory}/historical/", cache, refresh=True,
+    spec = PRODUCTS[product]
+    listing = cached(f"{spec.base}/historical/", cache, refresh=True,
                      name=f"listing-{product}.html").decode("latin-1")
     pattern = re.compile(
-        rf'href="(10minutenwerte_{stem}_{station_id}_(\d{{8}})_(\d{{8}})_hist\.zip)"'
+        rf'href="({spec.prefix}_{spec.stem}_{station_id}_(\d{{8}})_(\d{{8}})_hist\.zip)"'
     )
     hist = sorted(
         (m.group(2), m.group(1)) for m in pattern.finditer(listing)
         if datetime.strptime(m.group(3), "%Y%m%d").date() >= since
     )
-    urls = [f"{BASE}/{directory}/historical/{name}" for _, name in hist]
-    urls.append(f"{BASE}/{directory}/recent/10minutenwerte_{stem}_{station_id}_akt.zip")
+    urls = [f"{spec.base}/historical/{name}" for _, name in hist]
+    urls.append(f"{spec.base}/recent/{spec.prefix}_{spec.stem}_{station_id}_akt.zip")
     return urls
 
 
@@ -195,9 +224,10 @@ def read_zip(data: bytes, columns: tuple[str, ...]) -> dict[datetime, tuple[floa
         if len(row) <= max(wanted):
             continue
         raw = row[stamp].strip()
+        # Ten-minute files stamp to the minute, hourly files to the hour.
         instant = datetime(
-            int(raw[0:4]), int(raw[4:6]), int(raw[6:8]), int(raw[8:10]), int(raw[10:12]),
-            tzinfo=UTC,
+            int(raw[0:4]), int(raw[4:6]), int(raw[6:8]), int(raw[8:10]),
+            int(raw[10:12]) if len(raw) >= 12 else 0, tzinfo=UTC,
         )
         values = []
         for i in wanted:
@@ -216,8 +246,8 @@ def has_barometer(station_id: str, cache: Path, share: float) -> bool:
     its gauge, which on the first real run was 13 stations' worth of both.
     The file is the one :func:`load` would fetch anyway, so it is cached for it.
     """
-    directory, stem, _ = PRODUCTS["air"]
-    url = f"{BASE}/{directory}/recent/10minutenwerte_{stem}_{station_id}_akt.zip"
+    spec = PRODUCTS["air"]
+    url = f"{spec.base}/recent/{spec.prefix}_{spec.stem}_{station_id}_akt.zip"
     try:
         rows = read_zip(cached(url, cache, refresh=True), ("PP_10",))
     except urllib.error.HTTPError:
@@ -255,4 +285,23 @@ def load_rain(station_id: str, cache: Path, since: date) -> dict[datetime, float
         instant: amount
         for instant, (amount,) in rain.items()
         if instant >= since_instant and not math.isnan(amount)
+    }
+
+
+def load_hourly(product: str, station_id: str, cache: Path, since: date) -> dict[datetime, float]:
+    """One hourly observation series from ``since`` on: UTC hour -> value.
+
+    Cloud cover comes in octas (-1 where fog hid the sky), visibility in
+    metres, weather as the present-weather code (-1 where none was reported).
+    A missing observation is an absent key, as everywhere else here.
+    """
+    spec = PRODUCTS[product]
+    since_instant = datetime(since.year, since.month, since.day, tzinfo=UTC)
+    out: dict[datetime, tuple[float, ...]] = {}
+    for url in files(product, station_id, cache, since):
+        out.update(read_zip(cached(url, cache, refresh=url.endswith("_akt.zip")), (spec.column,)))
+    return {
+        instant: value
+        for instant, (value,) in out.items()
+        if instant >= since_instant and not math.isnan(value)
     }

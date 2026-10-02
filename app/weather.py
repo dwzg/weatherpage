@@ -373,30 +373,30 @@ def compute_forecast(
     return _air_now(f)
 
 
-# ── Composing the outlook from the two fitted models ───────────────────────
+# ── Composing the outlook from the fitted models ───────────────────────────
 #
 # The ladder above reads raw sensor values through thresholds fitted by hand.
 # Where a model exists, the same ladder reads its probability instead, and the
 # rung stops being an assertion and starts being a measurement.
 #
-# Only two of the axes have ground truth to fit against, and that is not a
-# choice — it is what the label sources actually contain. Measured over two
-# years of the reanalysis at the station's own location:
+# Every claim the banner makes now has something observed to be fitted to,
+# at the weather service's stations rather than at a reanalysis grid point:
 #
-#   * Rain has labels (observed precipitation) and a model: app/model.json.
-#   * Cloud has labels (observed cloud cover) and a model: app/sky_model.json.
-#     It replaces the humidity-only guess behind "Fair and settled" and
-#     "Overcast and humid" — the one claim on the banner with nothing
-#     measured behind it.
-#   * Fog has NO label. The archive emits its fog codes (45, 48) exactly zero
-#     times in 17,520 hours, at a valley site where fog is common. That is a
-#     property of how the reanalysis derives the code, not of the weather.
-#   * Thunderstorms have NO label either: zero occurrences of codes 95-99,
-#     and the archive's CAPE field comes back empty.
+#   * Rain — the rain gauge beside each station's sensors: app/model.json.
+#   * An overcast sky — cloud cover in octas, observed every hour:
+#     app/sky_model.json. It replaces the humidity-only guess behind "Fair and
+#     settled" and "Overcast and humid".
+#   * Fog — visibility under 1 km, observed every hour: app/fog_model.json.
+#     The reanalysis this used to look to emits its fog codes zero times in
+#     17,520 hours; the stations' visibility sensors see fog in 4% of windows.
+#   * Thunder — reported by the stations' observers until they went off duty
+#     in 2022: app/thunder_model.json. Over the stations' last two years of
+#     reports, the hand-made rung below ranked thunder hours barely better
+#     than chance (AUC 0.52) and the trees at 0.90.
 #
-# So those two rungs stay hand-made. A model cannot be fitted to a label that
-# does not exist, and pretending otherwise would put a learned-looking number
-# on a guess.
+# Each is optional: a model ships only once it clears its own gates in
+# ml/train.py, and until then its rung keeps the hand-made threshold it
+# always had. The ladder the page prints says which is which.
 
 #: The three states the sky model's probability is read as. Strings rather
 #: than an enum because they are compared in one place and printed in none.
@@ -453,24 +453,29 @@ def compose_forecast(
     moment: datetime | None = None,
     *,
     pressure_percentile: float | None = None,
+    thunder: tuple[float, float] | None = None,
+    fog: tuple[float, float] | None = None,
 ) -> str:
-    """The outlook, composed from both fitted models plus the unlabelled rungs.
+    """The outlook, composed from the fitted models and the rungs still hand-made.
 
     Used in place of :func:`compute_forecast` whenever the **rain** model is
-    loaded and the feature vector is complete. ``sky_probability`` may be
-    ``None``, and normally is: the sky model ships only once a candidate
-    clears its gates, which on a short archive it correctly refuses to do.
-    The sky rungs then fall back to :func:`_sky_without_a_model`, the
-    pressure-and-humidity thresholds the ladder has always used there.
+    loaded and the feature vector is complete. The others are each optional:
+    ``sky_probability`` is ``None`` without a sky model, and ``thunder`` and
+    ``fog`` — each ``(probability, threshold)`` — are ``None`` without theirs.
+    A missing model's rung falls back to the threshold it always had.
 
-    Gating the whole thing on *both* models was a mistake worth naming. It
+    Gating the whole thing on *every* model was a mistake worth naming. It
     meant that until the sky model shipped, the banner came from the
     threshold ladder while the pill beside it came from the rain model — two
     answers to one question, from the same page, disagreeing in public
-    ("Rain possible" next to "Rain nearby not expected · 9%"). The page's own
-    skill table says which to believe: the model beats the ladder on Brier,
-    AUC, CSI and KSS alike. The rain rungs need only the rain model, so they
-    now use it.
+    ("Rain possible" next to "Rain nearby not expected · 9%"). The rain rungs
+    need only the rain model, so they use it.
+
+    A learned thunderstorm goes first, above "Rain likely": it is the more
+    specific claim and the more urgent one, and the rain probability is on
+    the pill beside it either way. The hand-made rule stays where it always
+    stood, below "Rain likely", because it is too weak a signal to outrank a
+    measured probability of rain.
 
     The rain bands are :func:`app.nowcast.describe`'s, so the phrase on the
     banner and the word printed beside the percentage are the same decision
@@ -488,20 +493,25 @@ def compose_forecast(
     )
     rain = describe(rain_probability, rain_threshold)
 
+    if thunder is not None and thunder[0] >= thunder[1]:
+        return "Thunderstorm possible"
+
     if rain == "likely":
         return "Rain likely"
 
-    # Hand-made, and staying that way: a warm humid afternoon carries a risk
-    # the barometer cannot see, and no label source scores it.
-    if f.convective:
+    # Without a thunder model, a warm humid afternoon carries a risk the
+    # barometer cannot see, and this is the rule that says so.
+    if thunder is None and f.convective:
         return "Thunderstorm possible"
 
     if rain == "possible":
         return "Rain possible"
 
-    # Also hand-made, for the same reason. Tested before the sky rungs
-    # because saturated air that is still wetting is the more specific claim.
-    if f.near_saturation and f.humidity_rising:
+    # Tested before the sky rungs because fog is the more specific claim.
+    if fog is not None:
+        if fog[0] >= fog[1]:
+            return "Fog possible"
+    elif f.near_saturation and f.humidity_rising:
         return "Fog or drizzle possible"
 
     if sky_probability is None:
@@ -515,16 +525,22 @@ def compose_forecast(
     return "Little change"
 
 
-def learned_ladder(rain_threshold: float, *, sky: bool = True) -> tuple[Tier, ...]:
+def learned_ladder(
+    rain_threshold: float, *, sky: bool = True,
+    thunder: float | None = None, fog: float | None = None,
+) -> tuple[Tier, ...]:
     """The composed ladder, for the explainer to print.
 
     A function rather than a constant because its cut points are not
-    constants: the rain threshold is fitted and arrives in model.json, and
-    whether the sky rungs are a model or a threshold depends on whether a sky
-    model has shipped. Same contract as :data:`RULE_LADDER` — generated from
-    the numbers :func:`compose_forecast` actually reads, so retuning a band
-    moves the page with it, and ``tests/test_weather.py`` drives the function
-    to check the two still agree.
+    constants: each fitted threshold arrives in its model's file, and
+    whether a rung is a model or a threshold depends on whether that model
+    has shipped. ``thunder`` and ``fog`` are those models' thresholds, or
+    ``None`` while the hand-made rung is the one that runs.
+
+    Same contract as :data:`RULE_LADDER` — generated from the numbers
+    :func:`compose_forecast` actually reads, so retuning a band moves the
+    page with it, and ``tests/test_weather.py`` drives the function to check
+    the two still agree.
 
     ``sky=False`` is the live case today and prints the pressure-and-humidity
     rungs, because that is the reasoning the page did. Printing the model
@@ -590,7 +606,44 @@ def learned_ladder(rain_threshold: float, *, sky: bool = True) -> tuple[Tier, ..
             ),
         )
     )
+    hand_made_thunder = Tier(
+        "Thunderstorm possible",
+        "Above {temp}°C and humidity above {rh}%, {start}:00 to {end}:59",
+        {
+            "temp": CONVECTIVE_TEMP_C,
+            "rh": CONVECTIVE_HUMIDITY,
+            "start": min(CONVECTIVE_HOURS),
+            "end": max(CONVECTIVE_HOURS),
+        },
+        None,
+        note="hand-made: no thunder model has cleared its gates yet",
+    )
+    learned_thunder = Tier(
+        "Thunderstorm possible",
+        "Thunder model above {pct}%",
+        {"pct": round((thunder or 0.0) * 100)},
+        None,
+        note="fitted against thunder the stations' observers reported",
+    )
+    fog_rung = (
+        Tier(
+            "Fog possible",
+            "Fog model above {pct}%",
+            {"pct": round(fog * 100)},
+            None,
+            note="fitted against observed visibility",
+        )
+        if fog is not None
+        else Tier(
+            "Fog or drizzle possible",
+            "Dew-point spread under {spread}°C and humidity rising",
+            {"spread": SATURATION_SPREAD_C},
+            None,
+            note="hand-made: no fog model has cleared its gates yet",
+        )
+    )
     return (
+        *((learned_thunder,) if thunder is not None else ()),
         Tier(
             "Rain likely",
             "Rain model above {pct}%",
@@ -598,18 +651,7 @@ def learned_ladder(rain_threshold: float, *, sky: bool = True) -> tuple[Tier, ..
             None,
             note="fitted against observed rainfall",
         ),
-        Tier(
-            "Thunderstorm possible",
-            "Above {temp}°C and humidity above {rh}%, {start}:00 to {end}:59",
-            {
-                "temp": CONVECTIVE_TEMP_C,
-                "rh": CONVECTIVE_HUMIDITY,
-                "start": min(CONVECTIVE_HOURS),
-                "end": max(CONVECTIVE_HOURS),
-            },
-            None,
-            note="hand-made: no label source scores thunderstorms here",
-        ),
+        *((hand_made_thunder,) if thunder is None else ()),
         Tier(
             "Rain possible",
             "Rain model above {pct}%",
@@ -617,13 +659,7 @@ def learned_ladder(rain_threshold: float, *, sky: bool = True) -> tuple[Tier, ..
             None,
             note="fitted against observed rainfall",
         ),
-        Tier(
-            "Fog or drizzle possible",
-            "Dew-point spread under {spread}°C and humidity rising",
-            {"spread": SATURATION_SPREAD_C},
-            None,
-            note="hand-made: the archive records no fog at all",
-        ),
+        fog_rung,
         *sky_rungs,
     )
 

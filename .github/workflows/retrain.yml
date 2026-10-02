@@ -2,15 +2,16 @@ name: Retrain the nowcasts
 
 # The models are fitted to years of ten-minute observations from the German
 # weather service's stations nearest the balcony — the same three things the
-# balcony measures, labelled by the rain gauge beside them — and then scored
-# against the balcony's own archive before either may ship. Once a week is
-# often enough to keep up with the archive and rare enough to stay reviewable
-# in the commit log.
+# balcony measures — labelled by what those stations observed, and then scored
+# against the balcony's own archive before any may ship. Once a week is often
+# enough to keep up with the archive and rare enough to stay reviewable in the
+# commit log.
 #
-# Two come out of one run: rain, labelled by those gauges, and sky, labelled
-# by ERA5 cloud cover. They share a feature vector but are gated
-# independently, so a run that ships one and refuses the other is working as
-# intended.
+# Four come out of one run, one per claim the outlook makes: rain (the rain
+# gauges), an overcast sky (observed cloud cover), fog (observed visibility)
+# and thunder (reported by the stations' observers until 2022). They share a
+# feature vector but are gated independently, so a run that ships some and
+# refuses others is working as intended.
 #
 # The run downloads the stations' files from opendata.dwd.de every time and
 # deliberately caches nothing: which stations they are says roughly where
@@ -34,12 +35,20 @@ jobs:
   retrain:
     runs-on: ubuntu-latest
     # Five stations' worth of downloads, a few hundred thousand station-hours
-    # through app.features, and some thirty tree fits. About half an hour.
-    timeout-minutes: 90
+    # through app.features, and some thirty tree fits.
+    timeout-minutes: 120
 
     permissions:
       contents: write   # to commit a new model
       actions: write    # to start the deploy it cannot trigger by pushing
+
+    # Everything a run may write, for the steps that look for changes and
+    # commit them. One list, so a new model cannot be fitted and then
+    # silently left out of the commit.
+    env:
+      TRACKED: >-
+        app/model.json app/sky_model.json app/fog_model.json
+        app/thunder_model.json app/verification.json
 
     steps:
       - uses: actions/checkout@v4
@@ -73,9 +82,9 @@ jobs:
         shell: bash
         run: python -u ml/train.py ${{ inputs.force && '--force' || '' }} | tee training.log
 
-      # Two models come out of one run and are gated separately, so either,
-      # both or neither may have moved. Anything that changed is committed
-      # together; nothing changing is a normal outcome.
+      # Four models come out of one run and are gated separately, so any of
+      # them may have moved. Anything that changed is committed together;
+      # nothing changing is a normal outcome.
       #
       # app/verification.json is in this list but is NOT gated: it scores the
       # model already deployed against the prediction log, so it moves on
@@ -84,8 +93,8 @@ jobs:
       - name: Did anything change?
         id: changed
         run: |
-          # `git status`, not `git diff`: the first sky model ever fitted is
-          # an untracked file, and git diff cannot see those. Detecting it
+          # `git status`, not `git diff`: the first sky, fog or thunder model
+          # ever fitted is an untracked file, and git diff cannot see those. Detecting it
           # with diff would report "no change", skip the commit and throw the
           # model away — on that run and on every run after it. The same is
           # true of the first verification.
@@ -96,8 +105,6 @@ jobs:
             echo "changed=true" >> "$GITHUB_OUTPUT"
             git status --short -- $TRACKED
           fi
-        env:
-          TRACKED: app/model.json app/sky_model.json app/verification.json
 
       # A model is data the app trusts, so it goes through the same checks a
       # human's change would before it is allowed anywhere near production.
@@ -116,22 +123,22 @@ jobs:
             echo "Retrain the nowcasts"
             echo
             echo "Fitted by .github/workflows/retrain.yml to the weather service's"
-            echo "stations nearest the balcony: the rain model against their rain"
-            echo "gauges, the sky model against observed cloud cover. Each replaced"
-            echo "what was shipped only by clearing its own gates in ml/train.py,"
-            echo "on a held-out year and on the balcony's own archive; the scores"
-            echo "and the baselines they were compared against are in each file"
-            echo "under metadata."
+            echo "stations nearest the balcony, each model against what they"
+            echo "observed: rain gauges, cloud cover, visibility and reported"
+            echo "thunder. Each replaced what was shipped only by clearing its own"
+            echo "gates in ml/train.py, on a held-out year and on the balcony's"
+            echo "own archive; the scores and the baselines they were compared"
+            echo "against are in each file under metadata."
             echo
             echo "app/verification.json is refreshed every run regardless: it"
             echo "scores the model already deployed against the prediction log,"
             echo "which is a different question from whether to ship a new one."
             echo
-            sed -n '/── rain/,$p' training.log | head -n 40
+            sed -n '/── rain/,$p' training.log | head -n 120
           } > "$RUNNER_TEMP/commit-message.txt"
-          # `git add` is fatal on a path that does not exist, and a run
-          # before the sky model has ever cleared its gates has only one file.
-          for artefact in app/model.json app/sky_model.json app/verification.json; do
+          # `git add` is fatal on a path that does not exist, and a model that
+          # has never cleared its gates has no file.
+          for artefact in $TRACKED; do
             [ -e "$artefact" ] && git add "$artefact"
           done
           git commit --file "$RUNNER_TEMP/commit-message.txt"

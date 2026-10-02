@@ -45,10 +45,9 @@ def synthetic(count: int, seed: int = 7) -> train.Samples:
         rows.append(row)
         rain.append(float(row[features.NAMES.index("td")] > 2.0))
     local = [start + timedelta(hours=i) for i in range(count)]
-    return train.Samples(
-        np.array(rows), np.array(local, dtype="datetime64[s]"), local,
-        np.array(rain), np.full(count, np.nan),
-    )
+    y = np.full((count, len(train.TARGET_NAMES)), np.nan)
+    y[:, train.TARGET_NAMES.index("rain")] = rain
+    return train.Samples(np.array(rows), np.array(local, dtype="datetime64[s]"), local, y)
 
 
 @pytest.fixture
@@ -63,8 +62,8 @@ class TestLeaveOneOut:
     def measured(self, small_trees):
         data = synthetic(3000)
         self.train, self.test = data.take(np.arange(3000) < 2000), data.take(np.arange(3000) >= 2000)
-        model = train.fit(self.train.matrix(), self.train.rain)
-        reference = train.score(model.predict_proba(self.test.matrix())[:, 1], self.test.rain, 0.5)
+        model = train.fit(self.train.matrix(), self.train.labels("rain"))
+        reference = train.score(model.predict_proba(self.test.matrix())[:, 1], self.test.labels("rain"), 0.5)
         self.worth = train.ablations(self.train, self.test, "rain", reference)
 
     def test_every_feature_gets_a_row(self):
@@ -92,7 +91,7 @@ class TestExport:
         X = data.matrix()
         # Some missing values, so the export's missing-value routing is used.
         X[::17, train.FEATURES.index("dT24")] = np.nan
-        return train.fit(X, data.rain), X
+        return train.fit(X, data.labels("rain")), X
 
     def test_the_app_reproduces_scikit_learn(self, fitted):
         model, X = fitted
@@ -166,6 +165,51 @@ class TestLabels:
         assert train.rain_label(series, self.START) is None
 
 
+class TestHourlyLabels:
+    """Cloud, fog and thunder come from the hourly record, top-of-hour stamps."""
+
+    START = datetime(2021, 7, 1, 12, 0, tzinfo=UTC)
+
+    def hours(self, *values):
+        return {self.START + timedelta(hours=k + 1): v for k, v in enumerate(values)}
+
+    def test_overcast_is_the_mean_over_the_horizon(self):
+        assert train.sky_label(self.hours(8, 8, 8, 8, 4, 4), self.START) == 1.0  # 6.67 octas
+        assert train.sky_label(self.hours(8, 8, 8, 4, 4, 4), self.START) == 0.0  # 6.0
+
+    def test_a_sky_hidden_by_fog_is_overcast(self):
+        assert train.sky_label(self.hours(-1, -1, -1, -1, -1, -1), self.START) == 1.0
+
+    def test_the_hour_ending_at_the_moment_is_the_past(self):
+        series = self.hours(0, 0, 0, 0, 0, 0) | {self.START: 8.0}
+        assert train.sky_label(series, self.START) == 0.0
+
+    def test_one_foggy_hour_is_a_foggy_window(self):
+        assert train.fog_label(self.hours(20000, 20000, 800, 20000, 20000, 20000),
+                               self.START) == 1.0
+        assert train.fog_label(self.hours(*[1000] * 6), self.START) == 0.0
+
+    def test_a_gap_is_no_label(self):
+        series = self.hours(20000, 20000, 800, 20000, 20000, 20000)
+        del series[self.START + timedelta(hours=4)]
+        assert train.fog_label(series, self.START) is None
+        assert train.sky_label(series, self.START) is None
+
+    def test_thunder_in_any_hour_counts_and_nothing_reported_is_no_thunder(self):
+        assert train.thunder_label(self.hours(-1, 61, 95, -1, -1, -1), self.START) == 1.0
+        assert train.thunder_label(self.hours(-1, 61, 63, -1, -1, -1), self.START) == 0.0
+
+    def test_thunder_is_labelled_only_where_and_when_observers_reported_it(self):
+        storm = self.hours(-1, 95, -1, -1, -1, -1)
+        later = {t.replace(year=2023): v for t, v in storm.items()}
+        kept = train.observed_thunder(storm | later)
+        assert set(kept) == set(storm)
+        assert train.labeller("thunder", dict.fromkeys(storm, -1.0)) is None
+        bound = train.labeller("thunder", storm | later)
+        assert bound(self.START) == 1.0
+        assert bound(self.START.replace(year=2023)) is None
+
+
 class TestSamples:
     """build_samples is app.features at every hour, on the app's own clock."""
 
@@ -180,7 +224,7 @@ class TestSamples:
             gauge[moment] = 0.3 if (moment.month, moment.day, moment.hour) == (2, 5, 6) else 0.0
             moment += timedelta(minutes=10)
             i += 1
-        return air, gauge, train.build_samples(air, gauge, None)
+        return air, gauge, train.build_samples(air, {"rain": train.labeller("rain", gauge)})
 
     def test_nothing_before_a_month_of_history(self, built):
         air, _, samples = built
@@ -214,7 +258,7 @@ class TestSamples:
 
     def test_the_hours_before_the_rain_are_wet(self, built):
         _, _, samples = built
-        wet = [m for m, y in zip(samples.local, samples.rain, strict=True) if y == 1.0]
+        wet = [m for m, y in zip(samples.local, samples.labels("rain"), strict=True) if y == 1.0]
         assert wet, "the burst on 5 February should label the hours before it"
         # 06:00-06:50 UTC, so the six hours before it start at 00:00 UTC,
         # which is 01:00 on the local wall clock.
@@ -239,8 +283,9 @@ class TestGates:
             "archive": archive,
         }
 
-    def archive(self, bss=0.15, auc=0.79, hours=2000):
-        return {"hours": hours, "skill": {"bss": bss, "auc": auc}, "rules": {"auc": 0.61}}
+    def archive(self, bss=0.15, auc=0.79, hours=2000, events=150):
+        return {"hours": hours, "events": events,
+                "skill": {"bss": bss, "auc": auc}, "rules": {"auc": 0.61}}
 
     def shipped(self, bss=0.226, archive_bss=None):
         meta = {"skill": {"bss": bss}}
@@ -279,6 +324,91 @@ class TestGates:
             self.shipped(archive_bss=0.2),
         )
         assert any("balcony archive" in r and "step down" in r for r in reasons)
+
+
+class TestRareEvents:
+    """Fog and thunder are rare, and the gates have to know it."""
+
+    def evaluation(self, archive):
+        return {
+            "skill": {"bss": 0.25, "auc": 0.93},
+            "baselines": {"rules": {"auc": 0.66}},
+            "archive": archive,
+        }
+
+    def test_a_handful_of_events_is_not_a_test(self):
+        thin = {"hours": 2000, "events": train.MIN_ARCHIVE_EVENTS - 1,
+                "skill": {"bss": -0.4, "auc": 0.5}, "rules": {"auc": 0.6}}
+        assert train.gates(self.evaluation(thin), "sky", None) == []
+
+    def test_fog_does_not_ship_untested_on_this_sensor(self):
+        """A sensor that sits at 100 % whenever it is wet looks like fog to a
+        model fitted on screens, so the balcony must have had its say."""
+        assert any("not yet tested" in r for r in train.gates(self.evaluation(None), "fog", None))
+        thin = {"hours": 2000, "events": 3, "skill": {"bss": 0.3, "auc": 0.9},
+                "rules": {"auc": 0.6}}
+        assert any("not yet tested" in r for r in train.gates(self.evaluation(thin), "fog", None))
+
+    def test_fog_tested_on_this_sensor_may_ship(self):
+        tested = {"hours": 2000, "events": 60, "skill": {"bss": 0.2, "auc": 0.9},
+                  "rules": {"auc": 0.6}}
+        assert train.gates(self.evaluation(tested), "fog", None) == []
+
+    def test_a_level_shift_at_its_bound_is_refused(self):
+        evaluation = self.evaluation(None) | {
+            "level": {"shift": -train.LEVEL_BOUND, "said": 0.2, "climate": 0.02},
+        }
+        assert any("climatology" in r for r in train.gates(evaluation, "thunder", None))
+
+
+class TestLevel:
+    """Thunder's only calibration: one shift, to the stations' climatology."""
+
+    def test_the_shift_brings_the_mean_to_the_rate(self):
+        z = np.random.default_rng(1).normal(-2.0, 1.0, 5000)
+        shift = train.match_level(z, 0.05)
+        assert train.sigmoid(z + shift).mean() == pytest.approx(0.05, abs=1e-4)
+
+    def test_it_never_reorders_hours(self):
+        z = np.random.default_rng(2).normal(-2.0, 1.0, 100)
+        shifted = z + train.match_level(z, 0.3)
+        assert list(np.argsort(shifted)) == list(np.argsort(z))
+
+    def test_beyond_the_bound_it_stops_at_the_bound(self):
+        z = np.full(100, -8.0)
+        assert train.match_level(z, 0.5) == pytest.approx(train.LEVEL_BOUND, abs=1e-6)
+
+    def test_rates_are_by_calendar_month(self):
+        data = synthetic(24 * 70)  # January, February (2024: 29 days) and a bit of March
+        y = np.zeros(len(data))
+        months = np.array([m.month for m in data.local])
+        y[months == 2] = 1.0
+        data.y[:, train.TARGET_NAMES.index("thunder")] = y
+        assert train.monthly_rates(data, "thunder") == {1: 0.0, 2: 1.0, 3: 0.0}
+
+
+class TestIncumbents:
+    """Each model is compared with the hand-made rung it replaces."""
+
+    def samples(self, **columns):
+        row = [np.nan] * len(features.NAMES)
+        for name, value in columns.items():
+            row[features.NAMES.index(name)] = value
+        local = [datetime(2026, 7, 15, 15, 0)]
+        return train.Samples(np.array([row]), np.array(local, dtype="datetime64[s]"), local,
+                             np.full((1, len(train.TARGET_NAMES)), np.nan))
+
+    def test_thunder_is_the_convective_rule(self):
+        hot = self.samples(rh=60.0, temp=28.0, spread=10.0, drh3=0.0)
+        cool = self.samples(rh=60.0, temp=20.0, spread=10.0, drh3=0.0)
+        assert train.incumbent(hot, "thunder")[0] == 1.0
+        assert train.incumbent(cool, "thunder")[0] == 0.0
+
+    def test_fog_is_saturated_air_still_wetting(self):
+        wetting = self.samples(rh=95.0, temp=8.0, spread=1.0, drh3=3.0)
+        steady = self.samples(rh=95.0, temp=8.0, spread=1.0, drh3=0.0)
+        assert train.incumbent(wetting, "fog")[0] == 1.0
+        assert train.incumbent(steady, "fog")[0] == 0.0
 
 
 class TestCalibrationFit:
@@ -325,14 +455,14 @@ class TestCalibrationFit:
 
     def test_too_few_wet_hours_are_not_calibrated_on(self):
         y = np.zeros(train.MIN_ARCHIVE_HOURS)
-        y[: train.MIN_CALIBRATION_WET - 1] = 1
+        y[: train.MIN_ARCHIVE_EVENTS - 1] = 1
         assert not train.can_calibrate(y)
-        y[: train.MIN_CALIBRATION_WET] = 1
+        y[: train.MIN_ARCHIVE_EVENTS] = 1
         assert train.can_calibrate(y)
 
     def test_the_export_carries_it_and_the_trees_are_checked_under_it(self, small_trees):
         data = synthetic(2000)
-        fitted = train.fit(data.matrix(), data.rain)
+        fitted = train.fit(data.matrix(), data.labels("rain"))
         exported = train.export(fitted, train.FEATURES, 0.3, {}, calibration=(0.7, -0.3))
         assert exported["calibration"] == {"slope": 0.7, "intercept": -0.3}
         train.self_check(exported, fitted, data.matrix(), count=200)
@@ -353,7 +483,7 @@ class TestReplacingAnUntestedModel:
             "skill": {"bss": 0.25, "auc": 0.85},
             "baselines": {"rules": {"auc": 0.68}},
             "archive": {
-                "hours": 1700, "skill": {"bss": bss, "auc": 0.80},
+                "hours": 1700, "events": 140, "skill": {"bss": bss, "auc": 0.80},
                 "rules": {"auc": 0.73}, "shipped": {"bss": live_bss},
             },
         }
