@@ -1107,9 +1107,16 @@ def recent(samples: Samples, days: int) -> Samples:
 
 
 def describe_period(samples: Samples) -> dict:
+    """The span ``samples`` cover, by their earliest and latest hour.
+
+    Not their first and last rows: samples from several stations are
+    stacked station after station, so the last row is the end of whichever
+    station came last — for thunder, whose stations lost their observers in
+    different years, that read as a model labelled to 2018 when it ran to 2021.
+    """
     return {
-        "from": samples.local[0].strftime("%Y-%m-%d"),
-        "to": samples.local[-1].strftime("%Y-%m-%d"),
+        "from": samples.local[int(np.argmin(samples.moments))].strftime("%Y-%m-%d"),
+        "to": samples.local[int(np.argmax(samples.moments))].strftime("%Y-%m-%d"),
         "hours": len(samples),
     }
 
@@ -1388,8 +1395,8 @@ def ship(evaluation: dict, out: Path, extra: dict, force: bool) -> bool:
         {
             "trained_at": datetime.now().strftime("%Y-%m-%d"),
             "samples": len(usable),
-            "trained_from": usable.local[0].strftime("%Y-%m-%d"),
-            "trained_through": usable.local[-1].strftime("%Y-%m-%d"),
+            "trained_from": describe_period(usable)["from"],
+            "trained_through": describe_period(usable)["to"],
             "base_rate": round(float(y.mean()), 3),
             "horizon_hours": HORIZON_HOURS,
             "labels": spec.labels,

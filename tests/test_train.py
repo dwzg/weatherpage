@@ -270,6 +270,18 @@ class TestWhichStationsLabelWhat:
         assert train.labeller("fog", summit) is None
 
 
+def test_a_period_is_its_earliest_and_latest_hour_not_its_first_and_last_row():
+    """Stations are stacked one after another; the last row is not the end."""
+    def part(start, hours):
+        local = [start + timedelta(hours=i) for i in range(hours)]
+        return train.Samples(np.zeros((hours, len(features.NAMES))),
+                             np.array(local, dtype="datetime64[s]"), local,
+                             np.zeros((hours, len(train.TARGET_NAMES))))
+
+    stacked = train.Samples.concat([part(datetime(2014, 1, 1), 48), part(datetime(2010, 1, 1), 24)])
+    assert train.describe_period(stacked) == {"from": "2010-01-01", "to": "2014-01-02", "hours": 72}
+
+
 class TestSamples:
     """build_samples is app.features at every hour, on the app's own clock."""
 
