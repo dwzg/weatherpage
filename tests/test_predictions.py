@@ -214,14 +214,14 @@ class TestTheExportEndpoint:
             get_settings.cache_clear()
 
     async def test_it_carries_no_observations(self, client):
-        """Those belong to Open-Meteo and the trainer already fetches them;
-        a second copy here would be a cache that could silently go stale."""
+        """Those belong to the weather service and the trainer already fetches
+        them; a second copy here would be a cache that could silently go stale."""
         end = clock.now().replace(minute=0, second=0, microsecond=0)
         await fill(client, hours=1, end=end)
         row = (await client.get("/api/weather/predictions")).json()["predictions"][0]
         assert set(row) == {
             "timestamp", "utc_offset", "rain_probability", "sky_probability",
-            "forecast", "model_trained_at",
+            "fog_probability", "thunder_probability", "forecast", "model_trained_at",
         }
 
 

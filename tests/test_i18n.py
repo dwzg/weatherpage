@@ -538,11 +538,17 @@ class TestDeepDiveStructure:
         'data-cell="baseline"',
         'data-cell="total"',
         "rule-ladder",         # the rung the outlook is standing on
-        "deep-sky-live",       # the cloud model's live probability
     ])
     def test_both_sides_name_the_same_hook(self, hook):
         assert hook in TEMPLATE.read_text(), f"{hook} missing from the template"
         assert hook in self.POLL.read_text(), f"{hook} missing from poll.js"
+
+    def test_the_other_models_live_cells_are_named_alike(self):
+        """One cell per model, named by the key /status sends it under."""
+        assert 'data-cell="{{ kind }}-now"' in TEMPLATE.read_text()
+        poll = self.POLL.read_text()
+        assert 'data-cell="${kind}-now"' in poll
+        assert "['sky', 'fog', 'thunder']" in poll
 
     async def test_the_ladder_rows_carry_the_phrase_the_api_sends(self, client):
         """The poller matches data-phrase against status.forecast, which is

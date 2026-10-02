@@ -8,24 +8,28 @@ Where everything comes from, and what each source is for:
 
   * **Training data** — ten-minute observations from the weather service's
     stations nearest the balcony (``ml/dwd.py``): temperature, humidity and
-    pressure, the three things this sensor measures, and the rain gauge beside
-    them for the label. Years of them, so every season is in the fit. This
-    replaced fitting to the balcony's own archive, which was one summer long:
-    a model that has only seen July learns that "cool" means "dry", and in
-    October it said 11% with rain on the sensor.
+    pressure, the three things this sensor measures. Years of them, so every
+    season is in the fit. This replaced fitting to the balcony's own archive,
+    which was one summer long: a model that has only seen July learns that
+    "cool" means "dry", and in October it said 11% with rain on the sensor.
+  * **The labels** — what was actually observed at those same stations: the
+    rain gauge beside the sensors, and the hourly record of cloud cover,
+    visibility and present weather. Every model here is fitted to something
+    that was measured or seen at the place its inputs came from.
   * **The balcony's own archive** (``/api/weather/export``) — never trained
     on. It is where a candidate is *scored* before it may ship, because a
     weather-service screen is not a sun-baked balcony and the only honest test
-    of that gap is this sensor. Labelled by the nearest weather-service gauge.
+    of that gap is this sensor. Labelled by the nearest station that observes
+    the thing in question.
   * **The prediction log** (``/api/weather/predictions``) — what the page
-    actually said, scored against that same gauge (``app/verification.json``).
-  * **Cloud cover** for the sky model's labels — Open-Meteo's ERA5 archive at
-    each training station, the one thing the stations do not observe.
+    actually said, scored against the nearest gauge (``app/verification.json``).
 
-Two models come out of one set of samples: rain -> ``app/model.json`` and
-sky -> ``app/sky_model.json``. They share the feature vector and are gated
-separately, so one can ship while the other is refused. Refusing to ship is a
-normal outcome, not a failure: the script exits 0 and leaves the file alone.
+Four models come out of one set of samples, one per claim the outlook banner
+makes: rain (``app/model.json``), an overcast sky (``app/sky_model.json``),
+fog (``app/fog_model.json``) and thunder (``app/thunder_model.json``). They
+share the feature vector and are gated separately, so any of them can ship
+while the others are refused. Refusing to ship is a normal outcome, not a
+failure: the script exits 0 and leaves the file alone.
 
 Features come from :mod:`app.features` — the same function the running app
 calls — fed the weather service's readings in the app's own conventions
@@ -50,6 +54,7 @@ import urllib.request
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
+from functools import partial
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -65,7 +70,6 @@ from app import features, nowcast, weather  # noqa: E402
 from ml import dwd  # noqa: E402
 
 DEFAULT_APP_URL = "https://weather.wtzg.de"
-ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive"
 
 #: Where the station stands. Supplied by the environment rather than written
 #: down here: the coordinates are the one thing in this repository that says
@@ -82,12 +86,37 @@ HORIZON_HOURS = 6
 RAIN_MM = 0.2
 #: Mean cloud cover over the horizon at or above which the sky model's label
 #: is "overcast". Mirrors app.nowcast.OVERCAST_PERCENT, which the page prints;
-#: main() asserts the two agree rather than trusting that they do.
+#: main() asserts the two agree rather than trusting that they do. Observers
+#: and instruments report octas, so this is 6.4 of 8; a sky hidden by fog is
+#: read as 8, because nothing above it is getting through.
 OVERCAST_PERCENT = 80
+#: Visibility under which an hour is foggy: the meteorological definition of
+#: fog, and the one the observations are made against. Mirrors app.nowcast.
+FOG_METRES = 1000
+#: A station foggy for more than this share of its hours is not under the
+#: fog, it is in the cloud: a hilltop whose "fog" is a low cloud base. Of the
+#: five stations nearest the location this was tested at, four were foggy
+#: 1.0-4.5% of the time and one, on a summit, 29.8% — and its labels taught
+#: the model that saturated air means fog, which on a balcony that reads 100%
+#: whenever it is wet is the one lesson it must not learn. Its rain, cloud and
+#: thunder are still used; only its fog is not.
+MAX_FOG_SHARE = 0.15
+#: The present-weather codes that mean thunder: heard with no rain (17), in
+#: the last hour (29), in the last hour with rain or snow now (91-94), and at
+#: the time of the observation (95-99).
+THUNDER_CODES = (17, 29, 91, 92, 93, 94, 95, 96, 97, 98, 99)
+#: Thunder was reported by people, and the instruments that replaced them
+#: report visibility and cloud but not thunder. The last observers went off
+#: duty in 2022: at the eight stations first measured, 2014-2021 held 25-118
+#: thunder reports a year each, and 2023 onwards held none at all. So thunder
+#: is labelled only before this date — and, because many stations lost their
+#: observers years earlier, each only up to its own last report: see
+#: observed_thunder().
+THUNDER_UNTIL = date(2022, 1, 1)
 
-#: The model's inputs, all computed by app.features. Both targets are fitted
-#: on this one tuple: a feature that meant two things to the two models would
-#: make their breakdowns incomparable.
+#: The model's inputs, all computed by app.features. All four targets are
+#: fitted on this one tuple: a feature that meant different things to two
+#: models would make their breakdowns incomparable.
 #:
 #: Chosen by measurement over 1.1 million station-hours, scored on the last
 #: two years. Dropped because they added nothing once these were in: the
@@ -95,17 +124,29 @@ OVERCAST_PERCENT = 80
 #: carried no signal the dew point did not), the day of the year (which is
 #: how a model learns the calendar instead of the sky), and the humidity
 #: changes (the dew-point and temperature changes already carry them).
+#:
+#: The swings — how far temperature and humidity have ranged over the last
+#: few hours to a day — were added for the sky, and are the sensor's view of
+#: the sun: a clear day heats and a clear night cools, an overcast one does
+#: neither. Measured over the same 1.1 million station-hours, adding them
+#: moved Brier skill +0.025 for an overcast sky (0.265 to 0.290), +0.010 for
+#: rain, +0.008 for thunder and nothing for fog, which the humidity signals
+#: already carry.
 FEATURES = (
     "rh", "rh_max1", "rh_max3", "sat3",
     "dT1", "dT3", "dT24", "td", "dtd3",
     "pct30", "pct7", "dp1", "dp3", "dp6", "dp12",
+    "t_range3", "t_range6", "t_range12", "t_range24", "rh_range6", "rh_min24",
     "hour",
 )
 
-#: How many of the nearest weather-service stations to learn from, and from
-#: when. Measured: a model trained on seven other stations scored the eighth
-#: as well as one trained on that station's own fourteen years, so more is
-#: not better past a handful — it is only slower.
+#: How many of the nearest weather-service stations each model learns from,
+#: and from when. Measured: a model trained on seven other stations scored
+#: the eighth as well as one trained on that station's own fourteen years, so
+#: more is not better past a handful — it is only slower. Each model counts
+#: its own: the nearest stations that observe its label, which for thunder,
+#: reported only where people kept watch, can mean reaching further than the
+#: others (of the five stations nearest the test location, one had).
 TRAINING_STATIONS = 5
 TRAINING_SINCE = date(2014, 1, 1)
 #: A training station must have measured all three of temperature, humidity
@@ -118,6 +159,11 @@ MAX_STATION_KM = 250.0
 #: The gauge that labels the balcony's own archive and the prediction log
 #: must be at least this close, or "rain here" is a claim about elsewhere.
 MAX_GAUGE_KM = 25.0
+#: The same, for the observations that label the archive for the other
+#: models. A sky is shared over a wider area than a shower is; fog is as
+#: local as rain, and lies in valleys a hill a few kilometres off is above.
+MAX_CLOUD_KM = 50.0
+MAX_VISIBILITY_KM = 25.0
 
 #: History a sample needs behind it before its pressure ranks mean what they
 #: say. The app will rank against a week if that is all it has; a model
@@ -151,12 +197,23 @@ MIN_ARCHIVE_HOURS = 500
 #: scale without touching the ranking. Fitted on the most recent
 #: CALIBRATION_DAYS of the archive, so it follows the season as the record
 #: grows instead of carrying a summer's sensor into the winter; needs
-#: MIN_CALIBRATION_WET wet hours to fit at all; and scored out of fold, the
-#: archive cut into CALIBRATION_FOLDS stretches each judged by a calibration
-#: fitted without it.
+#: MIN_ARCHIVE_EVENTS hours of the thing happening to fit at all; and scored
+#: out of fold, the archive cut into CALIBRATION_FOLDS stretches each judged
+#: by a calibration fitted without it.
+#:
+#: MIN_ARCHIVE_EVENTS is also what it takes for the archive to be a test at
+#: all. Fog is rare: a summer can hold a handful of foggy hours, and a Brier
+#: score over five events is a coin toss, not a verdict.
 CALIBRATION_DAYS = 120
-MIN_CALIBRATION_WET = 30
+MIN_ARCHIVE_EVENTS = 30
 CALIBRATION_FOLDS = 4
+#: Thunder has no label on the balcony at all — nothing near it reports
+#: thunder any more — so its calibration can only be to the level: one shift
+#: of the log-odds that makes the model's mean on the balcony's recent
+#: readings equal how often the training stations had thunder in those same
+#: months. A shift this large would mean the readings are not ones the model
+#: understands, and the gate refuses it rather than papering over it.
+LEVEL_BOUND = 2.0
 #: Gates a candidate must clear before it replaces the shipped model.
 #: BSS is skill over quoting the base rate; MAX_REGRESSION lets a model
 #: wobble without thrashing the deployed one.
@@ -167,17 +224,59 @@ TS_FORMAT = "%Y-%m-%d %H:%M:%S"
 SEASONS = {"DJF": (12, 1, 2), "MAM": (3, 4, 5), "JJA": (6, 7, 8), "SON": (9, 10, 11)}
 
 
+@dataclass(frozen=True)
+class Target:
+    """One of the four models, and everything that differs between them."""
+
+    name: str
+    file: str                #: written under app/
+    product: str             #: the ml/dwd.py product its labels come from
+    labels: str              #: what the model card says labelled it
+    #: How near an observation of it must be to label the balcony's archive;
+    #: None where nothing near the balcony observes it any more.
+    archive_km: float | None
+    #: "scale" fits a slope and an intercept against the archive's labels;
+    #: "level" only the intercept, against the stations' climatology.
+    calibration: str = "scale"
+    #: Refuse to ship without passing on the balcony's own readings. For fog
+    #: the sensor's best-known quirk — 100 % whenever it is wet — reads to a
+    #: model fitted on screens as exactly the signal it is looking for.
+    needs_archive: bool = False
+    #: Measure what each feature is worth: one refit per feature, done for
+    #: the model whose breakdown the page prints row by row.
+    measure_worth: bool = False
+
+
+TARGETS = {
+    "rain": Target("rain", "model.json", "rain",
+                   "rain gauges beside the training stations' sensors",
+                   MAX_GAUGE_KM, measure_worth=True),
+    "sky": Target("sky", "sky_model.json", "cloud",
+                  "cloud cover observed at the training stations",
+                  MAX_CLOUD_KM),
+    "fog": Target("fog", "fog_model.json", "visibility",
+                  "visibility observed at the training stations",
+                  MAX_VISIBILITY_KM, needs_archive=True),
+    "thunder": Target("thunder", "thunder_model.json", "weather",
+                      "thunder reported by the training stations' observers",
+                      None, calibration="level"),
+}
+#: The order of the label columns in Samples.
+TARGET_NAMES = tuple(TARGETS)
+
+
 # ── Inputs ─────────────────────────────────────────────────────────────────
 
 
 def fetch_json(
     url: str, timeout: int = 120, attempts: int = 5, headers: dict | None = None
 ) -> dict | list:
-    """GET some JSON, retrying the failures a free weather API actually hands out.
+    """GET some JSON from the app, retrying the failures a server hands out.
 
-    Open-Meteo rate-limits with 429 and occasionally 5xx. A weekly job that
-    gave up on the first one would quietly stop retraining, so back off and
-    try again rather than failing the run.
+    A reverse proxy answers a restarting container with 5xx, and a rate
+    limiter with 429. A weekly job that gave up on the first one would
+    quietly stop retraining, so back off and try again rather than failing
+    the run.
     """
     delay = 10
     for attempt in range(1, attempts + 1):
@@ -294,22 +393,12 @@ def station_location(latitude: float | None, longitude: float | None) -> tuple[f
     return values[0], values[1]
 
 
-def fetch_cloud(latitude: float, longitude: float, start: date, end: date) -> dict[datetime, float]:
-    """Hourly ERA5 cloud cover at one point, keyed by UTC hour."""
-    url = (
-        f"{ARCHIVE_URL}?latitude={latitude}&longitude={longitude}"
-        f"&start_date={start:%Y-%m-%d}&end_date={end:%Y-%m-%d}"
-        "&hourly=cloud_cover&timezone=GMT"
-    )
-    hourly = fetch_json(url, timeout=300)["hourly"]
-    return {
-        datetime.strptime(t, "%Y-%m-%dT%H:%M").replace(tzinfo=UTC): v
-        for t, v in zip(hourly["time"], hourly["cloud_cover"], strict=True)
-        if v is not None
-    }
-
-
 # ── Labels ─────────────────────────────────────────────────────────────────
+#
+# Each takes one station's observations and an instant, and answers for the
+# HORIZON_HOURS after it: 1.0, 0.0, or None where the record has a gap in that
+# window. A partial window is not a weaker answer, it is a different question,
+# and an hour the instrument was down is not an hour nothing happened.
 
 
 def rain_label(gauge: dict[datetime, float], moment: datetime) -> float | None:
@@ -317,8 +406,7 @@ def rain_label(gauge: dict[datetime, float], moment: datetime) -> float | None:
 
     The gauge's ten-minute totals are stamped with the end of their ten
     minutes, so the window is the stamps after ``moment`` up to and including
-    six hours on. A window with any ten minutes missing is no label at all:
-    a partial window is not a weaker answer, it is a different question.
+    six hours on.
     """
     total = 0.0
     for k in range(1, HORIZON_HOURS * 6 + 1):
@@ -329,17 +417,97 @@ def rain_label(gauge: dict[datetime, float], moment: datetime) -> float | None:
     return float(total >= RAIN_MM - 1e-9)
 
 
+def _hours_after(series: dict[datetime, float], moment: datetime) -> list[float] | None:
+    """The hourly observations for the horizon after ``moment``, or None on a gap.
+
+    An hourly value is stamped with the top of its hour, so the six after an
+    on-the-hour ``moment`` are the stamps one to six hours on.
+    """
+    hours = [series.get(moment + timedelta(hours=k)) for k in range(1, HORIZON_HOURS + 1)]
+    return None if any(v is None for v in hours) else hours
+
+
 def sky_label(cloud: dict[datetime, float], moment: datetime) -> float | None:
     """Was the next :data:`HORIZON_HOURS` overcast, on average?
 
     The mean rather than any hour of it: the outlook is a claim about the
     period as a whole, and one cloudy hour inside a bright afternoon is not
-    what "Cloudy" on the banner is meant to say.
+    what "Cloudy" on the banner is meant to say. Octas, with a sky hidden by
+    fog (-1) read as 8.
     """
-    hours = [cloud.get(moment + timedelta(hours=k)) for k in range(1, HORIZON_HOURS + 1)]
-    if any(v is None for v in hours):
+    hours = _hours_after(cloud, moment)
+    if hours is None:
         return None
-    return float(sum(hours) / len(hours) >= OVERCAST_PERCENT)
+    octas = [8.0 if v < 0 else v for v in hours]
+    return float(sum(octas) / len(octas) >= 8 * OVERCAST_PERCENT / 100 - 1e-9)
+
+
+def fog_label(visibility: dict[datetime, float], moment: datetime) -> float | None:
+    """Was visibility under :data:`FOG_METRES` in any hour of the horizon?
+
+    Any rather than the mean: fog is an event, and a morning that clears by
+    nine was a foggy morning.
+    """
+    hours = _hours_after(visibility, moment)
+    return None if hours is None else float(min(hours) < FOG_METRES)
+
+
+def thunder_label(weather: dict[datetime, float], moment: datetime) -> float | None:
+    """Was thunder reported in any hour of the horizon?
+
+    -1 is the service's "nothing reported", which an observer on duty uses
+    for an hour without significant weather — and thunder is always
+    significant. It is an observation, not a gap. The series is cut at
+    :data:`THUNDER_UNTIL` by :func:`observed_thunder`, so a window reaching
+    past it is a gap like any other.
+    """
+    hours = _hours_after(weather, moment)
+    return None if hours is None else float(any(int(v) in THUNDER_CODES for v in hours))
+
+
+def observed_thunder(weather: dict[datetime, float]) -> dict[datetime, float]:
+    """The part of a weather record that was watching for thunder, or nothing.
+
+    Each station lost its observers on its own date, and after it every hour
+    reads "nothing reported" whatever the sky did. Of the five thunder
+    stations nearest the test location, the last reports came in 2015, 2016,
+    2018, 2019 and 2022; counted through 2021 regardless, the held-out year
+    was mostly a silence mistaken for calm, its base rate fell from 3.0% to
+    0.7%, and a model that still ranked hours at AUC 0.87 scored a Brier
+    skill of -0.15 against it. So a record is used up to the end of the
+    month of its last thunder report, and never past :data:`THUNDER_UNTIL`.
+    A station with no report at all had nobody listening.
+    """
+    cutoff = datetime(THUNDER_UNTIL.year, THUNDER_UNTIL.month, THUNDER_UNTIL.day, tzinfo=UTC)
+    reports = [t for t, v in weather.items() if t < cutoff and int(v) in THUNDER_CODES]
+    if not reports:
+        return {}
+    last = max(reports)
+    month_after = datetime(last.year + last.month // 12, last.month % 12 + 1, 1, tzinfo=UTC)
+    end = min(month_after, cutoff)
+    return {t: v for t, v in weather.items() if t < end}
+
+
+def under_the_fog(visibility: dict[datetime, float]) -> dict[datetime, float]:
+    """A visibility record, or nothing if the station is foggy too often to be
+    under the fog rather than in the cloud (:data:`MAX_FOG_SHARE`)."""
+    if not visibility:
+        return {}
+    share = sum(v < FOG_METRES for v in visibility.values()) / len(visibility)
+    return visibility if share <= MAX_FOG_SHARE else {}
+
+
+LABELS = {"rain": rain_label, "sky": sky_label, "fog": fog_label, "thunder": thunder_label}
+#: What a station's record must pass before it may label a target at all.
+SCREENS = {"fog": under_the_fog, "thunder": observed_thunder}
+
+
+def labeller(target: str, observations: dict[datetime, float]):
+    """One target's label function, bound to one station's observations, or
+    None where the station cannot label it (see :data:`SCREENS`)."""
+    if target in SCREENS:
+        observations = SCREENS[target](observations)
+    return partial(LABELS[target], observations) if observations else None
 
 
 # ── Samples ────────────────────────────────────────────────────────────────
@@ -350,15 +518,16 @@ class Samples:
     """One row per hour: every feature app.features computes, and the labels.
 
     ``X`` holds all of :data:`app.features.NAMES` — the model reads
-    :data:`FEATURES` out of it, the threshold ladder its own few — with NaN
-    where a feature was unavailable, which is how the trees are told.
+    :data:`FEATURES` out of it, the rules they are compared with their own
+    few — with NaN where a feature was unavailable, which is how the trees are
+    told. ``y`` holds one column per target in :data:`TARGET_NAMES`: 1, 0, or
+    NaN where that station does not observe it or the window had a gap.
     """
 
     X: np.ndarray
     moments: np.ndarray   #: UTC, as datetime64[s]
     local: list[datetime]  #: the same instants on the local wall clock
-    rain: np.ndarray      #: 1, 0, or NaN where the window was incomplete
-    sky: np.ndarray
+    y: np.ndarray
 
     def __len__(self) -> int:
         return len(self.moments)
@@ -367,7 +536,7 @@ class Samples:
         return Samples(
             self.X[keep], self.moments[keep],
             [m for m, k in zip(self.local, keep, strict=True) if k],
-            self.rain[keep], self.sky[keep],
+            self.y[keep],
         )
 
     @staticmethod
@@ -376,8 +545,7 @@ class Samples:
             np.concatenate([p.X for p in parts]),
             np.concatenate([p.moments for p in parts]),
             [m for p in parts for m in p.local],
-            np.concatenate([p.rain for p in parts]),
-            np.concatenate([p.sky for p in parts]),
+            np.concatenate([p.y for p in parts]),
         )
 
     def column(self, name: str) -> np.ndarray:
@@ -387,13 +555,13 @@ class Samples:
         return self.X[:, [features.NAMES.index(n) for n in names]]
 
     def labels(self, target: str) -> np.ndarray:
-        return self.rain if target == "rain" else self.sky
+        return self.y[:, TARGET_NAMES.index(target)]
 
 
 def build_samples(
     air: list[tuple[datetime, float, float, float]],
-    gauge: dict[datetime, float] | None,
-    cloud: dict[datetime, float] | None,
+    labellers: dict,
+    every_hour: bool = False,
 ) -> Samples:
     """The hourly samples for one run of readings, as the app would have seen them.
 
@@ -403,6 +571,11 @@ def build_samples(
     database orders it — and then, at every hour, handed to
     :func:`app.features.compute` with the pressure cycle the app would have
     learned by that day: the 90 whole days before it.
+
+    ``labellers`` maps a target to its label function (:func:`labeller`).
+    An hour no target can label is dropped, unless ``every_hour``: the
+    balcony's archive keeps them, because the thunder model's level is set
+    from the readings alone.
     """
     tz = ZoneInfo(TIMEZONE)
     local = sorted(
@@ -422,83 +595,150 @@ def build_samples(
             cycles[day] = features.cycle_from_days(days[d] for d in window if d in days)
         return cycles[day]
 
-    rows, moments, wall, rain, sky = [], [], [], [], []
+    label_fns = [labellers.get(name) for name in TARGET_NAMES]
+    rows, moments, wall, ys = [], [], [], []
     first, last = air[0][0], air[-1][0]
     moment = (first + timedelta(days=MIN_HISTORY_DAYS)).replace(minute=0, second=0)
     while moment <= last:
         now = moment.astimezone(tz).replace(tzinfo=None)
         vector = features.compute(series, now, cycle(now.date()))
         if vector is not None:
-            y_rain = rain_label(gauge, moment) if gauge else None
-            y_sky = sky_label(cloud, moment) if cloud else None
-            if y_rain is not None or y_sky is not None:
+            y = [None if fn is None else fn(moment) for fn in label_fns]
+            if every_hour or any(v is not None for v in y):
                 rows.append([np.nan if vector[n] is None else vector[n] for n in features.NAMES])
                 moments.append(moment.replace(tzinfo=None))
                 wall.append(now)
-                rain.append(np.nan if y_rain is None else y_rain)
-                sky.append(np.nan if y_sky is None else y_sky)
+                ys.append([np.nan if v is None else v for v in y])
         moment += timedelta(hours=1)
 
-    width = len(features.NAMES)
     return Samples(
-        np.array(rows, dtype=float).reshape(-1, width),
+        np.array(rows, dtype=float).reshape(-1, len(features.NAMES)),
         np.array(moments, dtype="datetime64[s]"),
         wall,
-        np.array(rain, dtype=float),
-        np.array(sky, dtype=float),
+        np.array(ys, dtype=float).reshape(-1, len(TARGET_NAMES)),
     )
 
 
-def station_samples(job: tuple[str, Path, date, dict | None]) -> tuple[Samples, float]:
-    """Load one weather-service station and build its samples (a worker)."""
-    station_id, cache, since, cloud = job
+def station_samples(
+    job: tuple[str, Path, date, tuple[str, ...]],
+) -> tuple[Samples, float | None]:
+    """Load one weather-service station and build its samples (a worker).
+
+    ``targets`` are the ones still short of stations that this one might
+    label. The hourly records are small, so they are read first: a station
+    that turns out to label none of them — an automatic one, asked only for
+    thunder — costs those and nothing else, and comes back with coverage
+    ``None``. Then the barometer check, and only then the years of
+    ten-minute readings.
+    """
+    try:
+        return _station_samples(job)
+    except urllib.error.URLError as error:
+        # An HTTPError holds the open response, which cannot be pickled back
+        # to the parent; the run would die on that instead of on this.
+        raise RuntimeError(f"a weather-service download failed: {error}") from None
+
+
+def _station_samples(job: tuple[str, Path, date, tuple[str, ...]]) -> tuple[Samples, float | None]:
+    station_id, cache, since, targets = job
+    labellers = {}
+    for name in targets:
+        if TARGETS[name].product != "rain" and (
+            fn := labeller(name, dwd.load_hourly(TARGETS[name].product, station_id, cache, since))
+        ) is not None:
+            labellers[name] = fn
+    if not labellers and "rain" not in targets:
+        return _empty(), None
     if not dwd.has_barometer(station_id, cache, MIN_COVERAGE):
         return _empty(), 0.0
-    observations = dwd.load(station_id, cache, since)
+    observations = dwd.load(station_id, cache, since, rain="rain" in targets)
     expected = (datetime.now(UTC).date() - since).days * 144
     coverage = len(observations.air) / expected if expected else 0.0
     if coverage < MIN_COVERAGE:
         return _empty(), coverage
-    return build_samples(observations.air, observations.rain, cloud), coverage
+    if "rain" in targets and (fn := labeller("rain", observations.rain)) is not None:
+        labellers["rain"] = fn
+    return build_samples(observations.air, labellers), coverage
 
 
 def _empty() -> Samples:
     return Samples(np.zeros((0, len(features.NAMES))), np.array([], dtype="datetime64[s]"),
-                   [], np.array([]), np.array([]))
+                   [], np.zeros((0, len(TARGET_NAMES))))
+
+
+def claim(samples: Samples, need: dict[str, int]) -> tuple[Samples, list[str]]:
+    """Count one station towards every target still short of stations that it labels.
+
+    Its labels for a target that already has its stations are dropped, so
+    each model learns from its own nearest; hours left with no label at all
+    are dropped with them. ``need`` is decremented in place.
+    """
+    labelled = []
+    y = samples.y.copy()
+    for name in TARGET_NAMES:
+        column = TARGET_NAMES.index(name)
+        if np.isnan(y[:, column]).all():
+            continue
+        if need.get(name, 0) > 0:
+            need[name] -= 1
+            labelled.append(name)
+        else:
+            y[:, column] = np.nan
+    kept = Samples(samples.X, samples.moments, samples.local, y)
+    return kept.take(~np.isnan(y).all(axis=1)), labelled
 
 
 def training_samples(
-    candidates: list[dwd.Station], cache: Path, want: int, with_cloud: bool, workers: int,
-) -> tuple[Samples, int]:
-    """Samples from the first ``want`` candidates that measure all three things.
+    candidates: list[dwd.Station], cache: Path, want: int, targets: tuple[str, ...],
+    workers: int,
+) -> tuple[Samples, dict[str, int]]:
+    """Samples from the ``want`` nearest stations that can label each target.
 
     Candidates are tried nearest first. A station without a barometer, or
-    with long gaps, is passed over for the next one; nothing about which
-    stations were used or skipped is printed (see the module docstring).
+    with long gaps, is passed over for the next one. One that labels a target
+    which already has its stations has those labels dropped, so every model
+    learns from its own nearest. Nothing about which stations were used or
+    skipped is printed (see the module docstring); only counts.
     """
-    today = datetime.now(UTC).date()
+    # Which stations carry each hourly product, from the service's own lists:
+    # asking for a file a station never had is a wasted request and a 404.
+    carried = {
+        TARGETS[name].product: {s.id for s in dwd.stations(TARGETS[name].product, cache)}
+        for name in targets if TARGETS[name].product != "rain"
+    }
+    need = dict.fromkeys(targets, want)
     parts: list[Samples] = []
     queue = list(candidates)
     with ProcessPoolExecutor(max_workers=workers) as pool:
-        while len(parts) < want and queue:
-            batch, queue = queue[: want - len(parts)], queue[want - len(parts):]
-            jobs = []
-            for station in batch:
-                cloud = (
-                    fetch_cloud(station.latitude, station.longitude, TRAINING_SINCE,
-                                today - timedelta(days=1))
-                    if with_cloud else None
-                )
-                jobs.append((station.id, cache, TRAINING_SINCE, cloud))
-            for samples, coverage in pool.map(station_samples, jobs):
-                if coverage >= MIN_COVERAGE and len(samples):
-                    parts.append(samples)
-                    print(f"  station {len(parts)} of {want}: {len(samples)} hours")
-                else:
+        while queue and any(need.values()):
+            size = max(need.values())
+            batch, queue = queue[:size], queue[size:]
+            jobs = [
+                (station.id, cache, TRAINING_SINCE, tuple(
+                    name for name in targets
+                    if need[name] > 0 and (
+                        TARGETS[name].product == "rain"
+                        or station.id in carried[TARGETS[name].product]
+                    )
+                ))
+                for station in batch
+            ]
+            for samples, coverage in pool.map(station_samples, [j for j in jobs if j[3]]):
+                if coverage is None:
+                    continue  # observes nothing a model is still short of
+                if coverage < MIN_COVERAGE or not len(samples):
                     print(f"  a candidate station was passed over ({coverage:.0%} coverage)")
+                    continue
+                samples, labelled = claim(samples, need)
+                if labelled:
+                    parts.append(samples)
+                    print(f"  station {len(parts)}: {len(samples)} hours "
+                          f"(labels: {', '.join(labelled)})")
     if not parts:
         raise SystemExit("no weather-service station near enough measured all three things")
-    return Samples.concat(parts), len(parts)
+    used = {name: want - need[name] for name in targets}
+    print("stations per model: " + ", ".join(f"{name} {n}" for name, n in used.items()))
+    return Samples.concat(parts), used
 
 
 # ── Fitting and exporting ──────────────────────────────────────────────────
@@ -654,8 +894,13 @@ def self_check(
 
 
 def best_threshold(probabilities: np.ndarray, truth: np.ndarray) -> float:
-    """The cut that maximises CSI — chosen on training data only."""
-    grid = np.arange(0.10, 0.80, 0.025)
+    """The cut that maximises CSI — chosen on training data only.
+
+    The grid starts low because fog and thunder are rare: with thunder in a
+    few percent of windows, the cut that catches the most of them for the
+    fewest false alarms sits well under a coin toss.
+    """
+    grid = np.arange(0.05, 0.80, 0.025)
     return float(grid[int(np.argmax([csi(probabilities >= g, truth) for g in grid]))])
 
 
@@ -699,26 +944,41 @@ def score(
 
 
 def incumbent(samples: Samples, target: str) -> np.ndarray:
-    """What the threshold ladder already claims, as a 0/1 call per hour.
+    """What the page claims without the model, as a 0/1 call per hour.
 
     This is the thing each model is asking to improve on, so it is the
     baseline that decides whether shipping is an improvement or just a
-    change. For rain it is the ladder's own "says rain" rungs. For cloud it
-    is the humidity test behind "Overcast and humid".
+    change. Each is the hand-made rung the model replaces, evaluated by
+    :mod:`app.weather` itself rather than restated here:
+
+    * rain — the ladder's "says rain" rungs;
+    * sky — the humidity test behind "Overcast and humid";
+    * fog — "Fog or drizzle possible": near saturation and still wetting;
+    * thunder — "Thunderstorm possible": a warm, humid summer afternoon.
     """
-    rh = samples.column("rh")
+    rh, pct, temp = samples.column("rh"), samples.column("pct30"), samples.column("temp")
+    spread, drh3 = samples.column("spread"), samples.column("drh3")
     if target == "sky":
         return (rh > weather.HUMIDITY_MUGGY).astype(float)
-    pct, temp = samples.column("pct30"), samples.column("temp")
-    spread, drh3 = samples.column("spread"), samples.column("drh3")
     out = np.zeros(len(samples))
     for i in range(len(samples)):
-        phrase = weather.compute_forecast(
-            pct[i], rh[i], temp[i], temp[i] - spread[i],
-            {"delta": 0.0 if np.isnan(drh3[i]) else drh3[i]},
-            moment=samples.local[i],
+        temperature = None if np.isnan(temp[i]) else float(temp[i])
+        dew_point = (
+            None if temperature is None or np.isnan(spread[i]) else temperature - spread[i]
         )
-        out[i] = float("Rain" in phrase or "Thunder" in phrase)
+        trend = {"delta": 0.0 if np.isnan(drh3[i]) else float(drh3[i])}
+        if target == "rain":
+            phrase = weather.compute_forecast(
+                None if np.isnan(pct[i]) else float(pct[i]), float(rh[i]),
+                temperature, dew_point, trend, moment=samples.local[i],
+            )
+            out[i] = float("Rain" in phrase or "Thunder" in phrase)
+            continue
+        f = weather.ForecastInputs.build(
+            None, float(rh[i]), temperature, dew_point, trend, samples.local[i]
+        )
+        out[i] = float(f.convective if target == "thunder" else
+                       f.near_saturation and f.humidity_rising)
     return out
 
 
@@ -795,7 +1055,8 @@ def platt(z: np.ndarray, y: np.ndarray) -> tuple[float, float]:
 
 
 def can_calibrate(truth: np.ndarray) -> bool:
-    return len(truth) >= MIN_ARCHIVE_HOURS and truth.sum() >= MIN_CALIBRATION_WET
+    """Whether a run of labelled balcony hours is enough to fit to, or to judge by."""
+    return len(truth) >= MIN_ARCHIVE_HOURS and truth.sum() >= MIN_ARCHIVE_EVENTS
 
 
 def out_of_fold(z: np.ndarray, truth: np.ndarray, folds: int = CALIBRATION_FOLDS) -> np.ndarray:
@@ -817,14 +1078,45 @@ def out_of_fold(z: np.ndarray, truth: np.ndarray, folds: int = CALIBRATION_FOLDS
     return out
 
 
+def match_level(z: np.ndarray, rate: float) -> float:
+    """The shift of the log-odds ``z`` that makes their mean probability ``rate``.
+
+    The mean probability rises with the shift, so a bisection finds it. It
+    is bounded by :data:`LEVEL_BOUND`, and a result at the bound means the
+    shift wanted to be larger — which :func:`gates` refuses.
+    """
+    low, high = -LEVEL_BOUND, LEVEL_BOUND
+    for _ in range(50):
+        middle = (low + high) / 2
+        if float(sigmoid(z + middle).mean()) < rate:
+            low = middle
+        else:
+            high = middle
+    return (low + high) / 2
+
+
+def monthly_rates(samples: Samples, target: str) -> dict[int, float]:
+    """How often each calendar month's windows held the event, over ``samples``."""
+    truth = samples.labels(target)
+    months = np.array([m.month for m in samples.local])
+    return {m: float(truth[months == m].mean()) for m in range(1, 13) if (months == m).any()}
+
+
 def recent(samples: Samples, days: int) -> Samples:
     return samples.take(samples.moments >= samples.moments.max() - np.timedelta64(days, "D"))
 
 
 def describe_period(samples: Samples) -> dict:
+    """The span ``samples`` cover, by their earliest and latest hour.
+
+    Not their first and last rows: samples from several stations are
+    stacked station after station, so the last row is the end of whichever
+    station came last — for thunder, whose stations lost their observers in
+    different years, that read as a model labelled to 2018 when it ran to 2021.
+    """
     return {
-        "from": samples.local[0].strftime("%Y-%m-%d"),
-        "to": samples.local[-1].strftime("%Y-%m-%d"),
+        "from": samples.local[int(np.argmin(samples.moments))].strftime("%Y-%m-%d"),
+        "to": samples.local[int(np.argmax(samples.moments))].strftime("%Y-%m-%d"),
         "hours": len(samples),
     }
 
@@ -845,15 +1137,20 @@ def evaluate(
 
     Two tests, both on hours the evaluation fit never saw:
 
-    * the last :data:`HOLDOUT_DAYS` at the training stations — a full year,
-      so every season is in the score;
-    * the balcony's own archive, labelled by the nearest gauge — the only
-      test of whether a model fitted to weather-service screens survives
-      this sensor. The evaluation fit stops before the archive begins, so
-      the same storms cannot be learned at a neighbour and scored here.
+    * the last :data:`HOLDOUT_DAYS` of the target's labels at the training
+      stations — a full year, so every season is in the score;
+    * the balcony's own archive, labelled by the nearest station observing
+      the same thing — the only test of whether a model fitted to
+      weather-service screens survives this sensor. The evaluation fit stops
+      before the archive begins, so the same weather cannot be learned at a
+      neighbour and scored here.
 
-    The model that ships is then refitted on everything.
+    The model that ships is then refitted on everything, and calibrated to
+    the balcony: to the archive's labels where there are enough of them, and
+    for thunder, which nothing near the balcony reports any more, to how
+    often the stations had it in the same months.
     """
+    spec = TARGETS[target]
     print(f"\n── {target} " + "─" * (66 - len(target)))
     usable = samples.take(~np.isnan(samples.labels(target)))
     if len(usable) < 10 * MIN_ARCHIVE_HOURS:
@@ -862,13 +1159,18 @@ def evaluate(
 
     holdout_start = usable.moments.max() - np.timedelta64(HOLDOUT_DAYS, "D")
     split = holdout_start
-    scored_archive = None
+    scored_archive = unscored = None
     if archive is not None:
-        scored_archive = archive.take(~np.isnan(archive.labels(target)))
-        if len(scored_archive) and len(set(scored_archive.labels(target).tolist())) > 1:
-            split = min(split, scored_archive.moments.min())
-        else:
-            scored_archive = None
+        labelled = archive.take(~np.isnan(archive.labels(target)))
+        if len(labelled) and len(set(labelled.labels(target).tolist())) > 1:
+            scored_archive = labelled
+            split = min(split, labelled.moments.min())
+        elif len(labelled):
+            # Labelled, and one-sided: a summer without fog. Nothing can be
+            # scored on it, but how much was looked at is still worth saying.
+            truth = labelled.labels(target)
+            unscored = {**describe_period(labelled), "events": int(truth.sum()),
+                        "base_rate": round(float(truth.mean()), 3)}
 
     train = usable.take(usable.moments < split)
     test = usable.take(usable.moments >= holdout_start)
@@ -895,6 +1197,7 @@ def evaluate(
         straight = score(sigmoid(z), truth, threshold)
         on_archive = {
             **describe_period(scored_archive),
+            "events": int(truth.sum()),
             "base_rate": round(float(truth.mean()), 3),
             "skill": straight,
             "rules": score(incumbent(scored_archive, target), truth, 0.5),
@@ -916,10 +1219,16 @@ def evaluate(
             on_archive["shipped"] = score(predict(shipped, scored_archive), truth, shipped.threshold)
             rows["shipped"] = on_archive["shipped"]
         print_scores(
-            f"the balcony's own archive: {len(scored_archive)} hours "
-            f"(base rate {truth.mean() * 100:.1f}%)",
+            f"the balcony's own archive: {len(scored_archive)} hours, "
+            f"{on_archive['events']} with {target} (base rate {truth.mean() * 100:.1f}%)",
             rows,
         )
+    elif unscored is not None:
+        print(f"the balcony's archive: {unscored['hours']} labelled hours, "
+              f"{unscored['events']} with {target}; nothing to score against yet")
+        on_archive = unscored
+    elif spec.archive_km is not None:
+        print(f"the balcony's archive has no {target} labels to be scored against")
 
     worth = ablations(train, test, target, skill) if measure_worth else None
 
@@ -927,7 +1236,7 @@ def evaluate(
     final_threshold = best_threshold(
         final.predict_proba(usable.matrix())[:, 1], usable.labels(target)
     )
-    calibration = None
+    calibration, level = None, None
     if on_archive is not None and "uncalibrated" in on_archive:
         window = recent(scored_archive, CALIBRATION_DAYS)
         if can_calibrate(window.labels(target)):
@@ -935,11 +1244,38 @@ def evaluate(
             on_archive["calibrated_on"] = describe_period(window)
             print(f"  calibration to the balcony: log-odds x {calibration[0]:.3f} "
                   f"{calibration[1]:+.3f}, fitted on {len(window)} hours")
-            # The same decision on the new scale: a monotone rescaling moves
-            # the threshold with the probabilities, so the same hours fire.
-            final_threshold = float(sigmoid(np.array(
-                calibration[0] * logit(final_threshold) + calibration[1]
-            )))
+    elif spec.calibration == "level" and archive is not None and len(archive):
+        # No label, so no slope: only where the model's level sits on these
+        # readings against how often the event happened in the same months
+        # at the stations. That corrects a sensor that reads every summer
+        # afternoon as hotter than a screen would, and it cannot reorder hours.
+        window = recent(archive, CALIBRATION_DAYS)
+        climate = monthly_rates(usable, target)
+        expected = np.array([climate.get(m.month, np.nan) for m in window.local])
+        known = ~np.isnan(expected)
+        if known.sum() >= MIN_ARCHIVE_HOURS and expected[known].sum() >= MIN_ARCHIVE_EVENTS:
+            z = final.decision_function(window.matrix()[known])
+            shift = match_level(z, float(expected[known].mean()))
+            calibration = (1.0, shift)
+            level = {
+                **describe_period(window),
+                "said": round(float(sigmoid(z).mean()), 4),
+                "climate": round(float(expected[known].mean()), 4),
+                "shift": round(shift, 3),
+            }
+            print(f"  level on the balcony's last {len(window)} hours: the model said "
+                  f"{level['said'] * 100:.1f}% on average where the stations' "
+                  f"{target} rate for those months is {level['climate'] * 100:.1f}%; "
+                  f"log-odds shifted {shift:+.3f}")
+        else:
+            print(f"  too little {target} expected in the balcony's recent months to set "
+                  "the level by; it ships as fitted")
+    if calibration is not None:
+        # The same decision on the new scale: a monotone rescaling moves the
+        # threshold with the probabilities, so the same hours fire.
+        final_threshold = float(sigmoid(np.array(
+            calibration[0] * logit(final_threshold) + calibration[1]
+        )))
     return {
         "target": target,
         "usable": usable,
@@ -951,6 +1287,7 @@ def evaluate(
         "seasons": seasons,
         "holdout": describe_period(test),
         "archive": on_archive,
+        "level": level,
         "ablations": worth,
     }
 
@@ -961,9 +1298,9 @@ def evaluate(
 def gates(evaluation: dict, target: str, shipped: dict | None) -> list[str]:
     """Why this candidate may not ship, or an empty list if it may.
 
-    What a model is *for* decides what it has to beat, and both of these
-    exist to give a calibrated probability, which the ladder they sit beside
-    cannot. So the gates are probabilistic — better than quoting the base
+    What a model is *for* decides what it has to beat, and each of these
+    exists to give a calibrated probability, which the hand-made rung it
+    replaces cannot. So the gates are probabilistic — better than quoting the base
     rate, and ranking hours at least as well as the rules — and they are
     applied to the balcony's own archive as well as to the held-out year,
     because a model that is good on weather-service screens and bad on this
@@ -978,15 +1315,28 @@ def gates(evaluation: dict, target: str, shipped: dict | None) -> list[str]:
     +0.043 Brier skill — nearly the whole tolerance, enough to refuse every
     honest retrain from then on.
     """
+    spec = TARGETS[target]
     recorded = (shipped or {}).get("metadata", {})
     reasons = []
     tests = [("held-out year", evaluation["skill"], evaluation["baselines"]["rules"],
               (recorded.get("skill") or {}).get("bss"), None)]
     archive = evaluation["archive"]
-    if archive and archive["hours"] >= MIN_ARCHIVE_HOURS:
+    # The archive is a test only when it holds enough of the event to judge
+    # by: a Brier score over a handful of foggy hours is a coin toss.
+    if (archive and "skill" in archive and archive["hours"] >= MIN_ARCHIVE_HOURS
+            and archive["events"] >= MIN_ARCHIVE_EVENTS):
         tests.append(("balcony archive", archive["skill"], archive["rules"],
                       ((recorded.get("archive") or {}).get("skill") or {}).get("bss"),
                       archive.get("shipped")))
+    elif spec.needs_archive:
+        have = "no labelled hours" if not archive else (
+            f"{archive['hours']} labelled hours, {archive['events']} with {target}"
+        )
+        reasons.append(
+            f"not yet tested on the balcony's own readings, which a {target} model must be "
+            f"(needs {MIN_ARCHIVE_HOURS} labelled hours with {MIN_ARCHIVE_EVENTS} of {target}; "
+            f"has {have})"
+        )
     for where, skill, rules, before, live in tests:
         # A candidate short of the bar may still replace a live model that is
         # further short of it on the same hours, provided it has some skill
@@ -1010,15 +1360,26 @@ def gates(evaluation: dict, target: str, shipped: dict | None) -> list[str]:
     if calibration is not None and calibration[0] <= 0:
         reasons.append("the balcony's record ranks this model's hours backwards "
                        f"(calibration slope {calibration[0]:+.3f})")
+    level = evaluation.get("level")
+    if level is not None and abs(level["shift"]) >= LEVEL_BOUND - 1e-3:
+        reasons.append("on the balcony's readings this model's level is further from the "
+                       f"stations' {target} climatology than a shift should correct "
+                       f"(said {level['said'] * 100:.1f}% against {level['climate'] * 100:.1f}%)")
     return reasons
 
 
 def ship(evaluation: dict, out: Path, extra: dict, force: bool) -> bool:
     """Gate one evaluated candidate and write it out if it passes."""
     target = evaluation["target"]
+    spec = TARGETS[target]
     shipped = json.loads(out.read_text()) if out.exists() else None
-    if shipped is not None and shipped.get("format") != nowcast.FORMAT:
-        shipped = None  # a model of another kind recorded skill on another test
+    if shipped is not None and (
+        shipped.get("format") != nowcast.FORMAT
+        or shipped.get("metadata", {}).get("labels") != spec.labels
+    ):
+        # A model of another kind, or fitted to other labels, recorded its
+        # skill on another test: there is nothing to regress from.
+        shipped = None
     reasons = gates(evaluation, target, shipped)
     if reasons and not force:
         print(f"\nNOT shipping this {target} model:")
@@ -1034,16 +1395,18 @@ def ship(evaluation: dict, out: Path, extra: dict, force: bool) -> bool:
         {
             "trained_at": datetime.now().strftime("%Y-%m-%d"),
             "samples": len(usable),
-            "trained_from": usable.local[0].strftime("%Y-%m-%d"),
-            "trained_through": usable.local[-1].strftime("%Y-%m-%d"),
+            "trained_from": describe_period(usable)["from"],
+            "trained_through": describe_period(usable)["to"],
             "base_rate": round(float(y.mean()), 3),
             "horizon_hours": HORIZON_HOURS,
+            "labels": spec.labels,
             "trees": len(evaluation["fitted"]._predictors),
             "skill": evaluation["skill"],
             "baselines": evaluation["baselines"],
             "seasons": evaluation["seasons"],
             "holdout": evaluation["holdout"],
             "archive": evaluation["archive"],
+            "level": evaluation["level"],
             "ablations": evaluation["ablations"],
             **extra,
         },
@@ -1145,28 +1508,53 @@ def verify(predictions: list[dict], gauge: dict[datetime, float]) -> dict | None
 
 def balcony_archive(
     app_url: str, api_key: str | None, latitude: float, longitude: float, cache: Path,
-    with_cloud: bool,
+    targets: tuple[str, ...],
 ) -> tuple[Samples | None, dict[datetime, float] | None]:
-    """The balcony's own readings as samples, labelled by the nearest gauge.
+    """The balcony's own readings as samples, each target labelled by its nearest station.
 
-    Returns the gauge too, because the prediction log is scored against the
-    same one. Either can be ``None``: no gauge near enough, or an archive
-    the endpoint would not hand over, and the run carries on without it.
+    Returns the rain gauge too, because the prediction log is scored against
+    the same one. Either can be ``None`` — no gauge near enough, or an archive
+    the endpoint would not hand over — and the run carries on without it.
+    Nothing about the stations chosen is printed: only which targets found
+    one within reach.
     """
     today = datetime.now(UTC).date()
-    gauges = dwd.nearest(dwd.stations("rain", cache), latitude, longitude,
-                         since=today - timedelta(days=30), current=today - timedelta(days=3))
-    if not gauges or gauges[0].km_from(latitude, longitude) > MAX_GAUGE_KM:
-        print(f"no weather-service rain gauge within {MAX_GAUGE_KM:.0f} km; "
-              "the archive and the log cannot be scored")
-        return None, None
     try:
         rows = fetch_readings(app_url, api_key)
     except Exception as error:
         print(f"(the balcony's archive is unavailable: {error})")
         rows = []
-    since = (instant(rows[0]).date() if rows else today) - timedelta(days=1)
-    gauge = dwd.load_rain(gauges[0].id, cache, min(since, today - timedelta(days=400)))
+    since = min((instant(rows[0]).date() if rows else today) - timedelta(days=1),
+                today - timedelta(days=400))
+
+    observed: dict[str, dict[datetime, float]] = {}
+    gauge = None
+    for name in dict.fromkeys(("rain", *targets)):
+        spec = TARGETS[name]
+        if spec.archive_km is None:
+            continue
+        near = [
+            station for station in dwd.nearest(
+                dwd.stations(spec.product, cache), latitude, longitude,
+                since=today - timedelta(days=30), current=today - timedelta(days=3))
+            if station.km_from(latitude, longitude) <= spec.archive_km
+        ]
+        # The nearest one that can label it: a summit in the cloud is near,
+        # and its visibility is no record of fog down here.
+        for station in near:
+            record = (
+                dwd.load_rain(station.id, cache, since) if spec.product == "rain"
+                else dwd.load_hourly(spec.product, station.id, cache, since)
+            )
+            if labeller(name, record) is not None:
+                observed[name] = record
+                break
+        else:
+            print(f"no weather-service station observing {spec.product} within "
+                  f"{spec.archive_km:.0f} km; the {name} model is not scored on the balcony")
+            continue
+        if name == "rain":
+            gauge = observed[name]
     if not rows:
         return None, gauge
 
@@ -1174,12 +1562,16 @@ def balcony_archive(
         (instant(r), float(r["temperature"]), float(r["humidity"]), float(r["pressure"]))
         for r in rows
     )
-    cloud = (
-        fetch_cloud(latitude, longitude, air[0][0].date(), today - timedelta(days=1))
-        if with_cloud else None
+    labellers = {
+        name: fn for name, record in observed.items()
+        if name in targets and (fn := labeller(name, record)) is not None
+    }
+    samples = build_samples(air, labellers, every_hour=True)
+    counts = ", ".join(
+        f"{name} {int((~np.isnan(samples.labels(name))).sum())}" for name in labellers
     )
-    samples = build_samples(air, gauge, cloud)
-    print(f"the balcony's archive: {len(rows)} readings, {len(samples)} labelled hours")
+    print(f"the balcony's archive: {len(rows)} readings, {len(samples)} hours "
+          f"(labelled: {counts or 'none'})")
     return (samples if len(samples) else None), gauge
 
 
@@ -1188,8 +1580,8 @@ def main() -> int:
     parser.add_argument("--app-url", default=os.environ.get("APP_URL", DEFAULT_APP_URL))
     parser.add_argument("--api-key", default=os.environ.get("API_KEY"),
                         help="key for /api/weather/export; defaults to $API_KEY")
-    parser.add_argument("--out", type=Path, default=REPO / "app" / "model.json")
-    parser.add_argument("--sky-out", type=Path, default=REPO / "app" / "sky_model.json")
+    parser.add_argument("--out-dir", type=Path, default=REPO / "app",
+                        help="where the models are written, each under its own name")
     parser.add_argument("--verification-out", type=Path,
                         default=REPO / "app" / "verification.json",
                         help="where the live verification of the deployed model goes")
@@ -1204,24 +1596,26 @@ def main() -> int:
     parser.add_argument("--cache", type=Path, default=REPO / "ml" / ".cache",
                         help="where downloaded weather-service files are kept")
     parser.add_argument("--workers", type=int, default=min(4, os.cpu_count() or 1))
-    parser.add_argument("--target", choices=("rain", "sky", "both"), default="both",
-                        help="which model to fit; the other is left untouched")
+    parser.add_argument("--target", action="append", choices=TARGET_NAMES,
+                        help="fit only this model (repeatable); the others are left untouched")
     parser.add_argument("--no-ablations", action="store_true",
                         help="skip the leave-one-out refits (faster, for experiments)")
     parser.add_argument("--force", action="store_true",
-                        help="write the model even if it does not clear its gates")
+                        help="write the models even if they do not clear their gates")
     args = parser.parse_args()
+    targets = tuple(args.target or TARGET_NAMES)
 
-    # The page prints what "overcast" means, reading it from app.nowcast; the
+    # The page prints what each label means, reading it from app.nowcast; the
     # labels here decide what it actually means. A mismatch would be invisible
     # on the page and wrong in the model, so it fails the run instead.
-    if nowcast.OVERCAST_PERCENT != OVERCAST_PERCENT:
-        raise SystemExit(
-            f"OVERCAST_PERCENT disagrees: ml/train.py says {OVERCAST_PERCENT}, "
-            f"app/nowcast.py says {nowcast.OVERCAST_PERCENT}"
-        )
+    for name, here, there in (
+        ("OVERCAST_PERCENT", OVERCAST_PERCENT, nowcast.OVERCAST_PERCENT),
+        ("FOG_METRES", FOG_METRES, nowcast.FOG_METRES),
+    ):
+        if here != there:
+            raise SystemExit(f"{name} disagrees: ml/train.py says {here}, "
+                             f"app/nowcast.py says {there}")
 
-    with_sky = args.target in ("sky", "both")
     located = not args.stations or (args.latitude is not None or os.environ.get(LOCATION_VARS[0]))
     latitude = longitude = None
     if located:
@@ -1238,44 +1632,32 @@ def main() -> int:
         candidates = [s for s in candidates if s.km_from(latitude, longitude) <= MAX_STATION_KM]
         want = TRAINING_STATIONS
     print(f"training on up to {want} weather-service stations, {TRAINING_SINCE.year} onwards")
-    samples, used = training_samples(candidates, args.cache, want, with_sky, args.workers)
-    print(f"{len(samples)} labelled hours from {used} stations")
+    samples, used = training_samples(candidates, args.cache, want, targets, args.workers)
+    print(f"{len(samples)} hours in all")
 
     archive, gauge = (
-        balcony_archive(args.app_url, args.api_key, latitude, longitude, args.cache, with_sky)
+        balcony_archive(args.app_url, args.api_key, latitude, longitude, args.cache, targets)
         if located else (None, None)
     )
 
     wrote = False
-    provenance = {"stations": used, "years": [TRAINING_SINCE.year, today.year]}
-
-    if args.target in ("rain", "both"):
-        evaluation = evaluate(samples, "rain", archive, measure_worth=not args.no_ablations,
-                              shipped=nowcast.load(args.out))
+    years = [TRAINING_SINCE.year, today.year]
+    extras = {
+        "rain": {"rain_mm": RAIN_MM},
+        "sky": {"overcast_percent": OVERCAST_PERCENT},
+        "fog": {"fog_metres": FOG_METRES},
+        "thunder": {"labelled_until": THUNDER_UNTIL.isoformat()},
+    }
+    for name in targets:
+        out = args.out_dir / TARGETS[name].file
+        evaluation = evaluate(
+            samples, name, archive,
+            measure_worth=TARGETS[name].measure_worth and not args.no_ablations,
+            shipped=nowcast.load(out),
+        )
         if evaluation is not None:
-            wrote |= ship(
-                evaluation, args.out,
-                {
-                    **provenance,
-                    "rain_mm": RAIN_MM,
-                    "labels": "rain gauges beside the training stations' sensors",
-                },
-                args.force,
-            )
-
-    if with_sky:
-        evaluation = evaluate(samples, "sky", archive, measure_worth=False,
-                              shipped=nowcast.load(args.sky_out))
-        if evaluation is not None:
-            wrote |= ship(
-                evaluation, args.sky_out,
-                {
-                    **provenance,
-                    "overcast_percent": OVERCAST_PERCENT,
-                    "labels": "ERA5 reanalysis, ~25 km: mean cloud cover over the horizon",
-                },
-                args.force,
-            )
+            wrote |= ship(evaluation, out,
+                          {"stations": used[name], "years": years, **extras[name]}, args.force)
 
     # Deliberately outside the shipping decision, and written every run.
     # This does not describe the candidate; it describes the model that has

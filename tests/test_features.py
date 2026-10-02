@@ -170,3 +170,40 @@ class TestPressureCycle:
         raw_noon, raw_midnight = 1014.5, 1011.5
         assert features.detide(noon, raw_noon, cycle) == pytest.approx(
             features.detide(midnight, raw_midnight, cycle), abs=0.1)
+
+
+class TestSwings:
+    """How far temperature and humidity ranged: the sky's fingerprint.
+
+    A clear sky heats by day and cools by night, so the temperature swing is
+    what the cloud model reads the sky from, without seeing it.
+    """
+
+    def test_the_swing_is_top_to_bottom_over_the_window(self):
+        # Falling a degree an hour into the present. The window is (now - 3 h,
+        # now], so its oldest five-minute reading is 2 h 55 back: 2.9 °C.
+        vector = features.compute(series(temperature=lambda h: 15.0 + h), NOW, {})
+        assert vector["t_range3"] == pytest.approx(2.9)
+        assert vector["t_range24"] == pytest.approx(23.9)
+
+    def test_humidity_has_its_swing_and_its_floor(self):
+        vector = features.compute(series(humidity=lambda h: 90.0 - h), NOW, {})
+        assert vector["rh_range6"] == pytest.approx(6.0, abs=0.1)
+        assert vector["rh_min24"] == pytest.approx(66.0, abs=0.1)
+
+    def test_a_window_mostly_lost_to_an_outage_has_no_swing(self):
+        full = series()
+        keep = [i for i, t in enumerate(full.times) if not NOW - timedelta(hours=20) <= t < NOW - timedelta(minutes=40)]
+        gappy = features.Series.from_rows(
+            (full.times[i], full.temperature[i], full.humidity[i], full.pressure[i]) for i in keep
+        )
+        vector = features.compute(gappy, NOW, {})
+        assert vector["t_range3"] is None, "40 minutes of a three-hour window is not its swing"
+        assert vector["t_range24"] is not None, "the day's window still spans most of it"
+
+    @pytest.mark.parametrize("name", ["t_range6", "rh_range6", "rh_min24"])
+    def test_five_and_ten_minute_readings_agree(self, name):
+        signal = {"temperature": lambda h: 15.0 + 0.5 * h, "humidity": lambda h: 60.0 + 0.3 * h}
+        five = features.compute(series(step_minutes=5, **signal), NOW, {})
+        ten = features.compute(series(step_minutes=10, **signal), NOW, {})
+        assert five[name] == pytest.approx(ten[name], abs=0.2)

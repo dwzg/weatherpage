@@ -633,10 +633,19 @@ class TestComposedOutlookOnThePage:
         ladder = {t.phrase for t in weather.learned_ladder(body["nowcast"]["threshold"])}
         assert marked == ([body["forecast"]] if body["forecast"] in ladder else [])
 
-    async def test_the_live_sky_sentence_is_rendered(self, client, db, with_sky):
+    async def test_the_live_sky_cell_is_rendered(self, client, db, with_sky):
         await stock(db)
         text = (await client.get("/")).text
-        assert 'id="deep-sky-live"' in text
+        assert 'data-cell="sky-now"' in text
+
+    async def test_models_not_shipped_say_so(self, client, db, with_sky):
+        """Fog and thunder have no model here, so their rows say the
+        hand-made rung runs, and there is no live cell to poll."""
+        await stock(db)
+        text = (await client.get("/")).text
+        assert text.count("not shipped yet: the hand-made rung runs") == 2
+        assert 'data-cell="fog-now"' not in text
+        assert 'data-cell="thunder-now"' not in text
 
     async def test_the_german_page_still_carries_english_identifiers(
         self, client, db, with_sky
@@ -647,6 +656,73 @@ class TestComposedOutlookOnThePage:
         text = (await client.get("/", headers={"accept-language": "de-DE,de;q=0.9"})).text
         assert 'data-phrase="Rain likely"' in text
         assert "Regenmodell über" in text
+
+
+#: Fog and thunder models that always fire on the stocked readings: every
+#: hour's rh is at least 50, the stump's right branch.
+EVENT_MODEL = MODEL | {
+    "trees": [stump(1, 10.0, -3.0, 2.0)],
+    "threshold": 0.25,
+    "metadata": {
+        "trained_at": "2026-09-21",
+        "trained_through": "2021-12-31",
+        "samples": 9000,
+        "base_rate": 0.03,
+        "skill": {"bss": 0.11, "auc": 0.88},
+        "baselines": {"rules": {"auc": 0.52}},
+        "level": {"said": 0.05, "climate": 0.03, "shift": -0.4},
+    },
+}
+
+
+class TestFogAndThunderModels:
+    """Each of the other two rungs, once its model ships."""
+
+    @pytest.fixture
+    def with_both(self, monkeypatch, tmp_path):
+        fog = nowcast.load(write(tmp_path, EVENT_MODEL, "fog.json"))
+        thunder = nowcast.load(write(tmp_path, EVENT_MODEL, "thunder.json"))
+        monkeypatch.setattr(services, "FOG_MODEL", fog)
+        monkeypatch.setattr(services, "THUNDER_MODEL", thunder)
+
+    async def test_the_status_carries_both(self, client, db, with_both):
+        await stock(db)
+        body = (await client.get("/api/weather/status")).json()
+        for kind in ("fog", "thunder"):
+            assert body[kind]["probability"] > body[kind]["threshold"]
+            assert body[kind]["fires"] is True
+            assert body[f"{kind}_is_learned"] is True
+
+    async def test_a_learned_thunderstorm_is_on_the_banner(self, client, db, with_both):
+        """It outranks every other rung, rain likely included."""
+        await stock(db)
+        body = (await client.get("/api/weather/status")).json()
+        assert body["forecast"] == "Thunderstorm possible"
+
+    async def test_the_page_prints_the_learned_rungs(self, client, db, with_both):
+        await stock(db)
+        text = (await client.get("/")).text
+        assert "Thunder model above 25%" in text
+        assert "Fog model above 25%" in text
+        assert 'data-cell="fog-now"' in text and 'data-cell="thunder-now"' in text
+        assert "level matched to the stations" in text
+        assert "Thunder is labelled only up to" in text
+
+    async def test_the_log_records_what_they_said(self, client, db, with_both):
+        await stock(db)
+        status = await services.build_status()
+        stamp = status["current"]["timestamp"]
+        # The newest reading is on the five-minute grid; log as if it were
+        # on the hour, which is the only kind the log keeps.
+        await db.insert_prediction(
+            timestamp=stamp, utc_offset=120, rain_probability=None, sky_probability=None,
+            forecast=status["forecast"], model_trained_at=None,
+            fog_probability=status["fog"]["probability"],
+            thunder_probability=status["thunder"]["probability"],
+        )
+        [row] = await db.export_predictions()
+        assert row["fog_probability"] == status["fog"]["probability"]
+        assert row["thunder_probability"] == status["thunder"]["probability"]
 
 
 class TestCalibration:

@@ -63,9 +63,10 @@
     {%- endif %}
 </div>
 
-{#- The two predictions sit together: a phrase from thresholds a person can
-    read, and a probability from a model fitted to this station's history.
-    Both are server-rendered, then replaced in place by the poller. -#}
+{#- The two predictions sit together: a phrase, picked rung by rung from the
+    fitted models or the thresholds standing in for them, and the rain
+    probability. Both are server-rendered, then replaced in place by the
+    poller. -#}
 <div class="predictions" id="predictions">
     <details class="prediction-note">
         {#- The card's heading is its handle, which is why it is a heading
@@ -76,7 +77,11 @@
             <dl>
                 <dt>{{ t('☀️ The outlook') }}</dt>
                 <dd>
+                    {%- if outlook_is_learned %}
+                    {{ t("One claim about the next six hours, picked from a ladder: thunder, rain, fog, cloud. Each rung reads its own model — fitted like the rain chance below, to what the weather service's stations observed — where that model has passed its tests, and a threshold on the pressure and the humidity where none has yet. The technical details say which is which.") }}
+                    {%- else %}
                     {{ t("Thresholds on two numbers: where the pressure sits in this station's own last 30 days, and the humidity. It ignores which way the barometer is moving: as a threshold on its own, that scored worse than nothing here.") }}
+                    {%- endif %}
                 </dd>
 
                 <dt>{{ t('🤖 The rain chance') }}</dt>
@@ -89,7 +94,11 @@
 
                 <dt>{{ t('Why both') }}</dt>
                 <dd>
+                    {%- if outlook_is_learned %}
+                    {{ t('The phrase names the one thing most worth knowing about the next six hours; the percentage is the chance of rain alone, and the rain rungs of the phrase read that same number. Neither sees wind, radar or anything upstream of the balcony, so treat both as a hint rather than a forecast.') }}
+                    {%- else %}
                     {{ t('The phrase is a category; the percentage is a calibrated probability, and they can disagree. Neither sees wind, radar or anything upstream of the balcony, so treat both as a hint rather than a forecast.') }}
+                    {%- endif %}
                 </dd>
             </dl>
             {%- if nowcast and nowcast.skill %}
@@ -108,15 +117,10 @@
             <details class="prediction-deep">
                 <summary>{{ t('The technical details') }}</summary>
                 <div class="prediction-deep-body">
-                    {%- if outlook_is_learned and sky_is_learned %}
-                    <h3>{{ t('☀️ The outlook: two models and two rules') }}</h3>
+                    {%- if outlook_is_learned %}
+                    <h3>{{ t('☀️ The outlook: a ladder of fitted models') }}</h3>
                     <p>
-                        {{ t('Tested in order, and the first rung that matches wins. Four of these rungs read a fitted probability — one model for rain, one for cloud, both from the same measurements. Two of them do not, and cannot: see below.') }}
-                    </p>
-                    {%- elif outlook_is_learned %}
-                    <h3>{{ t('☀️ The outlook: one model and a ladder') }}</h3>
-                    <p>
-                        {{ t('Tested in order, and the first rung that matches wins. The rain rungs read the fitted probability shown on the pill above — the same number, so the two cannot disagree. Below them the ladder falls back to where the pressure sits and how humid the air is, because no cloud model has cleared its gates yet; when one does, those rungs become measurements too.') }}
+                        {{ t('Tested in order, and the first rung that matches wins. The rain rungs read the fitted probability shown on the pill above — the same number, so the two cannot disagree. Every other rung reads its own model where one has cleared its gates, and the threshold it always had where none has yet; the right-hand column says which.') }}
                     </p>
                     {%- else %}
                     <h3>{{ t('☀️ The outlook: a ladder of thresholds') }}</h3>
@@ -164,22 +168,54 @@
                         {%- endif %}
                     </p>
                     {%- if outlook_is_learned %}
+                    <h4>{{ t('The other three models') }}</h4>
                     <p>
-                        {{ t('Why two of them are still hand-made: no label source scores either. Over two years of the reanalysis at this location there are zero fog codes and zero thunderstorm codes, and its convective-energy field is empty. A model cannot be fitted to a label that does not exist, so those rungs stay thresholds and say so.') }}
+                        {{ t("Each is fitted like the rain model — the same trees, the same signals, the same weather-service stations — to what those stations observed: how much of the sky was cloud, how far one could see, and thunder their observers heard. Each must clear the same gates before it ships, and until it has, its rung keeps the threshold it always had.") }}
                     </p>
-                    {%- if sky %}
+                    <div class="table-scroll">
+                        <table class="deep-table other-models">
+                            <thead>
+                                <tr>
+                                    <th>{{ t('Model') }}</th>
+                                    <th class="numeric">{{ t('Held-out year') }}</th>
+                                    <th class="numeric">{{ t('This balcony') }}</th>
+                                    <th class="numeric">{{ t('Now') }}</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {%- for kind, model, question in [
+                                    ('sky', sky, t('Overcast: {pct}% cloud or more over the next {hours} h', pct=overcast_percent, hours=horizon_hours)),
+                                    ('fog', fog, t('Fog: visibility under {metres} m within {hours} h', metres=num(fog_metres, 0, grouping=True), hours=horizon_hours)),
+                                    ('thunder', thunder, t('Thunder within {hours} h', hours=horizon_hours)),
+                                ] %}
+                                <tr>
+                                    <td>{{ question }}</td>
+                                    {%- if model %}
+                                    <td class="numeric">
+                                        {%- if model.skill %}{{ t('{bss} skill · AUC {auc}', bss=num(model.skill.bss, 2, sign=True), auc=num(model.skill.auc, 2)) }}
+                                        {%- if model.baselines and model.baselines.rules and model.baselines.rules.auc %}<span class="tier-note">{{ t('the rule: AUC {auc}', auc=num(model.baselines.rules.auc, 2)) }}</span>{% endif %}
+                                        {%- else %}—{% endif %}
+                                    </td>
+                                    <td class="numeric">
+                                        {%- if model.archive and model.archive.skill %}{{ t('{bss} skill over {hours} h', bss=num(model.archive.skill.bss, 2, sign=True), hours=num(model.archive.hours, 0, grouping=True)) }}
+                                        {%- elif model.level %}{{ t('level matched to the stations') }}
+                                        {%- else %}—{% endif %}
+                                    </td>
+                                    <td class="numeric" data-cell="{{ kind }}-now">{{ num(model.probability * 100) }} %</td>
+                                    {%- else %}
+                                    <td colspan="3" class="tier-note">{{ t('not shipped yet: the hand-made rung runs') }}</td>
+                                    {%- endif %}
+                                </tr>
+                                {%- endfor %}
+                            </tbody>
+                        </table>
+                    </div>
                     <p>
-                        {{ t('The cloud model was fitted on {samples} hours and scored walk-forward: AUC {auc}, Brier skill {bss} against climatology. What it replaces is the humidity threshold this ladder used to read, which scored AUC {rules}.',
-                              samples=num(sky.samples) if sky.samples else '—',
-                              auc=num(sky.skill.auc, 3) if sky.skill and sky.skill.auc else '—',
-                              bss=num(sky.skill.bss, 3, sign=True) if sky.skill else '—',
-                              rules=num(sky.baselines.rules.auc, 3) if sky.baselines and sky.baselines.rules.auc else '—') }}
+                        {{ t('Fog has to prove itself on this balcony before it ships, not only at the stations: a sensor that sits at 100% whenever it is wet looks, to a model fitted on ventilated screens, like exactly the saturated air fog forms in.') }}
                     </p>
-                    {#- Live, so it is its own element: the poller rewrites this
-                        sentence every minute and must not have to reassemble
-                        the fitted numbers above, which do not change. -#}
-                    <p class="deep-live" id="deep-sky-live">
-                        {{ t('Right now it puts the chance of a mostly overcast next {hours} hours at {pct}%.', hours=sky.horizon_hours, pct=num(sky.probability * 100)) }}
+                    {%- if thunder %}
+                    <p>
+                        {{ t("Thunder is labelled only up to {date}. The weather service's observers reported it until they went off duty in 2022, and the instruments that replaced them do not. So nothing near this balcony reports thunder now and the model cannot be scored here; instead, its level on these readings is matched to how often the stations had thunder in the same months.", date=date(thunder.trained_through) if thunder.trained_through else '2021') }}
                     </p>
                     {%- endif %}
                     {%- else %}
@@ -295,7 +331,7 @@
                               autumn=num(nowcast.seasons.SON, 2, sign=True)) }}
                     </p>
                     {%- endif %}
-                    {%- if nowcast.archive %}
+                    {%- if nowcast.archive and nowcast.archive.skill %}
                     <p>
                         {{ t("On this balcony's own readings, {from_date} to {to_date} — {hours} hours, {wet}% of them followed by rain at the nearest weather-service gauge — it scored Brier {brier}, a skill of {bss}, AUC {auc}, where the ladder ranked the same hours at AUC {rules}. That is the test a weather-service screen cannot pass on this sensor's behalf.",
                               from_date=date(nowcast.archive['from']),

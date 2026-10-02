@@ -188,3 +188,56 @@ class TestOrderingUsesAnIndex:
     async def test_the_superseded_index_is_gone(self, legacy_db, db):
         async with db.acquire() as conn:
             assert await db._index_definition(conn, "idx_timestamp") is None
+
+
+@pytest.fixture
+def older_prediction_log(tmp_path):
+    """A prediction log from before fog and thunder were logged, with a row."""
+    path = tmp_path / "weather.db"
+    con = sqlite3.connect(path)
+    con.executescript("""
+        CREATE TABLE prediction_log (
+            timestamp TEXT NOT NULL,
+            utc_offset INTEGER NOT NULL,
+            rain_probability REAL,
+            sky_probability REAL,
+            forecast TEXT,
+            model_trained_at TEXT,
+            logged_at TEXT NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY (timestamp, utc_offset)
+        );
+    """)
+    con.execute(
+        "INSERT INTO prediction_log (timestamp, utc_offset, rain_probability, forecast) "
+        "VALUES ('2026-09-30 14:00:00', 120, 0.31, 'Rain possible')"
+    )
+    con.commit()
+    con.close()
+    return path
+
+
+class TestPredictionLogColumns:
+    """CREATE TABLE IF NOT EXISTS leaves an older log as it was; the
+    migration has to add what the schema has gained since."""
+
+    async def test_the_new_columns_are_added(self, older_prediction_log, db):
+        async with db.acquire() as conn:
+            cursor = await conn.execute("PRAGMA table_info(prediction_log)")
+            columns = {row["name"] for row in await cursor.fetchall()}
+        assert {"fog_probability", "thunder_probability"} <= columns
+
+    async def test_the_hours_already_logged_survive_with_nothing_claimed(
+        self, older_prediction_log, db
+    ):
+        [row] = await db.export_predictions()
+        assert row["rain_probability"] == 0.31
+        assert row["fog_probability"] is None and row["thunder_probability"] is None
+
+    async def test_new_hours_log_all_four(self, older_prediction_log, db):
+        await db.insert_prediction(
+            timestamp="2026-09-30 15:00:00", utc_offset=120, rain_probability=0.2,
+            sky_probability=0.7, forecast="Fog possible", model_trained_at="2026-09-28",
+            fog_probability=0.4, thunder_probability=0.01,
+        )
+        rows = await db.export_predictions()
+        assert (rows[-1]["fog_probability"], rows[-1]["thunder_probability"]) == (0.4, 0.01)

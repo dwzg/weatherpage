@@ -266,12 +266,19 @@ CREATE TABLE IF NOT EXISTS prediction_log (
     utc_offset INTEGER NOT NULL,
     rain_probability REAL,
     sky_probability REAL,
+    fog_probability REAL,
+    thunder_probability REAL,
     forecast TEXT,
     model_trained_at TEXT,
     logged_at TEXT NOT NULL DEFAULT (datetime('now')),
     PRIMARY KEY (timestamp, utc_offset)
 );
 """
+
+#: Columns the log gained after it was first created, added by the
+#: migration to a table that predates them. Each is one model's probability:
+#: a rung of the outlook that a model decides is a claim the log must hold.
+_PREDICTION_COLUMNS = ("fog_probability", "thunder_probability")
 
 #: Predictions are logged on the hour, because the observations they will be
 #: scored against are hourly. A row per reading would be twelve times the
@@ -502,6 +509,19 @@ async def _add_utc_offset(db: aiosqlite.Connection) -> None:
     )
 
 
+async def _add_prediction_columns(db: aiosqlite.Connection) -> None:
+    """Give an older prediction log the columns it has gained since.
+
+    ``CREATE TABLE IF NOT EXISTS`` leaves an existing table exactly as it
+    was, so a column added to the schema reaches an older database only
+    through here. The hours logged before it existed keep ``NULL``: nothing
+    was predicting them, and the log records what the page said.
+    """
+    for column in _PREDICTION_COLUMNS:
+        if not await _has_column(db, "prediction_log", column):
+            await db.execute(f"ALTER TABLE prediction_log ADD COLUMN {column} REAL")
+
+
 async def _migrate(db: aiosqlite.Connection) -> None:
     """Create the schema and make ``(timestamp, utc_offset)`` unique.
 
@@ -525,6 +545,7 @@ async def _migrate(db: aiosqlite.Connection) -> None:
     await db.executescript(_SCHEMA)
     await db.executescript(_ROLLUP_SCHEMA)
     await db.executescript(_PREDICTION_SCHEMA)
+    await _add_prediction_columns(db)
     await _add_utc_offset(db)
 
     # Only now can this be built: it names utc_offset, which the step above
@@ -609,6 +630,8 @@ async def insert_prediction(
     sky_probability: float | None,
     forecast: str | None,
     model_trained_at: str | None,
+    fog_probability: float | None = None,
+    thunder_probability: float | None = None,
 ) -> None:
     """Record what the page was showing at ``timestamp``.
 
@@ -624,17 +647,20 @@ async def insert_prediction(
             """
             INSERT INTO prediction_log
                 (timestamp, utc_offset, rain_probability, sky_probability,
-                 forecast, model_trained_at)
-            VALUES (?, ?, ?, ?, ?, ?)
+                 fog_probability, thunder_probability, forecast, model_trained_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(timestamp, utc_offset) DO UPDATE SET
-                rain_probability = excluded.rain_probability,
-                sky_probability  = excluded.sky_probability,
-                forecast         = excluded.forecast,
-                model_trained_at = excluded.model_trained_at,
-                logged_at        = excluded.logged_at
+                rain_probability    = excluded.rain_probability,
+                sky_probability     = excluded.sky_probability,
+                fog_probability     = excluded.fog_probability,
+                thunder_probability = excluded.thunder_probability,
+                forecast            = excluded.forecast,
+                model_trained_at    = excluded.model_trained_at,
+                logged_at           = excluded.logged_at
             """,
             (clock.normalise_ts(timestamp), int(utc_offset), rain_probability,
-             sky_probability, forecast, model_trained_at),
+             sky_probability, fog_probability, thunder_probability, forecast,
+             model_trained_at),
         )
         await db.commit()
 
@@ -652,7 +678,8 @@ async def export_predictions(
 
     return await _fetch_all(
         "SELECT timestamp, utc_offset, rain_probability, sky_probability, "
-        "forecast, model_trained_at FROM prediction_log "
+        "fog_probability, thunder_probability, forecast, model_trained_at "
+        "FROM prediction_log "
         f"WHERE {' AND '.join(where)} {ORDER_OLDEST_FIRST} LIMIT ?",
         (*params, limit),
     )

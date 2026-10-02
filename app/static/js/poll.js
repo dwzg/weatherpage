@@ -323,19 +323,18 @@ function updateDeepDive(status) {
         );
     }
 
-    /* The cloud model's live number, when the composed ladder is the one on
-       the page. Its fitted scores sit in the paragraph above and do not move
-       between polls, which is why only this sentence is rewritten. */
-    const skyLive = document.getElementById('deep-sky-live');
-    if (skyLive) {
-        skyLive.textContent = !status.sky ? '' : t(
-            'Right now it puts the chance of a mostly overcast next {hours} hours at {pct}%.',
-            {
-                hours: status.sky.horizon_hours,
-                pct: formatNumber(status.sky.probability * 100, 0),
-            },
-        );
-    }
+    /* The other models' live numbers, when the composed ladder is the one on
+       the page. Their fitted scores sit in the cells beside these and do not
+       move between polls, which is why only these cells are rewritten. A row
+       for a model the image does not carry has no such cell. */
+    ['sky', 'fog', 'thunder'].forEach((kind) => {
+        const cell = document.querySelector(`[data-cell="${kind}-now"]`);
+        if (cell) {
+            cell.textContent = status[kind]
+                ? `${formatNumber(status[kind].probability * 100, 0)} %`
+                : '—';
+        }
+    });
 
     /* Which rung the ladder is standing on. The phrase is the identifier the
        API sends, so it matches on data-phrase and translates for display.

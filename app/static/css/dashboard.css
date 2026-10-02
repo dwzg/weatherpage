@@ -300,6 +300,14 @@ header .subtitle { color: var(--text-secondary); font-size: 0.9rem; margin-top: 
 .rule-ladder .tier-phrase { white-space: nowrap; }
 .rule-ladder .tier-note { font-style: italic; white-space: normal; }
 
+/* The other models: the rule each is measured against sits under its score,
+   in the same italic as the ladder's notes. The scores keep to one line and
+   the question gets the width it needs, so on a phone the table scrolls in
+   its box rather than folding the question into a six-line column. */
+.other-models .tier-note { display: block; font-style: italic; }
+.other-models td:first-child { min-width: 9rem; }
+.other-models td.numeric { white-space: nowrap; }
+
 /* Below this the three columns cannot all keep their natural width, so the
    phrase is allowed to wrap rather than the condition going to six lines. */
 @media (max-width: 30rem) {
