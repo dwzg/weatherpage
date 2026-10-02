@@ -23,6 +23,22 @@ def _isolated_settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     get_settings.cache_clear()
 
 
+@pytest.fixture(autouse=True)
+def _no_optional_models(monkeypatch: pytest.MonkeyPatch):
+    """Start every test with no sky, fog or thunder model loaded.
+
+    Whether CI has shipped one is data, not code, and either state is
+    normal: the retraining job runs this suite with whatever it has just
+    fitted sitting in app/. A test that wants one installs it; a test that
+    relied on what happened to ship failed the first retrain that shipped it.
+    The rain model is left alone — it always ships.
+    """
+    from app import services
+
+    for name in ("SKY_MODEL", "FOG_MODEL", "THUNDER_MODEL"):
+        monkeypatch.setattr(services, name, None)
+
+
 @pytest_asyncio.fixture
 async def db(_isolated_settings):
     """An open, empty database."""

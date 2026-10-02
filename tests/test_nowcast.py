@@ -528,11 +528,16 @@ class TestSkyModel:
             payload = services.run_sky(vector, model=model)
             assert payload["label"] == nowcast.describe_sky(payload["probability"])
 
-    def test_the_shipped_sky_model_is_readable_if_it_exists(self):
-        """It is absent until CI first ships one, which is a normal state."""
-        if nowcast.SKY_MODEL_PATH.exists():
-            model = nowcast.load(nowcast.SKY_MODEL_PATH)
-            assert model is not None, "a shipped sky model must be loadable"
+    @pytest.mark.parametrize("path", [
+        nowcast.SKY_MODEL_PATH, nowcast.FOG_MODEL_PATH, nowcast.THUNDER_MODEL_PATH,
+    ], ids=lambda p: p.name)
+    def test_a_shipped_model_is_readable_if_it_exists(self, path):
+        """Each is absent until CI first ships one, which is a normal state —
+        and the rest of the suite runs without them, so this is the test that
+        holds what did ship to account."""
+        if path.exists():
+            model = nowcast.load(path)
+            assert model is not None, f"a shipped {path.name} must be loadable"
             assert set(model.features) <= set(features.NAMES)
 
 
