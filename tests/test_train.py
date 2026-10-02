@@ -199,6 +199,24 @@ class TestHourlyLabels:
         assert train.thunder_label(self.hours(-1, 61, 95, -1, -1, -1), self.START) == 1.0
         assert train.thunder_label(self.hours(-1, 61, 63, -1, -1, -1), self.START) == 0.0
 
+    def test_a_station_whose_observers_left_early_is_cut_at_its_last_report(self):
+        """After the observers go, every hour reads "nothing reported": a
+        silence that must not be mistaken for calm."""
+        storm = datetime(2017, 7, 20, 15, tzinfo=UTC)
+        record = {storm: 95.0}
+        record |= {datetime(y, m, 1, 12, tzinfo=UTC): -1.0
+                   for y in range(2016, 2021) for m in range(1, 13)}
+        kept = train.observed_thunder(record)
+        assert max(kept) == storm  # nothing after July 2017 survives
+
+        assert datetime(2016, 3, 1, 12, tzinfo=UTC) in kept
+
+    def test_a_report_in_december_keeps_the_whole_month(self):
+        record = {datetime(2018, 12, 5, tzinfo=UTC): 17.0,
+                  datetime(2018, 12, 31, 23, tzinfo=UTC): -1.0,
+                  datetime(2019, 1, 1, tzinfo=UTC): -1.0}
+        assert set(train.observed_thunder(record)) == set(list(record)[:2])
+
     def test_thunder_is_labelled_only_where_and_when_observers_reported_it(self):
         storm = self.hours(-1, 95, -1, -1, -1, -1)
         later = {t.replace(year=2023): v for t, v in storm.items()}

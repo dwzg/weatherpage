@@ -105,13 +105,13 @@ MAX_FOG_SHARE = 0.15
 #: the last hour (29), in the last hour with rain or snow now (91-94), and at
 #: the time of the observation (95-99).
 THUNDER_CODES = (17, 29, 91, 92, 93, 94, 95, 96, 97, 98, 99)
-#: Thunder was reported by people. The service's observers went off duty in
-#: 2022, station by station through the year, and the instruments that
-#: replaced them report visibility and cloud but not thunder: at the eight
-#: stations measured, 2014-2021 held 25-118 thunder reports a year each, and
-#: 2023 onwards held none at all. So thunder is labelled only before this
-#: date, and only at stations that reported it in that time — a station
-#: whose record has no thunder in eight years was never watching for it.
+#: Thunder was reported by people, and the instruments that replaced them
+#: report visibility and cloud but not thunder. The last observers went off
+#: duty in 2022: at the eight stations first measured, 2014-2021 held 25-118
+#: thunder reports a year each, and 2023 onwards held none at all. So thunder
+#: is labelled only before this date — and, because many stations lost their
+#: observers years earlier, each only up to its own last report: see
+#: observed_thunder().
 THUNDER_UNTIL = date(2022, 1, 1)
 
 #: The model's inputs, all computed by app.features. All four targets are
@@ -468,13 +468,24 @@ def thunder_label(weather: dict[datetime, float], moment: datetime) -> float | N
 def observed_thunder(weather: dict[datetime, float]) -> dict[datetime, float]:
     """The part of a weather record that was watching for thunder, or nothing.
 
-    Only the years observers kept it (before :data:`THUNDER_UNTIL`), and only
-    if they ever reported thunder: a station with none in all that time had
-    nobody listening for it.
+    Each station lost its observers on its own date, and after it every hour
+    reads "nothing reported" whatever the sky did. Of the five thunder
+    stations nearest the test location, the last reports came in 2015, 2016,
+    2018, 2019 and 2022; counted through 2021 regardless, the held-out year
+    was mostly a silence mistaken for calm, its base rate fell from 3.0% to
+    0.7%, and a model that still ranked hours at AUC 0.87 scored a Brier
+    skill of -0.15 against it. So a record is used up to the end of the
+    month of its last thunder report, and never past :data:`THUNDER_UNTIL`.
+    A station with no report at all had nobody listening.
     """
     cutoff = datetime(THUNDER_UNTIL.year, THUNDER_UNTIL.month, THUNDER_UNTIL.day, tzinfo=UTC)
-    kept = {t: v for t, v in weather.items() if t < cutoff}
-    return kept if any(int(v) in THUNDER_CODES for v in kept.values()) else {}
+    reports = [t for t, v in weather.items() if t < cutoff and int(v) in THUNDER_CODES]
+    if not reports:
+        return {}
+    last = max(reports)
+    month_after = datetime(last.year + last.month // 12, last.month % 12 + 1, 1, tzinfo=UTC)
+    end = min(month_after, cutoff)
+    return {t: v for t, v in weather.items() if t < end}
 
 
 def under_the_fog(visibility: dict[datetime, float]) -> dict[datetime, float]:

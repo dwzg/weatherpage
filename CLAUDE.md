@@ -125,13 +125,18 @@ rain, and the rain model owns it.
 
 Things that differ between them, all declared once in `ml/train.TARGETS`:
 
-- **Thunder is labelled only before `THUNDER_UNTIL` (2022).** People reported
-  it; the instruments that replaced them in 2022 report cloud and visibility
-  but not thunder. At the eight stations measured, 2014–2021 held 25–118
-  thunder reports a year each and 2023 onwards none at all. A station whose
-  record holds no thunder in those years was never watching for it and is
-  not used. `-1` ("nothing reported") is an observation, not a gap: thunder
-  is always significant enough to report.
+- **Thunder is labelled only while someone was listening.** People reported
+  it; the instruments that replaced them report cloud and visibility but not
+  thunder. The last observers left in 2022, so nothing is labelled past
+  `THUNDER_UNTIL` — but most stations lost theirs years earlier, and after
+  that every hour reads "nothing reported" whatever the sky did.
+  `observed_thunder()` therefore cuts each station's record at the end of
+  the month of its own last thunder report. Without that cut the held-out
+  year was mostly silence mistaken for calm: base rate 0.7 % instead of
+  3.0 %, and a model ranking hours at AUC 0.87 scored Brier skill −0.15. A
+  station with no report at all is not used. Inside the observed years,
+  `-1` ("nothing reported") is an observation, not a gap: thunder is always
+  significant enough to report.
 - **Nothing near the balcony reports thunder any more**, so the thunder model
   cannot be scored on the archive. Its calibration is to the *level* only
   (`calibration="level"`): one shift of the log-odds that makes its mean on
