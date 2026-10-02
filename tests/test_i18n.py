@@ -534,7 +534,7 @@ class TestDeepDiveStructure:
 
     @pytest.mark.parametrize("hook", [
         "deep-outlook-live",   # the live pressure rank
-        "deep-features",       # the contribution table
+        "data-model",          # each model's contribution table
         'data-cell="baseline"',
         'data-cell="total"',
         "rule-ladder",         # the rung the outlook is standing on

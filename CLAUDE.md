@@ -220,10 +220,21 @@ summary`) precisely so the nested handle does not inherit the card's own.
 - **Every retrain measures what each feature is worth.** `ml/train.py::ablations()` refits on the same training years without each feature in turn and scores the same held-out year, and the model card carries the result; the explainer prints it under the same labels as the contribution table. Single-feature costs are small — the signals overlap, so another one usually carries what a dropped one knew — and a row near zero is not by itself a reason to drop a feature. If one sits at zero across many weeks, that is the evidence for removing it from `FEATURES`; the trainer measures, it never drops anything by itself. One extra fit per feature, for the rain model only, is most of the run's time. `tests/test_train.py` checks the measurement against synthetic hours where one feature carries the label and another is noise; it needs numpy and scikit-learn, so it skips in CI and runs for whoever is working on the model.
 - **The model card is metadata passed through**, not restated in the template,
   so a retrain updates the page without a code change. Anything `ml/train.py`
-  did not write comes back `None` and the section is skipped.
+  did not write comes back `None` and the section is skipped; a missing
+  score prints as a dash rather than breaking the render.
+- **Every shipped model is written up the same way as the rain chance.** The
+  card, the score table, the season line and the live breakdown are template
+  macros (`model_card`, `skill_table`, `seasons_line`, `breakdown`) that the
+  rain section and the cloud, thunder and fog sections all call; only the
+  prose around them is each model's own, because what each was fitted to and
+  why is not the same. Thunder's section carries its level check where the
+  others carry a balcony score. A model that did not ship has no section,
+  only its row in the overview table. `services._model_card()` and
+  `_breakdown()` give every model's payload the fields the rain one has.
 - `poll.js` maintains all of it: the live pressure rank, which rung is
-  highlighted, and the whole contribution table. Hooks are the `data-cell`,
-  `data-phrase` and `data-days` attributes;
+  highlighted, and every model's contribution table — each names its
+  `/status` key in `data-model`, so one function rewrites them all. Hooks are
+  the `data-model`, `data-cell`, `data-phrase` and `data-days` attributes;
   `tests/test_i18n.py::TestDeepDiveStructure` fails if one side renames one.
 
 ### How the nowcast is trained and shipped

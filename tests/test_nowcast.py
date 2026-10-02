@@ -643,6 +643,21 @@ class TestComposedOutlookOnThePage:
         text = (await client.get("/")).text
         assert 'data-cell="sky-now"' in text
 
+    async def test_the_cloud_model_has_its_own_write_up(self, client, db, with_sky):
+        await stock(db)
+        text = (await client.get("/")).text
+        assert "☁️ The cloud chance: a fitted model" in text
+        assert 'data-model="sky"' in text
+        assert "The humidity rule it replaces" in text
+        # Read in bands, not at one threshold, and the card says so.
+        assert "cloudy above 60%, fair below 30%" in text
+
+    async def test_models_that_did_not_ship_get_no_write_up(self, client, db, with_sky):
+        await stock(db)
+        text = (await client.get("/")).text
+        assert "The thunder chance" not in text and "The fog chance" not in text
+        assert 'data-model="thunder"' not in text and 'data-model="fog"' not in text
+
     async def test_models_not_shipped_say_so(self, client, db, with_sky):
         """Fog and thunder have no model here, so their rows say the
         hand-made rung runs, and there is no live cell to poll."""
@@ -711,7 +726,44 @@ class TestFogAndThunderModels:
         assert "Fog model above 25%" in text
         assert 'data-cell="fog-now"' in text and 'data-cell="thunder-now"' in text
         assert "level matched to the stations" in text
-        assert "Thunder is labelled only up to" in text
+        assert "has seen nothing more recent than" in text
+
+    async def test_each_is_written_up_as_fully_as_the_rain_chance(self, client, db, with_both):
+        """Its own section: the card, the scores against the rule it
+        replaced, and a live breakdown of its own."""
+        await stock(db)
+        text = (await client.get("/")).text
+        for heading in ("⛈️ The thunder chance: a fitted model",
+                        "🌫️ The fog chance: a fitted model"):
+            assert heading in text
+        for kind in ("thunder", "fog"):
+            assert f'data-model="{kind}"' in text
+        assert "The summer-afternoon rule it replaces" in text
+        assert "The saturation rule it replaces" in text
+        # The thunder model's level check, which stands in for a balcony test.
+        assert "its log-odds are shifted by" in text
+
+    async def test_each_breakdown_adds_up_to_its_probability(self, client, db, with_both):
+        """Same contract as the rain chance's: starting point plus effects is
+        the logit, so the table is the prediction rather than a picture of it."""
+        await stock(db)
+        body = (await client.get("/api/weather/status")).json()
+        for kind in ("thunder", "fog"):
+            payload = body[kind]
+            total = payload["baseline"] + sum(c["effect"] for c in payload["contributions"])
+            assert total == pytest.approx(payload["logit"], abs=0.01)
+            assert 1 / (1 + math.exp(-payload["logit"])) == pytest.approx(
+                payload["probability"], abs=0.001)
+
+    async def test_the_german_page_translates_them(self, client, db, with_both):
+        await stock(db)
+        text = (await client.get("/", headers={"accept-language": "de-DE,de;q=0.9"})).text
+        assert "⛈️ Die Gewitterchance: ein angepasstes Modell" in text
+        assert "🌫️ Die Nebelchance: ein angepasstes Modell" in text
+        # The poller's copy of the catalogue carries every English key on
+        # purpose; what must not survive is English on the page itself.
+        visible = re.sub(r'<script id="i18n-data".*?</script>', "", text, flags=re.S)
+        assert "The thunder chance" not in visible
 
     async def test_the_log_records_what_they_said(self, client, db, with_both):
         await stock(db)

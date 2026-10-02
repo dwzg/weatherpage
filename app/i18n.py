@@ -184,6 +184,155 @@ GERMAN: dict[str, str] = {
         "sie schon immer hatte; die rechte Spalte sagt, was davon gilt.",
 
     # The other three models (sky, fog, thunder)
+    "Each model that has shipped is written up in full below, the same way "
+    "as the rain chance.":
+        "Jedes ausgelieferte Modell ist unten vollständig beschrieben, genauso "
+        "wie die Regenchance.",
+    "☁️ The cloud chance: a fitted model":
+        "☁️ Die Wolkenchance: ein angepasstes Modell",
+    "The same kind of trees, the same signals and the same weather-service "
+    "stations as the rain chance, asked a different question: will the next "
+    "{hours} hours be mostly overcast? The labels are the cloud cover each "
+    "station reported every hour in eighths of the sky — by observers until "
+    "2022, by instruments since. A balcony cannot see the sky, so the model "
+    "reads it from what the sky does to the air: a clear day heats and a "
+    "clear night cools, an overcast one does neither. That is why it watches "
+    "how far the temperature and the humidity have swung over the last hours "
+    "to a day.":
+        "Dieselbe Art Bäume, dieselben Signale und dieselben Stationen des "
+        "Wetterdienstes wie bei der Regenchance, mit einer anderen Frage: "
+        "Werden die nächsten {hours} Stunden überwiegend bedeckt sein? Die "
+        "Labels sind die Bewölkung, die jede Station stündlich in Achteln des "
+        "Himmels gemeldet hat — bis 2022 von Beobachtern, seitdem von "
+        "Instrumenten. Ein Balkon sieht den Himmel nicht, also liest das "
+        "Modell ihn an dem ab, was der Himmel mit der Luft macht: Ein klarer "
+        "Tag heizt auf und eine klare Nacht kühlt ab, ein bedeckter Himmel "
+        "tut beides nicht. Deshalb achtet es darauf, wie weit Temperatur und "
+        "Feuchte in den letzten Stunden bis zu einem Tag geschwankt haben.",
+    'The banner does not read it at a single cut. Above {high}% it says '
+    'cloudy, below {low}% fair, and between them little change: the '
+    'probability is calibrated, so a band can be drawn where the reader '
+    'would draw it, and "unsure" is not reported as "mixed sky".':
+        "Das Banner liest es nicht an einer einzigen Schwelle. Über {high} % "
+        "sagt es bewölkt, unter {low} % heiter, dazwischen wenig Veränderung: "
+        "Die Wahrscheinlichkeit ist kalibriert, also lassen sich die Bänder "
+        "dort ziehen, wo man sie auch selbst ziehen würde, und „unsicher“ "
+        "wird nicht als „gemischter Himmel“ gemeldet.",
+    "Read as": "Gelesen als",
+    "cloudy above {high}%, fair below {low}%":
+        "bewölkt über {high} %, heiter unter {low} %",
+    "{pct}% of them overcast": "davon {pct} % bedeckt",
+    "The humidity rule it replaces": "Die Feuchte-Regel, die es ersetzt",
+    "On this balcony's own readings, {from_date} to {to_date} — {hours} "
+    "hours, {pct}% of them overcast at the nearest weather-service station "
+    "that reports cloud — it scored Brier {brier}, a skill of {bss}, AUC "
+    "{auc}, where the humidity rule ranked the same hours at AUC {rules}.":
+        "Auf den eigenen Messwerten dieses Balkons, {from_date} bis "
+        "{to_date} — {hours} Stunden, davon {pct} % bedeckt an der nächsten "
+        "Station des Wetterdienstes, die Bewölkung meldet —, erreichte es "
+        "Brier {brier}, eine Güte von {bss} und AUC {auc}, wo die "
+        "Feuchte-Regel dieselben Stunden mit AUC {rules} einordnete.",
+    "Straight from the stations it scored a skill of {straight} on those "
+    "hours. What ships is calibrated to this balcony — two numbers fitted to "
+    "its own record that rescale the log-odds without changing which hour "
+    "ranks above which — and the figures above are for the calibrated model, "
+    "each stretch of the record scored by a calibration fitted without it.":
+        "Direkt von den Stationen erreichte es auf diesen Stunden eine "
+        "Güte von {straight}. Ausgeliefert wird es auf diesen Balkon "
+        "kalibriert — zwei Zahlen, angepasst an dessen eigene Aufzeichnung, "
+        "die die Log-Odds umskalieren, ohne zu ändern, welche Stunde über "
+        "welcher liegt —, und die Zahlen oben gelten für das kalibrierte "
+        "Modell, wobei jeder Abschnitt der Aufzeichnung von einer "
+        "Kalibrierung bewertet wurde, die ohne ihn angepasst wurde.",
+    "What is driving it right now": "Was es gerade antreibt",
+    "The same decomposition as the rain chance: the starting point plus "
+    "every effect below is exactly the number squashed into this "
+    "probability.":
+        "Dieselbe Zerlegung wie bei der Regenchance: Der Ausgangspunkt plus "
+        "jeder Effekt unten ergibt genau die Zahl, die zu dieser "
+        "Wahrscheinlichkeit gestaucht wird.",
+    "Its skill over the base rate, season by season: {seasons}.":
+        "Seine Güte gegenüber der Grundrate, Jahreszeit für Jahreszeit: "
+        "{seasons}.",
+    "winter": "Winter",
+    "spring": "Frühling",
+    "summer": "Sommer",
+    "autumn": "Herbst",
+    "⛈️ The thunder chance: a fitted model":
+        "⛈️ Die Gewitterchance: ein angepasstes Modell",
+    "Will there be thunder within {hours} hours? The labels are thunder "
+    "reported by the stations' observers, and only while someone was there "
+    "to report it. The instruments that replaced them report cloud and "
+    "visibility but not thunder, so once a station's observers had gone "
+    "every hour reads “nothing reported”, whatever the sky did. Each station "
+    "is used only up to its own last report, which is why this model has "
+    "seen nothing more recent than {date}.":
+        "Gibt es innerhalb von {hours} Stunden Gewitter? Die Labels sind "
+        "Gewitter, die die Beobachter der Stationen gemeldet haben — und nur, "
+        "solange jemand da war, um sie zu melden. Die Instrumente, die sie "
+        "ersetzten, melden Bewölkung und Sichtweite, aber keine Gewitter; "
+        "nachdem die Beobachter einer Station gegangen waren, steht daher in "
+        "jeder Stunde „nichts gemeldet“, ganz gleich, was der Himmel tat. "
+        "Jede Station wird nur bis zu ihrer eigenen letzten Meldung "
+        "verwendet, und deshalb hat dieses Modell nichts gesehen, was neuer "
+        "ist als {date}.",
+    "Thunder is rare — {pct}% of {hours}-hour windows at those stations — "
+    "so its Brier skill looks small beside the rain chance even where it "
+    "ranks hours well. The rule it replaces, a warm and humid summer "
+    "afternoon, ranked them barely better than a coin toss.":
+        "Gewitter sind selten — {pct} % der {hours}-Stunden-Fenster an diesen "
+        "Stationen —, daher wirkt die Brier-Güte neben der Regenchance klein, "
+        "selbst wo es die Stunden gut einordnet. Die Regel, die es ersetzt, "
+        "ein warmer und feuchter Sommernachmittag, ordnete sie kaum besser "
+        "ein als ein Münzwurf.",
+    "{pct}% of them with thunder": "davon {pct} % mit Gewitter",
+    "On the last year of reports at those stations, {from_date} to "
+    "{to_date}: {hours} hours that the fit being scored never saw.":
+        "Im letzten Jahr der Meldungen an diesen Stationen, {from_date} bis "
+        "{to_date}: {hours} Stunden, die die bewertete Anpassung nie gesehen "
+        "hat.",
+    "The summer-afternoon rule it replaces":
+        "Die Sommernachmittags-Regel, die es ersetzt",
+    "Nothing near this balcony reports thunder any more, so the model "
+    "cannot be scored here. What can be checked is its level: on this "
+    "balcony's readings from {from_date} to {to_date} it said {said}% on "
+    "average, where the stations had thunder in {climate}% of windows in "
+    "the same months — so its log-odds are shifted by {shift} to match. "
+    "That corrects for how this sensor differs from a weather-service "
+    "screen, without changing which hour ranks above which.":
+        "In der Nähe dieses Balkons meldet nichts mehr Gewitter, daher kann "
+        "das Modell hier nicht bewertet werden. Prüfen lässt sich sein "
+        "Niveau: Auf den Messwerten dieses Balkons von {from_date} bis "
+        "{to_date} sagte es im Mittel {said} %, wo die Stationen in "
+        "denselben Monaten in {climate} % der Fenster Gewitter hatten — "
+        "deshalb werden seine Log-Odds um {shift} verschoben. Das gleicht "
+        "aus, worin sich dieser Sensor von einer Wetterhütte unterscheidet, "
+        "ohne zu ändern, welche Stunde über welcher liegt.",
+    "🌫️ The fog chance: a fitted model":
+        "🌫️ Die Nebelchance: ein angepasstes Modell",
+    "Will visibility drop below {metres} m within {hours} hours? The labels "
+    "are the visibility each station measured every hour — except at a "
+    "station foggy for more than {share}% of its hours. That is a summit in "
+    "the cloud, whose “fog” is a low cloud base, and it would teach the "
+    "model that saturated air means fog.":
+        "Sinkt die Sichtweite innerhalb von {hours} Stunden unter {metres} m? "
+        "Die Labels sind die Sichtweite, die jede Station stündlich gemessen "
+        "hat — außer an einer Station, die in mehr als {share} % ihrer "
+        "Stunden im Nebel liegt. Das ist ein Gipfel in den Wolken, dessen "
+        "„Nebel“ eine tiefe Wolkenbasis ist, und er würde dem Modell "
+        "beibringen, dass gesättigte Luft Nebel bedeutet.",
+    "{pct}% of them foggy": "davon {pct} % neblig",
+    "The saturation rule it replaces": "Die Sättigungs-Regel, die es ersetzt",
+    "On this balcony's own readings, {from_date} to {to_date} — {hours} "
+    "hours, {pct}% of them foggy at the nearest weather-service station "
+    "that measures visibility — it scored Brier {brier}, a skill of {bss}, "
+    "AUC {auc}, where the saturation rule ranked the same hours at AUC "
+    "{rules}.":
+        "Auf den eigenen Messwerten dieses Balkons, {from_date} bis "
+        "{to_date} — {hours} Stunden, davon {pct} % neblig an der nächsten "
+        "Station des Wetterdienstes, die Sichtweite misst —, erreichte es "
+        "Brier {brier}, eine Güte von {bss} und AUC {auc}, wo die "
+        "Sättigungs-Regel dieselben Stunden mit AUC {rules} einordnete.",
     "The other three models": "Die anderen drei Modelle",
     "Each is fitted like the rain model — the same trees, the same signals, "
     "the same weather-service stations — to what those stations observed: "
@@ -205,9 +354,9 @@ GERMAN: dict[str, str] = {
     "Fog: visibility under {metres} m within {hours} h":
         "Nebel: Sichtweite unter {metres} m innerhalb von {hours} Std.",
     "Thunder within {hours} h": "Gewitter innerhalb von {hours} Std.",
-    "{bss} skill · AUC {auc}": "{bss} Skill · AUC {auc}",
+    "{bss} skill · AUC {auc}": "{bss} Güte · AUC {auc}",
     "the rule: AUC {auc}": "die Regel: AUC {auc}",
-    "{bss} skill over {hours} h": "{bss} Skill über {hours} Std.",
+    "{bss} skill over {hours} h": "{bss} Güte über {hours} Std.",
     "level matched to the stations": "Niveau an die Stationen angeglichen",
     "not shipped yet: the hand-made rung runs":
         "noch nicht ausgeliefert: die Sprosse von Hand gilt",
@@ -220,19 +369,6 @@ GERMAN: dict[str, str] = {
         "auf 100 % steht, sieht für ein an belüfteten Wetterhütten "
         "angepasstes Modell genau wie die gesättigte Luft aus, in der Nebel "
         "entsteht.",
-    "Thunder is labelled only up to {date}. The weather service's observers "
-    "reported it until they went off duty in 2022, and the instruments that "
-    "replaced them do not. So nothing near this balcony reports thunder now "
-    "and the model cannot be scored here; instead, its level on these "
-    "readings is matched to how often the stations had thunder in the same "
-    "months.":
-        "Gewitter sind nur bis {date} erfasst. Die Beobachter des "
-        "Wetterdienstes meldeten sie, bis sie 2022 ihren Dienst beendeten, "
-        "und die Instrumente, die sie ersetzten, tun es nicht. In der Nähe "
-        "dieses Balkons meldet daher heute nichts mehr Gewitter, und das "
-        "Modell kann hier nicht bewertet werden; stattdessen wird sein "
-        "Niveau auf diesen Messwerten daran angeglichen, wie oft die "
-        "Stationen in denselben Monaten Gewitter hatten.",
     # The threshold-sky rungs, printed while no cloud model has shipped.
     "Pressure in the lowest {pct}% of 30 days":
         "Luftdruck in den untersten {pct} % von 30 Tagen",
