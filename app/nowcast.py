@@ -85,6 +85,11 @@ OVERCAST_PERCENT = 80
 #: hour of the next :data:`HORIZON_HOURS`. Baked into its labels.
 FOG_METRES = 1000
 
+#: A station foggy for more than this share of its hours is a summit in the
+#: cloud, and does not label fog. Baked into the fog model's labels; mirrors
+#: ml/train.py, which the tests hold to it.
+MAX_FOG_SHARE = 0.15
+
 
 @dataclass(frozen=True)
 class Contribution:

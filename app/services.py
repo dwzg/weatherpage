@@ -396,18 +396,16 @@ def run_sky(
         "overcast_percent": meta.get("overcast_percent", nowcast.OVERCAST_PERCENT),
         "horizon_hours": nowcast.HORIZON_HOURS,
         **_model_card(model),
-        "contributions": nowcast_breakdown(model, vector),
+        **_breakdown(model, vector),
     }
 
 
 def run_event(vector: dict[str, float | None] | None, model: nowcast.Model | None) -> dict | None:
     """Fog or thunder: a probability, the threshold it fires at, and its card.
 
-    Thinner still than :func:`run_sky`. Each decides one rung of the outlook
-    — fires or does not — so the page needs the probability, the threshold,
-    and enough of the model card to say what it was fitted to and how well
-    it did. No breakdown: the explainer prints the rain model's, which is
-    the number shown in its own right.
+    Each decides one rung of the outlook — fires or does not — and the
+    explainer writes each up as fully as the rain chance: the card, the
+    scores, and what is driving it now.
     """
     if model is None or vector is None:
         return None
@@ -420,6 +418,7 @@ def run_event(vector: dict[str, float | None] | None, model: nowcast.Model | Non
         "fires": probability >= model.threshold,
         "horizon_hours": nowcast.HORIZON_HOURS,
         **_model_card(model),
+        **_breakdown(model, vector),
     }
 
 
@@ -428,6 +427,8 @@ def _model_card(model: nowcast.Model) -> dict:
 
     Metadata the trainer wrote, passed through: a retrain updates the page
     without a code change, and anything it did not write comes back ``None``.
+    The same fields the rain model's card carries, so every model is written
+    up the same way.
     """
     meta = model.metadata
     return {
@@ -439,8 +440,20 @@ def _model_card(model: nowcast.Model) -> dict:
         "base_rate": meta.get("base_rate"),
         "skill": meta.get("skill"),
         "baselines": meta.get("baselines"),
+        "seasons": meta.get("seasons"),
+        "holdout": meta.get("holdout"),
         "archive": meta.get("archive"),
         "level": meta.get("level"),
+        "trees": len(model.trees),
+    }
+
+
+def _breakdown(model: nowcast.Model, vector: dict[str, float | None]) -> dict:
+    """The live decomposition, for any model: where it starts and what moved it."""
+    return {
+        "baseline": round(model.expected, 3),
+        "logit": round(model.logit(vector), 3),
+        "contributions": nowcast_breakdown(model, vector),
     }
 
 

@@ -343,21 +343,23 @@ function updateDeepDive(status) {
         row.classList.toggle('is-active', row.dataset.phrase === status.forecast);
     });
 
-    updateFeatureTable(status.nowcast);
+    /* Every model's breakdown, not just the rain chance's. Each table names
+       the /status key it shows, so one function serves all of them, and a
+       model the image does not carry simply has no table to find. */
+    document.querySelectorAll('.feature-table[data-model]').forEach((table) => {
+        updateFeatureTable(table, status[table.dataset.model]);
+    });
 }
 
-function updateFeatureTable(nowcast) {
-    const table = document.getElementById('deep-features');
-    if (!table) return;
-
+function updateFeatureTable(table, model) {
     const body = table.tBodies[0];
-    if (!nowcast || !nowcast.contributions) {
+    if (!model || !model.contributions) {
         body.textContent = '';
         return;
     }
 
     body.textContent = '';
-    for (const row of nowcast.contributions) {
+    for (const row of model.contributions) {
         const tr = document.createElement('tr');
         /* The server picked the scale and the decimals; formatting them here
            rather than re-deriving them keeps the poller's numbers the same
@@ -380,8 +382,8 @@ function updateFeatureTable(nowcast) {
     if (!foot) return;
     const start = foot.querySelector('[data-cell="baseline"]');
     const total = foot.querySelector('[data-cell="total"] strong');
-    if (start) start.textContent = signed(nowcast.baseline, 2);
-    if (total) total.textContent = `${formatNumber(nowcast.probability * 100, 0)} %`;
+    if (start) start.textContent = signed(model.baseline, 2);
+    if (total) total.textContent = `${formatNumber(model.probability * 100, 0)} %`;
 }
 
 function appendCell(tr, text, className) {

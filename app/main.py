@@ -313,6 +313,14 @@ def create_app() -> FastAPI:
                 "horizon_hours": nowcast.HORIZON_HOURS,
                 "overcast_percent": nowcast.OVERCAST_PERCENT,
                 "fog_metres": nowcast.FOG_METRES,
+                # The cloud bands the banner reads the sky probability by, and
+                # the share past which a station is in the cloud rather than
+                # under the fog — the numbers the decisions are made with.
+                "sky_bands": {
+                    "high": round(weather.SKY_OVERCAST_PROBABILITY * 100),
+                    "low": round(weather.SKY_CLEAR_PROBABILITY * 100),
+                },
+                "max_fog_share": round(nowcast.MAX_FOG_SHARE * 100),
                 # Static between deploys — written weekly by ml/train.py —
                 # so the render carries it and the poller leaves it alone.
                 "verification": services.VERIFICATION,

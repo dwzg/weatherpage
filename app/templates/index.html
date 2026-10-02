@@ -63,6 +63,122 @@
     {%- endif %}
 </div>
 
+{#- What every fitted model's write-up shares: its card, its scores against
+    the base rate and the rule it replaced, and what is driving it now. Macros
+    rather than four copies, so the four write-ups cannot drift into
+    describing their models differently. The prose around them is each
+    model's own, because what each was fitted to, and why, is not the same. -#}
+{% macro model_card(model, question, sample, decision_label, decision) %}
+<dl class="model-card">
+    <div><dt>{{ t('Question') }}</dt><dd>{{ question }}</dd></div>
+    {%- if model.stations %}
+    <div><dt>{{ t('Learned from') }}</dt><dd>{{ t('{n} weather-service stations', n=model.stations) }}{% if model.trained_from %} · {{ t('{from_date} to {to_date}', from_date=date(model.trained_from), to_date=date(model.trained_through)) }}{% endif %}</dd></div>
+    {%- endif %}
+    <div><dt>{{ t('Fitted') }}</dt><dd>{{ model.trained_at }}{% if model.trained_through %} · {{ t('data through {date}', date=model.trained_through) }}{% endif %}</dd></div>
+    {%- if model.samples %}
+    <div><dt>{{ t('Sample') }}</dt><dd>{{ t('{n} hours', n=num(model.samples, 0, grouping=True)) }}{% if sample %} · {{ sample }}{% endif %}</dd></div>
+    {%- endif %}
+    <div><dt>{{ decision_label }}</dt><dd>{{ decision }}</dd></div>
+</dl>
+{% endmacro %}
+
+{#- A score from a model file, or a dash: the file is data, written by CI,
+    and a field it did not write is a gap to show rather than a page to break. -#}
+{% macro score(value) %}{% if value is defined and value is not none %}{{ num(value, 3) }}{% else %}—{% endif %}{% endmacro %}
+
+{% macro skill_table(model, rules_label) %}
+<div class="table-scroll">
+    <table class="deep-table skill-table">
+        <thead>
+            <tr>
+                <th></th>
+                <th class="numeric" title="{{ t('Mean squared error of the probability. Lower is better.') }}">Brier</th>
+                <th class="numeric" title="{{ t('How often it ranks a wet hour above a dry one. 0.5 is a coin flip.') }}">AUC</th>
+                <th class="numeric" title="{{ t('Critical success index of the yes/no call. Higher is better.') }}">CSI</th>
+                <th class="numeric" title="{{ t('Hanssen-Kuipers score: hit rate minus false-alarm rate.') }}">KSS</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr class="is-active">
+                <th scope="row">{{ t('This model') }}</th>
+                <td class="numeric">{{ score(model.skill.brier) }}</td>
+                <td class="numeric">{{ score(model.skill.auc) }}</td>
+                <td class="numeric">{{ score(model.skill.csi) }}</td>
+                <td class="numeric">{{ score(model.skill.kss) }}</td>
+            </tr>
+            {%- if model.baselines and model.baselines.rules %}
+            <tr>
+                <th scope="row">{{ rules_label }}</th>
+                <td class="numeric">{{ score(model.baselines.rules.brier) }}</td>
+                <td class="numeric">{{ score(model.baselines.rules.auc) }}</td>
+                <td class="numeric">{{ score(model.baselines.rules.csi) }}</td>
+                <td class="numeric">{{ score(model.baselines.rules.kss) }}</td>
+            </tr>
+            {%- endif %}
+            {%- if model.baselines and model.baselines.climatology %}
+            <tr>
+                <th scope="row">{{ t('Always saying {pct}%', pct=num(model.base_rate * 100 if model.base_rate else 0)) }}</th>
+                <td class="numeric">{{ score(model.baselines.climatology.brier) }}</td>
+                <td class="numeric">—</td>
+                <td class="numeric">{{ score(model.baselines.climatology.csi) }}</td>
+                <td class="numeric">{{ score(model.baselines.climatology.kss) }}</td>
+            </tr>
+            {%- endif %}
+        </tbody>
+    </table>
+</div>
+{% endmacro %}
+
+{#- Whichever seasons the held-out year had enough of: thunder has no winter
+    to speak of, and a season left out is better than one scored on a dozen
+    hours. -#}
+{% macro seasons_line(model) %}
+{%- if model.seasons %}
+{%- set parts = [] %}
+{%- for key, name in [('DJF', t('winter')), ('MAM', t('spring')), ('JJA', t('summer')), ('SON', t('autumn'))] %}
+{%- if key in model.seasons %}{% set _ = parts.append(name ~ ' ' ~ num(model.seasons[key], 2, sign=True)) %}{% endif %}
+{%- endfor %}
+<p>
+    {{ t('Its skill over the base rate, season by season: {seasons}.', seasons=parts | join(', ')) }}
+</p>
+{%- endif %}
+{% endmacro %}
+
+{#- One table per model, each naming the /status key the poller rewrites it
+    from. The rain model's keeps the id it has always had. -#}
+{% macro breakdown(kind, model) %}
+<div class="table-scroll">
+    <table class="deep-table feature-table"{% if kind == 'nowcast' %} id="deep-features"{% endif %} data-model="{{ kind }}">
+        <thead>
+            <tr>
+                <th>{{ t('Signal') }}</th>
+                <th class="numeric">{{ t('Now') }}</th>
+                <th class="numeric" title="{{ t('The log-odds this signal moved the prediction by, right now.') }}">{{ t('Effect now') }}</th>
+            </tr>
+        </thead>
+        <tbody>
+            {%- for row in model.contributions %}
+            <tr>
+                <td>{{ t(row.label) }}</td>
+                <td class="numeric">{% if row.value is none %}—{% else %}{{ num(row.value, row.digits, sign=row.sign) }}{% if row.unit %} {{ row.unit }}{% endif %}{% endif %}</td>
+                <td class="numeric {% if row.effect > 0 %}weight-up{% elif row.effect < 0 %}weight-down{% endif %}">{{ num(row.effect, 2, sign=True) }}</td>
+            </tr>
+            {%- endfor %}
+        </tbody>
+        <tfoot>
+            <tr>
+                <td colspan="2">{{ t('Starting point, before any signal') }}</td>
+                <td class="numeric" data-cell="baseline">{{ num(model.baseline, 2, sign=True) }}</td>
+            </tr>
+            <tr>
+                <td colspan="2">{{ t('Total, squashed to a probability') }}</td>
+                <td class="numeric" data-cell="total"><strong>{{ num(model.probability * 100) }} %</strong></td>
+            </tr>
+        </tfoot>
+    </table>
+</div>
+{% endmacro %}
+
 {#- The two predictions sit together: a phrase, picked rung by rung from the
     fitted models or the thresholds standing in for them, and the rain
     probability. Both are server-rendered, then replaced in place by the
@@ -210,14 +326,14 @@
                             </tbody>
                         </table>
                     </div>
+                    {%- if not fog %}
                     <p>
                         {{ t('Fog has to prove itself on this balcony before it ships, not only at the stations: a sensor that sits at 100% whenever it is wet looks, to a model fitted on ventilated screens, like exactly the saturated air fog forms in.') }}
                     </p>
-                    {%- if thunder %}
-                    <p>
-                        {{ t("Thunder is labelled only up to {date}. The weather service's observers reported it until they went off duty in 2022, and the instruments that replaced them do not. So nothing near this balcony reports thunder now and the model cannot be scored here; instead, its level on these readings is matched to how often the stations had thunder in the same months.", date=date(thunder.trained_through) if thunder.trained_through else '2021') }}
-                    </p>
                     {%- endif %}
+                    <p>
+                        {{ t('Each model that has shipped is written up in full below, the same way as the rain chance.') }}
+                    </p>
                     {%- else %}
                     <p>
                         {{ t('The rightmost column is how often measurable rain actually followed within {hours} hours, over the {days} days these rungs were fitted on. It is the whole claim being made: a phrase is worth showing only if the weather behind it differed from any other hour.', hours=nowcast.horizon_hours if nowcast else 6, days=calibration.days) }}
@@ -260,17 +376,10 @@
                         {{ t("It was not fitted to this balcony. One summer of readings is all the archive holds, and a model that has only seen July learns that cool air means dry air — the model this replaced did, and with rain on the sensor in October it said 11%. So it learns from the weather service's stations, every season of many years, and this balcony is where every retrain has to prove itself.") }}
                     </p>
 
-                    <dl class="model-card">
-                        <div><dt>{{ t('Question') }}</dt><dd>{{ t('At least {mm} mm of rain within {hours} hours, here', mm=num(nowcast.rain_mm, 1), hours=nowcast.horizon_hours) }}</dd></div>
-                        {%- if nowcast.stations %}
-                        <div><dt>{{ t('Learned from') }}</dt><dd>{{ t('{n} weather-service stations', n=nowcast.stations) }}{% if nowcast.trained_from %} · {{ t('{from_date} to {to_date}', from_date=date(nowcast.trained_from), to_date=date(nowcast.trained_through)) }}{% endif %}</dd></div>
-                        {%- endif %}
-                        <div><dt>{{ t('Fitted') }}</dt><dd>{{ nowcast.trained_at }}{% if nowcast.trained_through %} · {{ t('data through {date}', date=nowcast.trained_through) }}{% endif %}</dd></div>
-                        {%- if nowcast.samples %}
-                        <div><dt>{{ t('Sample') }}</dt><dd>{{ t('{n} hours', n=num(nowcast.samples, 0, grouping=True)) }}{% if nowcast.base_rate %} · {{ t('{pct}% of them wet', pct=num(nowcast.base_rate * 100)) }}{% endif %}</dd></div>
-                        {%- endif %}
-                        <div><dt>{{ t('Fires above') }}</dt><dd>{{ num(nowcast.threshold * 100) }} %</dd></div>
-                    </dl>
+                    {{ model_card(nowcast,
+                                  t('At least {mm} mm of rain within {hours} hours, here', mm=num(nowcast.rain_mm, 1), hours=nowcast.horizon_hours),
+                                  t('{pct}% of them wet', pct=num(nowcast.base_rate * 100)) if nowcast.base_rate else '',
+                                  t('Fires above'), num(nowcast.threshold * 100) ~ ' %') }}
 
                     {%- if nowcast.skill %}
                     <h4>{{ t('How well it scores') }}</h4>
@@ -282,46 +391,7 @@
                               hours=num(nowcast.holdout.hours, 0, grouping=True)) }}
                     </p>
                     {%- endif %}
-                    <div class="table-scroll">
-                        <table class="deep-table skill-table">
-                            <thead>
-                                <tr>
-                                    <th></th>
-                                    <th class="numeric" title="{{ t('Mean squared error of the probability. Lower is better.') }}">Brier</th>
-                                    <th class="numeric" title="{{ t('How often it ranks a wet hour above a dry one. 0.5 is a coin flip.') }}">AUC</th>
-                                    <th class="numeric" title="{{ t('Critical success index of the yes/no call. Higher is better.') }}">CSI</th>
-                                    <th class="numeric" title="{{ t('Hanssen-Kuipers score: hit rate minus false-alarm rate.') }}">KSS</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <tr class="is-active">
-                                    <th scope="row">{{ t('This model') }}</th>
-                                    <td class="numeric">{{ num(nowcast.skill.brier, 3) }}</td>
-                                    <td class="numeric">{{ num(nowcast.skill.auc, 3) }}</td>
-                                    <td class="numeric">{{ num(nowcast.skill.csi, 3) }}</td>
-                                    <td class="numeric">{{ num(nowcast.skill.kss, 3) }}</td>
-                                </tr>
-                                {%- if nowcast.baselines and nowcast.baselines.rules %}
-                                <tr>
-                                    <th scope="row">{{ t('The ladder above') }}</th>
-                                    <td class="numeric">{{ num(nowcast.baselines.rules.brier, 3) }}</td>
-                                    <td class="numeric">{{ num(nowcast.baselines.rules.auc, 3) }}</td>
-                                    <td class="numeric">{{ num(nowcast.baselines.rules.csi, 3) }}</td>
-                                    <td class="numeric">{{ num(nowcast.baselines.rules.kss, 3) }}</td>
-                                </tr>
-                                {%- endif %}
-                                {%- if nowcast.baselines and nowcast.baselines.climatology %}
-                                <tr>
-                                    <th scope="row">{{ t('Always saying {pct}%', pct=num(nowcast.base_rate * 100 if nowcast.base_rate else 0)) }}</th>
-                                    <td class="numeric">{{ num(nowcast.baselines.climatology.brier, 3) }}</td>
-                                    <td class="numeric">—</td>
-                                    <td class="numeric">{{ num(nowcast.baselines.climatology.csi, 3) }}</td>
-                                    <td class="numeric">{{ num(nowcast.baselines.climatology.kss, 3) }}</td>
-                                </tr>
-                                {%- endif %}
-                            </tbody>
-                        </table>
-                    </div>
+                    {{ skill_table(nowcast, t('The ladder above')) }}
                     {%- if nowcast.seasons and nowcast.seasons | length == 4 %}
                     <p>
                         {{ t('Its skill over the base rate, season by season: winter {winter}, spring {spring}, summer {summer}, autumn {autumn}. A model fitted to one summer has no business in any of the other three — this one has seen each of them many times.',
@@ -455,36 +525,157 @@
                     <p>
                         {{ t("Each tree walks one path from its root to a leaf, and every step down it is a split on one signal that moves the tree's output up or down. Credit each step to the signal that made it, add them up over every tree, and you have the effects below: the starting point plus all of them is exactly the number the sigmoid squashes, which makes this table the prediction rather than a picture of it. There is no fixed weight to print beside them — what a signal is worth depends on the others, which is the reason for using trees.") }}
                     </p>
-                    <div class="table-scroll">
-                        <table class="deep-table feature-table" id="deep-features">
-                            <thead>
-                                <tr>
-                                    <th>{{ t('Signal') }}</th>
-                                    <th class="numeric">{{ t('Now') }}</th>
-                                    <th class="numeric" title="{{ t('The log-odds this signal moved the prediction by, right now.') }}">{{ t('Effect now') }}</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {%- for row in nowcast.contributions %}
-                                <tr>
-                                    <td>{{ t(row.label) }}</td>
-                                    <td class="numeric">{% if row.value is none %}—{% else %}{{ num(row.value, row.digits, sign=row.sign) }}{% if row.unit %} {{ row.unit }}{% endif %}{% endif %}</td>
-                                    <td class="numeric {% if row.effect > 0 %}weight-up{% elif row.effect < 0 %}weight-down{% endif %}">{{ num(row.effect, 2, sign=True) }}</td>
-                                </tr>
-                                {%- endfor %}
-                            </tbody>
-                            <tfoot>
-                                <tr>
-                                    <td colspan="2">{{ t('Starting point, before any signal') }}</td>
-                                    <td class="numeric" data-cell="baseline">{{ num(nowcast.baseline, 2, sign=True) }}</td>
-                                </tr>
-                                <tr>
-                                    <td colspan="2">{{ t('Total, squashed to a probability') }}</td>
-                                    <td class="numeric" data-cell="total"><strong>{{ num(nowcast.probability * 100) }} %</strong></td>
-                                </tr>
-                            </tfoot>
-                        </table>
-                    </div>
+                    {{ breakdown('nowcast', nowcast) }}
+                    {%- endif %}
+
+                    {#- The other models, each written up as fully as the rain
+                        chance: what it was asked and fitted to, its card, its
+                        scores against the base rate and the rule it replaced,
+                        how it did on this balcony, and what is driving it now.
+                        Only the ones that shipped: a model that has not cleared
+                        its gates has nothing to show but the row above. -#}
+                    {%- if sky %}
+                    <h3>{{ t('☁️ The cloud chance: a fitted model') }}</h3>
+                    <p>
+                        {{ t("The same kind of trees, the same signals and the same weather-service stations as the rain chance, asked a different question: will the next {hours} hours be mostly overcast? The labels are the cloud cover each station reported every hour in eighths of the sky — by observers until 2022, by instruments since. A balcony cannot see the sky, so the model reads it from what the sky does to the air: a clear day heats and a clear night cools, an overcast one does neither. That is why it watches how far the temperature and the humidity have swung over the last hours to a day.", hours=sky.horizon_hours) }}
+                    </p>
+                    <p>
+                        {{ t('The banner does not read it at a single cut. Above {high}% it says cloudy, below {low}% fair, and between them little change: the probability is calibrated, so a band can be drawn where the reader would draw it, and "unsure" is not reported as "mixed sky".', high=sky_bands.high, low=sky_bands.low) }}
+                    </p>
+                    {{ model_card(sky,
+                                  t('Overcast: {pct}% cloud or more over the next {hours} h', pct=overcast_percent, hours=horizon_hours),
+                                  t('{pct}% of them overcast', pct=num(sky.base_rate * 100)) if sky.base_rate else '',
+                                  t('Read as'), t('cloudy above {high}%, fair below {low}%', high=sky_bands.high, low=sky_bands.low)) }}
+                    {%- if sky.skill %}
+                    <h4>{{ t('How well it scores') }}</h4>
+                    {%- if sky.holdout %}
+                    <p>
+                        {{ t('On the most recent year at those stations, {from_date} to {to_date}: {hours} hours that the fit being scored never saw, every season once.',
+                              from_date=date(sky.holdout['from']), to_date=date(sky.holdout.to),
+                              hours=num(sky.holdout.hours, 0, grouping=True)) }}
+                    </p>
+                    {%- endif %}
+                    {{ skill_table(sky, t('The humidity rule it replaces')) }}
+                    {{ seasons_line(sky) }}
+                    {%- if sky.archive and sky.archive.skill %}
+                    <p>
+                        {{ t("On this balcony's own readings, {from_date} to {to_date} — {hours} hours, {pct}% of them overcast at the nearest weather-service station that reports cloud — it scored Brier {brier}, a skill of {bss}, AUC {auc}, where the humidity rule ranked the same hours at AUC {rules}.",
+                              from_date=date(sky.archive['from']), to_date=date(sky.archive.to),
+                              hours=num(sky.archive.hours, 0, grouping=True),
+                              pct=num(sky.archive.base_rate * 100),
+                              brier=num(sky.archive.skill.brier, 3),
+                              bss=num(sky.archive.skill.bss, 3, sign=True),
+                              auc=num(sky.archive.skill.auc, 3) if sky.archive.skill.auc else '—',
+                              rules=num(sky.archive.rules.auc, 3) if sky.archive.rules and sky.archive.rules.auc else '—') }}
+                    </p>
+                    {%- if sky.archive.uncalibrated %}
+                    <p>
+                        {{ t("Straight from the stations it scored a skill of {straight} on those hours. What ships is calibrated to this balcony — two numbers fitted to its own record that rescale the log-odds without changing which hour ranks above which — and the figures above are for the calibrated model, each stretch of the record scored by a calibration fitted without it.",
+                              straight=num(sky.archive.uncalibrated.bss, 3, sign=True)) }}
+                    </p>
+                    {%- endif %}
+                    {%- endif %}
+                    {%- endif %}
+                    <h4>{{ t('What is driving it right now') }}</h4>
+                    <p>
+                        {{ t('The same decomposition as the rain chance: the starting point plus every effect below is exactly the number squashed into this probability.') }}
+                    </p>
+                    {{ breakdown('sky', sky) }}
+                    {%- endif %}
+
+                    {%- if thunder %}
+                    <h3>{{ t('⛈️ The thunder chance: a fitted model') }}</h3>
+                    <p>
+                        {{ t("Will there be thunder within {hours} hours? The labels are thunder reported by the stations' observers, and only while someone was there to report it. The instruments that replaced them report cloud and visibility but not thunder, so once a station's observers had gone every hour reads “nothing reported”, whatever the sky did. Each station is used only up to its own last report, which is why this model has seen nothing more recent than {date}.",
+                              hours=thunder.horizon_hours,
+                              date=date(thunder.trained_through) if thunder.trained_through else '—') }}
+                    </p>
+                    <p>
+                        {{ t('Thunder is rare — {pct}% of {hours}-hour windows at those stations — so its Brier skill looks small beside the rain chance even where it ranks hours well. The rule it replaces, a warm and humid summer afternoon, ranked them barely better than a coin toss.',
+                              pct=num(thunder.base_rate * 100, 1) if thunder.base_rate else '—',
+                              hours=thunder.horizon_hours) }}
+                    </p>
+                    {{ model_card(thunder,
+                                  t('Thunder within {hours} h', hours=horizon_hours),
+                                  t('{pct}% of them with thunder', pct=num(thunder.base_rate * 100, 1)) if thunder.base_rate else '',
+                                  t('Fires above'), num(thunder.threshold * 100) ~ ' %') }}
+                    {%- if thunder.skill %}
+                    <h4>{{ t('How well it scores') }}</h4>
+                    {%- if thunder.holdout %}
+                    <p>
+                        {{ t('On the last year of reports at those stations, {from_date} to {to_date}: {hours} hours that the fit being scored never saw.',
+                              from_date=date(thunder.holdout['from']), to_date=date(thunder.holdout.to),
+                              hours=num(thunder.holdout.hours, 0, grouping=True)) }}
+                    </p>
+                    {%- endif %}
+                    {{ skill_table(thunder, t('The summer-afternoon rule it replaces')) }}
+                    {{ seasons_line(thunder) }}
+                    {%- endif %}
+                    {%- if thunder.level %}
+                    <p>
+                        {{ t("Nothing near this balcony reports thunder any more, so the model cannot be scored here. What can be checked is its level: on this balcony's readings from {from_date} to {to_date} it said {said}% on average, where the stations had thunder in {climate}% of windows in the same months — so its log-odds are shifted by {shift} to match. That corrects for how this sensor differs from a weather-service screen, without changing which hour ranks above which.",
+                              from_date=date(thunder.level['from']), to_date=date(thunder.level.to),
+                              said=num(thunder.level.said * 100, 1),
+                              climate=num(thunder.level.climate * 100, 1),
+                              shift=num(thunder.level.shift, 2, sign=True)) }}
+                    </p>
+                    {%- endif %}
+                    <h4>{{ t('What is driving it right now') }}</h4>
+                    <p>
+                        {{ t('The same decomposition as the rain chance: the starting point plus every effect below is exactly the number squashed into this probability.') }}
+                    </p>
+                    {{ breakdown('thunder', thunder) }}
+                    {%- endif %}
+
+                    {%- if fog %}
+                    <h3>{{ t('🌫️ The fog chance: a fitted model') }}</h3>
+                    <p>
+                        {{ t("Will visibility drop below {metres} m within {hours} hours? The labels are the visibility each station measured every hour — except at a station foggy for more than {share}% of its hours. That is a summit in the cloud, whose “fog” is a low cloud base, and it would teach the model that saturated air means fog.",
+                              metres=num(fog_metres, 0, grouping=True), hours=fog.horizon_hours,
+                              share=max_fog_share) }}
+                    </p>
+                    <p>
+                        {{ t('Fog has to prove itself on this balcony before it ships, not only at the stations: a sensor that sits at 100% whenever it is wet looks, to a model fitted on ventilated screens, like exactly the saturated air fog forms in.') }}
+                    </p>
+                    {{ model_card(fog,
+                                  t('Fog: visibility under {metres} m within {hours} h', metres=num(fog_metres, 0, grouping=True), hours=horizon_hours),
+                                  t('{pct}% of them foggy', pct=num(fog.base_rate * 100, 1)) if fog.base_rate else '',
+                                  t('Fires above'), num(fog.threshold * 100) ~ ' %') }}
+                    {%- if fog.skill %}
+                    <h4>{{ t('How well it scores') }}</h4>
+                    {%- if fog.holdout %}
+                    <p>
+                        {{ t('On the most recent year at those stations, {from_date} to {to_date}: {hours} hours that the fit being scored never saw, every season once.',
+                              from_date=date(fog.holdout['from']), to_date=date(fog.holdout.to),
+                              hours=num(fog.holdout.hours, 0, grouping=True)) }}
+                    </p>
+                    {%- endif %}
+                    {{ skill_table(fog, t('The saturation rule it replaces')) }}
+                    {{ seasons_line(fog) }}
+                    {%- if fog.archive and fog.archive.skill %}
+                    <p>
+                        {{ t("On this balcony's own readings, {from_date} to {to_date} — {hours} hours, {pct}% of them foggy at the nearest weather-service station that measures visibility — it scored Brier {brier}, a skill of {bss}, AUC {auc}, where the saturation rule ranked the same hours at AUC {rules}.",
+                              from_date=date(fog.archive['from']), to_date=date(fog.archive.to),
+                              hours=num(fog.archive.hours, 0, grouping=True),
+                              pct=num(fog.archive.base_rate * 100, 1),
+                              brier=num(fog.archive.skill.brier, 3),
+                              bss=num(fog.archive.skill.bss, 3, sign=True),
+                              auc=num(fog.archive.skill.auc, 3) if fog.archive.skill.auc else '—',
+                              rules=num(fog.archive.rules.auc, 3) if fog.archive.rules and fog.archive.rules.auc else '—') }}
+                    </p>
+                    {%- if fog.archive.uncalibrated %}
+                    <p>
+                        {{ t("Straight from the stations it scored a skill of {straight} on those hours. What ships is calibrated to this balcony — two numbers fitted to its own record that rescale the log-odds without changing which hour ranks above which — and the figures above are for the calibrated model, each stretch of the record scored by a calibration fitted without it.",
+                              straight=num(fog.archive.uncalibrated.bss, 3, sign=True)) }}
+                    </p>
+                    {%- endif %}
+                    {%- endif %}
+                    {%- endif %}
+                    <h4>{{ t('What is driving it right now') }}</h4>
+                    <p>
+                        {{ t('The same decomposition as the rain chance: the starting point plus every effect below is exactly the number squashed into this probability.') }}
+                    </p>
+                    {{ breakdown('fog', fog) }}
                     {%- endif %}
                 </div>
             </details>

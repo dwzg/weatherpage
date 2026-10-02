@@ -911,6 +911,11 @@ class TestTrainerAndAppAgree:
 
         assert self.assigned("FOG_METRES") == nowcast.FOG_METRES
 
+    def test_the_summit_rule_the_page_prints_is_the_one_applied(self):
+        from app import nowcast
+
+        assert self.assigned("MAX_FOG_SHARE") == nowcast.MAX_FOG_SHARE
+
     MODELS = ("MODEL_PATH", "SKY_MODEL_PATH", "FOG_MODEL_PATH", "THUNDER_MODEL_PATH")
 
     def test_the_trainer_writes_the_path_the_app_loads(self):
