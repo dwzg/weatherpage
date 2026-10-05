@@ -1,61 +1,63 @@
 {
-  "scored_at": "2026-10-02",
+  "scored_at": "2026-10-05",
   "from": "2026-09-22",
-  "to": "2026-10-01",
-  "hours": 228,
-  "base_rate": 0.026,
+  "to": "2026-10-04",
+  "hours": 299,
+  "base_rate": 0.03,
   "models": [
     "2026-09-21",
     "2026-09-22",
-    "2026-09-28"
+    "2026-09-28",
+    "2026-10-01",
+    "2026-10-02"
   ],
   "horizon_hours": 6,
   "rain_mm": 0.2,
   "labels": "the nearest weather-service rain gauge",
   "model": {
-    "brier": 0.0258,
-    "bss": -0.006,
-    "auc": 0.938,
-    "csi": 0.13,
-    "kss": 0.82,
-    "pod": 1.0,
-    "far": 0.87,
-    "fires": 0.202,
-    "hours": 228,
-    "base_rate": 0.026
+    "brier": 0.0291,
+    "bss": 0.002,
+    "auc": 0.905,
+    "csi": 0.127,
+    "kss": 0.619,
+    "pod": 0.778,
+    "far": 0.868,
+    "fires": 0.177,
+    "hours": 299,
+    "base_rate": 0.03
   },
   "reliability": [
     {
       "from": 0.0,
       "to": 0.1,
-      "hours": 175,
-      "predicted": 0.022,
-      "observed": 0.0,
+      "hours": 238,
+      "predicted": 0.026,
+      "observed": 0.004,
       "thin": false
     },
     {
       "from": 0.1,
       "to": 0.2,
-      "hours": 28,
-      "predicted": 0.145,
-      "observed": 0.036,
+      "hours": 33,
+      "predicted": 0.142,
+      "observed": 0.091,
       "thin": false
     },
     {
       "from": 0.2,
       "to": 0.3,
-      "hours": 20,
-      "predicted": 0.244,
-      "observed": 0.25,
+      "hours": 22,
+      "predicted": 0.246,
+      "observed": 0.227,
       "thin": false
     },
     {
       "from": 0.3,
       "to": 0.4,
-      "hours": 4,
-      "predicted": 0.356,
+      "hours": 5,
+      "predicted": 0.351,
       "observed": 0.0,
-      "thin": true
+      "thin": false
     },
     {
       "from": 0.4,
@@ -67,14 +69,14 @@
     }
   ],
   "rules": {
-    "brier": 0.0658,
-    "bss": -1.568,
-    "auc": 0.723,
-    "csi": 0.167,
-    "kss": 0.446,
-    "pod": 0.5,
-    "far": 0.8,
-    "fires": 0.066,
-    "hours": 228
+    "brier": 0.0769,
+    "bss": -1.635,
+    "auc": 0.637,
+    "csi": 0.115,
+    "kss": 0.275,
+    "pod": 0.333,
+    "far": 0.85,
+    "fires": 0.067,
+    "hours": 299
   }
 }
