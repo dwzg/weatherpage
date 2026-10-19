@@ -1,107 +1,108 @@
 {
-  "scored_at": "2026-10-12",
+  "scored_at": "2026-10-19",
   "from": "2026-09-22",
-  "to": "2026-10-11",
-  "hours": 463,
-  "base_rate": 0.117,
+  "to": "2026-10-18",
+  "hours": 631,
+  "base_rate": 0.152,
   "models": [
     "2026-09-21",
     "2026-09-22",
     "2026-09-28",
     "2026-10-01",
     "2026-10-02",
-    "2026-10-05"
+    "2026-10-05",
+    "2026-10-12"
   ],
   "horizon_hours": 6,
   "rain_mm": 0.2,
   "labels": "the nearest weather-service rain gauge",
   "model": {
-    "brier": 0.0572,
-    "bss": 0.445,
-    "auc": 0.951,
-    "csi": 0.293,
-    "kss": 0.671,
-    "pod": 0.981,
-    "far": 0.706,
-    "fires": 0.389,
-    "hours": 463,
-    "base_rate": 0.117
+    "brier": 0.0824,
+    "bss": 0.362,
+    "auc": 0.912,
+    "csi": 0.344,
+    "kss": 0.627,
+    "pod": 0.938,
+    "far": 0.648,
+    "fires": 0.406,
+    "hours": 631,
+    "base_rate": 0.152
   },
   "reliability": [
     {
       "from": 0.0,
       "to": 0.1,
-      "hours": 281,
-      "predicted": 0.031,
-      "observed": 0.004,
+      "hours": 355,
+      "predicted": 0.033,
+      "observed": 0.011,
       "thin": false
     },
     {
       "from": 0.1,
       "to": 0.2,
-      "hours": 65,
-      "predicted": 0.146,
-      "observed": 0.046,
+      "hours": 103,
+      "predicted": 0.143,
+      "observed": 0.117,
       "thin": false
     },
     {
       "from": 0.2,
       "to": 0.3,
-      "hours": 51,
-      "predicted": 0.246,
-      "observed": 0.157,
+      "hours": 72,
+      "predicted": 0.247,
+      "observed": 0.264,
       "thin": false
     },
     {
       "from": 0.3,
       "to": 0.4,
-      "hours": 17,
-      "predicted": 0.358,
-      "observed": 0.353,
+      "hours": 32,
+      "predicted": 0.352,
+      "observed": 0.438,
       "thin": false
     },
     {
       "from": 0.4,
       "to": 0.5,
-      "hours": 18,
-      "predicted": 0.457,
-      "observed": 0.667,
+      "hours": 22,
+      "predicted": 0.452,
+      "observed": 0.636,
       "thin": false
     },
     {
       "from": 0.5,
       "to": 0.6,
-      "hours": 16,
-      "predicted": 0.552,
-      "observed": 0.688,
+      "hours": 25,
+      "predicted": 0.549,
+      "observed": 0.56,
       "thin": false
     },
     {
       "from": 0.6,
       "to": 0.7,
-      "hours": 7,
-      "predicted": 0.654,
-      "observed": 1.0,
+      "hours": 11,
+      "predicted": 0.656,
+      "observed": 0.909,
       "thin": false
     },
     {
       "from": 0.7,
       "to": 0.8,
-      "hours": 8,
-      "predicted": 0.753,
-      "observed": 0.75,
+      "hours": 11,
+      "predicted": 0.75,
+      "observed": 0.818,
       "thin": false
     }
   ],
   "rules": {
-    "brier": 0.2117,
-    "bss": -1.054,
-    "auc": 0.832,
-    "csi": 0.329,
-    "kss": 0.664,
-    "pod": 0.889,
-    "far": 0.657,
-    "fires": 0.302,
-    "hours": 463
+    "brier": 0.2425,
+    "bss": -0.88,
+    "auc": 0.819,
+    "csi": 0.362,
+    "kss": 0.637,
+    "pod": 0.906,
+    "far": 0.623,
+    "fires": 0.366,
+    "hours": 631
   }
 }
