@@ -74,7 +74,7 @@ jobs:
           provenance: false
           sbom: false
 
-      # Arcane deploys hosts/vps/weatherpage from github.com/dwzg/docker-compose: pinning the new
+      # Arcane deploys hosts/vps/weatherpage from github.com/dwzg/homelab: pinning the new
       # tag there is the deployment (live within ~5 minutes). Roll back by reverting that commit.
       - name: Deploy via the homelab repo
         env:
@@ -88,7 +88,7 @@ jobs:
           printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/homelab && chmod 600 ~/.ssh/homelab
           ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null
           export GIT_SSH_COMMAND="ssh -i ~/.ssh/homelab -o IdentitiesOnly=yes"
-          git clone --quiet --depth 1 git@github.com:dwzg/docker-compose.git "$RUNNER_TEMP/homelab"
+          git clone --quiet --depth 1 git@github.com:dwzg/homelab.git "$RUNNER_TEMP/homelab"
           cd "$RUNNER_TEMP/homelab"
           file="hosts/vps/$STACK/compose.yaml"
           sed -i -E "s#(image: ${IMAGE}):[^[:space:]]+#\1:${TAG}#" "$file"
