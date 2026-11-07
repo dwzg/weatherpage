@@ -41,7 +41,7 @@ jobs:
 
       # Clean up BEFORE pushing, never after: this deletes untagged package
       # versions, and the image pushed moments earlier can legitimately have
-      # some. Running it last raced the webhook and won.
+      # some. Running it last raced the deploy and won.
       - name: Delete old untagged package versions
         continue-on-error: true
         uses: minish144/delete-untagged-action@v2
@@ -74,7 +74,26 @@ jobs:
           provenance: false
           sbom: false
 
-      - name: Trigger Portainer webhook
-        uses: distributhor/workflow-webhook@v3
-        with:
-          webhook_url: ${{ secrets.PORTAINER_WEBHOOK_URL }}
+      # Arcane deploys hosts/vps/weatherpage from github.com/dwzg/docker-compose: pinning the new
+      # tag there is the deployment (live within ~5 minutes). Roll back by reverting that commit.
+      - name: Deploy via the homelab repo
+        env:
+          DEPLOY_KEY: ${{ secrets.HOMELAB_DEPLOY_KEY }}
+          STACK: weatherpage
+          IMAGE: ghcr.io/dwzg/weatherpage
+          TAG: ${{ github.sha }}
+        run: |
+          if [ -z "$DEPLOY_KEY" ]; then echo "::notice::No HOMELAB_DEPLOY_KEY secret, so nothing was deployed"; exit 0; fi
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/homelab && chmod 600 ~/.ssh/homelab
+          ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null
+          export GIT_SSH_COMMAND="ssh -i ~/.ssh/homelab -o IdentitiesOnly=yes"
+          git clone --quiet --depth 1 git@github.com:dwzg/docker-compose.git "$RUNNER_TEMP/homelab"
+          cd "$RUNNER_TEMP/homelab"
+          file="hosts/vps/$STACK/compose.yaml"
+          sed -i -E "s#(image: ${IMAGE}):[^[:space:]]+#\1:${TAG}#" "$file"
+          if git diff --quiet; then echo "$file already runs $TAG"; exit 0; fi
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -qam "deploy($STACK): $TAG" -m "Built by $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          for i in 1 2 3; do git push -q && exit 0; git pull -q --rebase; done
+          exit 1
