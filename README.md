@@ -1,7 +1,8 @@
 # Balcony Weather Station
 
-A small weather dashboard: a Home Assistant sensor posts temperature, humidity
-and pressure every five minutes, a FastAPI app stores them in SQLite, and a
+A small weather dashboard: the balcony station (an ESP8266, see
+[dwzg/weather-station](https://github.com/dwzg/weather-station)) posts
+temperature, humidity and pressure every five minutes, a FastAPI app stores them in SQLite, and a
 single page shows the current conditions, history charts, records and a
 temperature calendar.
 

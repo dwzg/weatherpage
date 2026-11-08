@@ -22,7 +22,7 @@ PRESSURE_RANGE = (800.0, 1100.0)
 
 
 def _coerce_float(value: Any) -> Any:
-    """Accept the quoted numbers Home Assistant and the relay workflow send."""
+    """Accept numbers, and the quoted numbers the old Home Assistant relay sent (backfill still does)."""
     if isinstance(value, str):
         stripped = value.strip()
         if not stripped:

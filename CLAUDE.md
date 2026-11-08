@@ -4,12 +4,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Dynamic weather dashboard ("Balcony Weather Station") served by a FastAPI app in a single Docker container. Weather data comes from a Home Assistant sensor every 5 minutes, currently relayed through GitHub Actions. The app stores all readings in SQLite and provides both a JSON API and a browser dashboard with Chart.js history graphs.
+Dynamic weather dashboard ("Balcony Weather Station") served by a FastAPI app in a single Docker container. Weather data comes from the balcony station itself (an ESP8266, firmware in dwzg/weather-station), which posts one reading per 5-minute slot and buffers in flash until the app has answered 2xx. The app stores all readings in SQLite and provides both a JSON API and a browser dashboard with Chart.js history graphs.
 
 ## Architecture
 
 ```
- Home Assistant → GH Actions (relay) → Docker App (FastAPI + SQLite)
+ Weather station (ESP8266) ──HTTPS──→ Docker App (FastAPI + SQLite)
                                             ├── POST   /api/weather            ← data ingestion (API key)
                                             ├── DELETE /api/weather/cleanup    ← off-grid/range pruning (API key)
                                             ├── GET    /api/weather/current
@@ -398,7 +398,7 @@ Everything above scores a *candidate* against a held-out past. That says the met
 - **It cannot be reconstructed afterwards**, which is the whole reason it is a table rather than a query. The features are a pure function of the readings, so a replay could recompute them — but it would credit every past hour to *today's* model, and the model is refitted weekly; a backfill changes the inputs a replay would see; and the container may lag `main`. The `model_trained_at` column is what a replay could never supply.
 - **Written on the ingest path, on the hour only**, because the observations it is scored against are hourly — a row every five minutes is twelve times the rows and not one extra scoreable hour. Skipped for a reading that is not the newest, since `build_status()` describes *now* and a backfill would file today's prediction under last week.
 - **What is logged comes back through `build_status()`**, not from recomputing anything, so the row is by construction what `/status` served and the page rendered. A log that can disagree with the page is worse than no log.
-- **A failure to log is a warning, never a 500.** The reading is the irreplaceable thing and is committed first; handing the relay an error would make Home Assistant retry a reading that was already stored.
+- **A failure to log is a warning, never a 500.** The reading is the irreplaceable thing and is committed first; handing the station an error would make it resend a reading that was already stored.
 - **`ml/train.py` scores it** against the nearest weather-service rain gauge — the same kind of observation the model is trained on, and the same gauge that labels the balcony's archive — and writes `app/verification.json` **outside the shipping decision**, every run. Each logged hour is put on the UTC clock with its `utc_offset` before it is matched to the gauge. The gauge must be within `MAX_GAUGE_KM`; further than that, "rain here" would be scored against elsewhere and nothing is written. Refusing to ship is normal, and a verification that went stale behind a declined candidate would be most misleading exactly when it mattered.
 - **The bins live in `app/nowcast.py`**, not in the trainer that writes them: the page renders them, and as pure arithmetic they are testable in the ordinary suite without numpy. A bin below `RELIABILITY_MIN_BIN` hours is shown, dimmed, with its count — hidden thin bins are how a reliability curve flatters itself.
 - The page renders it in the technical details and **the poller never touches it**: it changes weekly, in CI, and a new image is what carries it.
@@ -553,9 +553,9 @@ Because the path names the build, the versioned mount serves `Cache-Control: pub
 
 ## GitHub Secrets
 
-- `APP_URL` — base URL of the running app. Used by the relay workflow (`main.yml`) to forward HA webhook data.
+- `APP_URL` — base URL of the running app. Used by the backup and retraining workflows.
 - `STATION_LATITUDE` / `STATION_LONGITUDE` — where the station stands, read by `ml/train.py` to choose the nearest weather-service stations to train on, and the nearest rain gauge, cloud observation and visibility sensor to score the balcony's archive against. **They are deliberately not in the repository**, and the trainer has no fallback: a default would either be wrong, and quietly train on another place's weather, or be the real location, which is what these keep out of a public file. Nothing derived from them — station ids, names, distances — is printed or committed either. An unset secret fails the retraining run. To run the trainer locally, export them or pass `--latitude` / `--longitude`; `--stations <ids>` trains on named stations instead and, without a location, skips the archive and the verification.
-- `API_KEY` — shared secret protecting `POST /api/weather`, `DELETE /api/weather/cleanup` and `GET /api/weather/export`. The retraining workflow passes it too, since the trainer reads the export endpoint. Must match between the app (env var), the relay workflow, and (eventually) Home Assistant. When the env var is unset those endpoints are unauthenticated, which is how local dev works.
+- `API_KEY` — shared secret protecting `POST /api/weather`, `DELETE /api/weather/cleanup` and `GET /api/weather/export`. The retraining workflow passes it too, since the trainer reads the export endpoint. Must match between the app (env var) and the workflows. The station holds `INGEST_API_KEY` instead, which can only `POST /api/weather`. When the env var is unset those endpoints are unauthenticated, which is how local dev works.
 - `PORTAINER_WEBHOOK_URL` — Portainer webhook URL triggered by `deploy.yml` after a successful image push.
 - `GITHUB_TOKEN` — auto-provided, used for GHCR login and push.
 - `DELETE_PACKAGES_TOKEN` — personal access token with `delete:packages` scope for cleaning old untagged images.
@@ -571,6 +571,15 @@ Workflow inputs are passed to the shell through `env:`, never interpolated into 
 - A backfill cannot restore the *first* pass of a repeated autumn hour after the fact, because walking wall-clock time only ever visits 02:30 once and a replay has no arrival time to resolve it with. Posting the timestamp with an explicit `+02:00` is the way to aim at it.
 - The spring-forward gap is the mirror image: 02:30 never happens, and a reading claiming it is read as pre-transition rather than rejected.
 
-## Future: Direct Home Assistant Integration
+## Ingestion
 
-When ready, change Home Assistant to POST directly to `https://<app-url>/api/weather`. The GitHub Actions relay (`main.yml`) can then be removed.
+Since 2026-11-08 the station posts directly (`dwzg/weather-station`). It sends
+`"timestamp": "2026-11-08T10:00:00+01:00"` — always with the offset, so the
+repeated autumn hour is unambiguous — and numbers rather than strings. After an
+outage it replays its flash buffer oldest first, so readings arrive late and
+in order; `record_prediction` already ignores anything that is not the newest
+reading. Pressure is the station's own DWD sea-level reduction with a
+calibrated sensor offset; the archive before the switch was converted to the
+same calculation (backup on the VPS in
+`/opt/docker/weatherpage-backup-before-pressure-conversion-2026-11-08`).
+The GitHub Actions relay and the Home Assistant automation are gone.
