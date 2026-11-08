@@ -31,7 +31,8 @@ curl -X POST http://localhost:8080/api/weather \
 | --- | --- | --- |
 | `DATA_DIR` | `/data` | Directory holding `weather.db`. |
 | `TIMEZONE` | `Europe/Berlin` | Local timezone; all timestamps are stored in it. |
-| `API_KEY` | *(unset)* | Guards the two write endpoints. Unset means they are open — convenient locally, not in production. |
+| `API_KEY` | *(unset)* | Guards ingestion, cleanup, export and the prediction log. Unset (together with `INGEST_API_KEY`) means they are open — convenient locally, not in production. |
+| `INGEST_API_KEY` | *(unset)* | A second key that can only `POST /api/weather`. The weather station holds this one, so a stolen device cannot export or delete the archive. |
 | `LOG_LEVEL` | `INFO` | Standard logging level. |
 | `ASSET_VERSION` | app version | Appended to CSS/JS URLs to bust the browser cache. |
 

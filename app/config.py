@@ -26,6 +26,10 @@ class Settings:
     data_dir: Path
     timezone: ZoneInfo
     api_key: str | None
+    #: A second key that may only *add* readings. It is the one a sensor
+    #: holds: a device on a balcony can be carried off, and the full key would
+    #: let whoever has it export the archive or delete ranges of it.
+    ingest_api_key: str | None
     #: Serialised into asset URLs so a deploy busts the browser cache. It
     #: must change whenever the assets do, which the app version does not:
     #: it sat at 2.0.0 across every deploy, so browsers kept serving the
@@ -49,8 +53,8 @@ class Settings:
 
     @property
     def requires_api_key(self) -> bool:
-        """Ingestion endpoints are open when no key is configured (local dev)."""
-        return bool(self.api_key)
+        """Guarded endpoints are open only when no key at all is configured (local dev)."""
+        return bool(self.api_key or self.ingest_api_key)
 
 
 @lru_cache(maxsize=1)
@@ -65,6 +69,7 @@ def get_settings() -> Settings:
         data_dir=Path(os.environ.get("DATA_DIR", "/data")),
         timezone=ZoneInfo(os.environ.get("TIMEZONE", "Europe/Berlin")),
         api_key=os.environ.get("API_KEY") or None,
+        ingest_api_key=os.environ.get("INGEST_API_KEY") or None,
         asset_version=(
             explicit_version or (git_sha[:12] if git_sha else None) or __version__
         ),

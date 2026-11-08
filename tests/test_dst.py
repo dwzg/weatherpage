@@ -138,8 +138,12 @@ class TestThroughTheApi:
             assert response.status_code == 200
             assert response.json()["timestamp"] == REPEATED
 
-        history = (await client.get("/api/weather/history?period=all")).json()
-        assert [r["temperature"] for r in history["readings"]] == [9.0, 8.0]
+        # The raw export, not /history: history buckets readings once "all"
+        # spans long enough (it is measured up to now), which merged these two
+        # into one 8.5 and made this test fail by the calendar alone.
+        export = (await client.get("/api/weather/export")).json()
+        assert [(r["temperature"], r["utc_offset"]) for r in export["readings"]] == [
+            (9.0, 120), (8.0, 60)]
 
     async def test_a_bad_timestamp_still_reports_itself(self, client):
         response = await client.post(

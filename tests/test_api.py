@@ -105,6 +105,59 @@ class TestAuth:
         assert (await client.get("/api/weather/stats")).status_code == 200
 
 
+class TestIngestKey:
+    """The station's key may add readings and nothing else."""
+
+    @pytest.fixture
+    def keys(self, monkeypatch):
+        monkeypatch.setenv("API_KEY", "admin")
+        monkeypatch.setenv("INGEST_API_KEY", "sensor")
+        from app.config import get_settings
+        get_settings.cache_clear()
+        yield
+        get_settings.cache_clear()
+
+    @pytest.fixture
+    def ingest_only(self, monkeypatch):
+        monkeypatch.setenv("INGEST_API_KEY", "sensor")
+        from app.config import get_settings
+        get_settings.cache_clear()
+        yield
+        get_settings.cache_clear()
+
+    async def test_ingest_key_can_post(self, keys, client):
+        response = await client.post("/api/weather", json=READING,
+                                     headers={"X-API-Key": "sensor"})
+        assert response.status_code == 200
+
+    async def test_full_key_can_still_post(self, keys, client):
+        response = await client.post("/api/weather", json=READING,
+                                     headers={"X-API-Key": "admin"})
+        assert response.status_code == 200
+
+    async def test_wrong_key_cannot_post(self, keys, client):
+        response = await client.post("/api/weather", json=READING,
+                                     headers={"X-API-Key": "nope"})
+        assert response.status_code == 401
+
+    @pytest.mark.parametrize("method,path", [
+        ("DELETE", "/api/weather/cleanup"),
+        ("GET", "/api/weather/export"),
+        ("GET", "/api/weather/predictions"),
+    ])
+    async def test_ingest_key_cannot_export_or_delete(self, keys, client, method, path):
+        response = await client.request(method, path, headers={"X-API-Key": "sensor"})
+        assert response.status_code == 401
+
+    async def test_admin_endpoints_stay_closed_with_only_an_ingest_key(self, ingest_only, client):
+        # Setting just the sensor key must not leave the admin endpoints open.
+        assert (await client.get("/api/weather/export")).status_code == 401
+        assert (await client.delete("/api/weather/cleanup")).status_code == 401
+        response = await client.post("/api/weather", json=READING,
+                                     headers={"X-API-Key": "sensor"})
+        assert response.status_code == 200
+
+
 class TestHealthz:
     """The probe doubles as "which build is this?", so it is worth pinning."""
 

@@ -18,26 +18,54 @@ router = APIRouter(prefix="/api/weather", tags=["weather"])
 PeriodQuery = Query("24h", pattern=clock.PERIOD_PATTERN)
 
 
+def _key_matches(given: str | None, *keys: str | None) -> bool:
+    """Constant-time comparison against every configured key, so a wrong key
+    cannot be recovered by timing the response."""
+    if given is None:
+        return False
+    matched = False
+    for key in keys:
+        if key:
+            matched |= secrets.compare_digest(given, key)
+    return matched
+
+
 async def require_api_key(
     x_api_key: str | None = Header(default=None, alias="X-API-Key"),
     settings: Settings = Depends(get_settings),
 ) -> None:
-    """Guard the write endpoints.
+    """Guard the endpoints that read the raw archive or change it wholesale.
 
-    When ``API_KEY`` is unset the endpoints are open, which is how local
-    development works. The comparison is constant-time so a wrong key cannot
-    be recovered by timing the response.
+    Only ``API_KEY`` opens them. When no key is configured at all they are
+    open, which is how local development works.
     """
     if not settings.requires_api_key:
         return
-    if x_api_key is None or not secrets.compare_digest(x_api_key, settings.api_key or ""):
+    if not _key_matches(x_api_key, settings.api_key):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid API key"
         )
 
 
-@router.post("", response_model=ReadingAccepted, dependencies=[Depends(require_api_key)])
-@router.post("/", response_model=ReadingAccepted, dependencies=[Depends(require_api_key)],
+async def require_ingest_key(
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+    settings: Settings = Depends(get_settings),
+) -> None:
+    """Guard ingestion: either key may add a reading.
+
+    ``INGEST_API_KEY`` is what the station itself holds; it can store and
+    correct readings (an upsert) but cannot export or delete anything.
+    """
+    if not settings.requires_api_key:
+        return
+    if not _key_matches(x_api_key, settings.api_key, settings.ingest_api_key):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid API key"
+        )
+
+
+@router.post("", response_model=ReadingAccepted, dependencies=[Depends(require_ingest_key)])
+@router.post("/", response_model=ReadingAccepted, dependencies=[Depends(require_ingest_key)],
              include_in_schema=False)
 async def post_reading(reading: ReadingIn) -> ReadingAccepted:
     """Store one sensor reading, replacing any reading with the same timestamp."""

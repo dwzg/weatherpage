@@ -15,6 +15,7 @@ def _isolated_settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     monkeypatch.setenv("TIMEZONE", "Europe/Berlin")
     monkeypatch.delenv("API_KEY", raising=False)
+    monkeypatch.delenv("INGEST_API_KEY", raising=False)
 
     from app.config import get_settings
 
