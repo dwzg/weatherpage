@@ -1,9 +1,9 @@
 {
-  "scored_at": "2026-10-26",
+  "scored_at": "2026-11-09",
   "from": "2026-09-22",
-  "to": "2026-10-25",
-  "hours": 798,
-  "base_rate": 0.193,
+  "to": "2026-11-08",
+  "hours": 1110,
+  "base_rate": 0.156,
   "models": [
     "2026-09-21",
     "2026-09-22",
@@ -12,78 +12,79 @@
     "2026-10-02",
     "2026-10-05",
     "2026-10-12",
-    "2026-10-19"
+    "2026-10-19",
+    "2026-10-26"
   ],
   "horizon_hours": 6,
   "rain_mm": 0.2,
   "labels": "the nearest weather-service rain gauge",
   "model": {
-    "brier": 0.1137,
-    "bss": 0.27,
-    "auc": 0.862,
-    "csi": 0.34,
-    "kss": 0.516,
-    "pod": 0.929,
-    "far": 0.65,
-    "fires": 0.513,
-    "hours": 798,
-    "base_rate": 0.193
+    "brier": 0.0996,
+    "bss": 0.243,
+    "auc": 0.859,
+    "csi": 0.273,
+    "kss": 0.481,
+    "pod": 0.913,
+    "far": 0.719,
+    "fires": 0.507,
+    "hours": 1110,
+    "base_rate": 0.156
   },
   "reliability": [
     {
       "from": 0.0,
       "to": 0.1,
-      "hours": 367,
-      "predicted": 0.034,
-      "observed": 0.022,
+      "hours": 536,
+      "predicted": 0.039,
+      "observed": 0.026,
       "thin": false
     },
     {
       "from": 0.1,
       "to": 0.2,
-      "hours": 121,
-      "predicted": 0.144,
-      "observed": 0.116,
+      "hours": 187,
+      "predicted": 0.143,
+      "observed": 0.075,
       "thin": false
     },
     {
       "from": 0.2,
       "to": 0.3,
-      "hours": 91,
-      "predicted": 0.247,
-      "observed": 0.242,
+      "hours": 136,
+      "predicted": 0.248,
+      "observed": 0.199,
       "thin": false
     },
     {
       "from": 0.3,
       "to": 0.4,
-      "hours": 57,
-      "predicted": 0.35,
-      "observed": 0.368,
+      "hours": 77,
+      "predicted": 0.348,
+      "observed": 0.351,
       "thin": false
     },
     {
       "from": 0.4,
       "to": 0.5,
-      "hours": 49,
-      "predicted": 0.448,
-      "observed": 0.571,
+      "hours": 58,
+      "predicted": 0.446,
+      "observed": 0.517,
       "thin": false
     },
     {
       "from": 0.5,
       "to": 0.6,
-      "hours": 52,
-      "predicted": 0.551,
-      "observed": 0.423,
+      "hours": 54,
+      "predicted": 0.55,
+      "observed": 0.407,
       "thin": false
     },
     {
       "from": 0.6,
       "to": 0.7,
-      "hours": 27,
+      "hours": 28,
       "predicted": 0.652,
-      "observed": 0.63,
+      "observed": 0.607,
       "thin": false
     },
     {
@@ -104,14 +105,14 @@
     }
   ],
   "rules": {
-    "brier": 0.3233,
-    "bss": -1.076,
-    "auc": 0.765,
-    "csi": 0.352,
-    "kss": 0.53,
-    "pod": 0.909,
-    "far": 0.635,
-    "fires": 0.481,
-    "hours": 798
+    "brier": 0.3477,
+    "bss": -1.643,
+    "auc": 0.747,
+    "csi": 0.284,
+    "kss": 0.494,
+    "pod": 0.884,
+    "far": 0.705,
+    "fires": 0.468,
+    "hours": 1110
   }
 }
